@@ -1,0 +1,84 @@
+#!/usr/bin/env ruby
+
+# create-weekly-note: Generate a file from a template
+# Usage: create-weekly-note --template-path TEMPLATE_PATH --target-dir TARGET_DIR
+
+require "fileutils"
+require "optparse"
+
+
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} --template-path TEMPLATE_PATH --target-dir TARGET_DIR"
+
+  opts.on("--template-path TEMPLATE", "Path to template file") do |t|
+    options[:template_path] = t
+  end
+
+  opts.on("--target-dir DIR", "Target directory") do |d|
+    options[:target_dir] = d
+  end
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end.parse!
+
+template_path = options[:template_path]
+target_dir = options[:target_dir]
+
+unless template_path && target_dir
+  puts "Error: Both --template-path and --target-dir are required."
+  puts OptionParser.new { |opts| opts.banner = "Usage: #{$0} --template-path TEMPLATE_PATH --target-dir TARGET_DIR" }.banner
+  exit 1
+end
+
+unless File.exist?(template_path)
+  puts "Template file not found: #{template_path}"
+  exit 1
+end
+
+unless Dir.exist?(target_dir)
+  puts "Target directory not found: #{target_dir}"
+  exit 1
+end
+
+template = File.read(template_path)
+
+# Calculate the correct date for the weekly note (start of week = Sunday)
+require "date"
+today = Date.today
+if today.saturday?
+  week_start = today + 1 # Saturday: start of next week (Sunday)
+else
+  week_start = today - today.wday # Sunday-Friday: start of current week (Sunday)
+end
+date_str = week_start.strftime("%Y-%m-%d")
+filename = "Week of #{date_str}.md"
+target_path = File.join(target_dir, filename)
+
+if File.exist?(target_path)
+  puts "File already exists: #{target_path}"
+  exit 1
+end
+
+# Prepare day names and their offsets from Sunday
+days = %w[sunday monday tuesday wednesday thursday friday saturday]
+
+# Build replacements for both lowercase and capitalized day names
+replacements = { "{{date}}" => date_str }
+days.each_with_index do |day, i|
+  day_date = week_start + i
+  date_str_for_day = day_date.strftime("%Y-%m-%d")
+  replacements["{{#{day}:YYYY-MM-DD}}"] = date_str_for_day
+  replacements["{{#{day.capitalize}:YYYY-MM-DD}}"] = date_str_for_day
+end
+
+# Replace all placeholders in the template (global, not just first occurrence)
+
+# Replace all placeholders in the template (global, not just first occurrence)
+output = template.dup
+replacements.each { |k, v| output.gsub!(k, v) }
+
+File.write(target_path, output)
