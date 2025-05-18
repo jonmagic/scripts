@@ -1,0 +1,50 @@
+#!/usr/bin/env ruby
+
+# Usage: select-folder --target-dir TARGET_DIRECTORY
+# Returns the full path of the selected folder (from the 10 most recently updated subfolders, sorted oldest to newest), using fzf for selection.
+
+require "open3"
+require "optparse"
+
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} --target-dir TARGET_DIRECTORY"
+  opts.on("--target-dir DIR", "Target directory to search for subfolders") do |dir|
+    options[:target_dir] = dir
+  end
+end.parse!
+
+target_dir = options[:target_dir] || "."
+unless target_dir && Dir.exist?(target_dir)
+  puts "Usage: #{$0} --target-dir TARGET_DIRECTORY"
+  exit 1
+end
+
+# Get all subdirectories (not files)
+subdirs = Dir.entries(target_dir)
+  .select { |entry| File.directory?(File.join(target_dir, entry)) && entry != "." && entry != ".." }
+  .map { |entry| File.join(target_dir, entry) }
+
+# Get last modified time for each subdir
+subdirs_with_mtime = subdirs.map { |d| [d, File.mtime(d)] }
+
+# Sort by mtime descending (most recent first), then take 10, then sort those 10 newest to oldest
+recent_10 = subdirs_with_mtime.sort_by { |_, mtime| -mtime.to_i }.first(10).sort_by { |_, mtime| mtime }.reverse
+
+# Only keep the paths
+recent_10_paths = recent_10.map(&:first)
+
+if recent_10_paths.empty?
+  puts "No subfolders found in #{target_dir}"
+  exit 1
+end
+
+# Use fzf for selection
+fzf_cmd = "fzf --prompt='Select folder: ' --height=10"
+selected, status = Open3.capture2(fzf_cmd, stdin_data: recent_10_paths.join("\n"))
+
+if status.success? && !selected.strip.empty?
+  puts selected.strip + "/"
+else
+  exit 1
+end

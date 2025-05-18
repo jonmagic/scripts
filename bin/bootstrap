@@ -1,0 +1,24 @@
+
+#!/usr/bin/env bash
+
+# Check if Homebrew is installed, install if not
+if ! command -v brew >/dev/null 2>&1; then
+  echo "Homebrew is not installed. Installing Homebrew..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  # Add Homebrew to PATH for the current session (for Apple Silicon and Intel)
+  if [[ -d "/opt/homebrew/bin" ]]; then
+    eval "$('/opt/homebrew/bin/brew' shellenv)"
+  elif [[ -d "/usr/local/bin" ]]; then
+    eval "$('/usr/local/bin/brew' shellenv)"
+  fi
+else
+  echo "homebrew is already installed"
+fi
+
+# Check if fzf is installed, install via Homebrew if not
+if ! command -v fzf >/dev/null 2>&1; then
+  echo "fzf not found. Installing via Homebrew..."
+  brew install fzf
+else
+  echo "fzf is already installed."
+fi
