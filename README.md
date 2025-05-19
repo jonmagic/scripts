@@ -2,7 +2,6 @@
 
 The scripts that reduce friction so I can move from task to task faster.
 
-
 ## Setup
 
 Before using the scripts in this repo, run the bootstrap script to ensure required dependencies (like Homebrew and fzf) are installed:
@@ -21,6 +20,19 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
 
 ### Porcelain Commands
+
+#### Archive Meeting (`bin/archive-meeting`)
+
+This script helps you archive a meeting by combining transcripts and chat logs, generating an executive summary, and updating notes. It guides you through selecting the folder with the transcript(s), processes the files, and updates your markdown notes with wikilinks to the transcript and summary.
+
+**Usage:**
+
+```sh
+/path/to/scripts/bin/archive-meeting \
+  --transcripts-dir /path/to/Zoom/ \
+  --target-dir /path/to/Notes/ \
+  --executive-summary-prompt-path /path/to/meeting-summary.txt
+```
 
 #### Create Weekly Note (`bin/create-weekly-note`)
 

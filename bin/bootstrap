@@ -22,3 +22,11 @@ if ! command -v fzf >/dev/null 2>&1; then
 else
   echo "fzf is already installed."
 fi
+
+# Check if llm is installed, install via Homebrew if not
+if ! command -v llm >/dev/null 2>&1; then
+  echo "llm not found. Installing via Homebrew..."
+  brew install llm
+else
+  echo "llm is already installed."
+fi
