@@ -1,6 +1,23 @@
 # scripts
 
-The scripts that reduce friction so I can move from task to task faster.
+I organize my life with markdown and these scripts help me work quickly and seamlessly.
+
+One weekly note sets the plan, and conversations, captured as transcripts, are archived, summarized with AI, and linked to long-running notes by person or group. These scripts reduce friction at every step: from capturing insights to surfacing them when needed.
+
+### Folder Structure
+
+Each `--target-dir` is a markdown notes folder with these subfolders:
+
+```
+Notes/
+├── Weekly Notes/  # One file per week, e.g. "Week of 2024-05-19.md"
+├── Meeting Notes/  # One file per person or group, contents by date descending
+├── Transcripts/YYYY-MM-DD/  # Raw combined transcripts, incrementally numbered
+├── Executive Summaries/YYYY-MM-DD/  # LLM summaries for each transcript
+├── ...
+```
+
+This structure supports a semantically searchable, AI-augmented note system, fast to navigate, easy to sync, and version-control friendly.
 
 ## Setup
 
