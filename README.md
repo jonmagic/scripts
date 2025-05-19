@@ -61,6 +61,18 @@ This script helps you quickly create a new weekly note from a template and place
 /path/to/scripts/bin/create-weekly-note --template-path /path/to/weekly/notes/template.md --target-dir /path/to/weekly/notes
 ```
 
+#### Prepare Commit (`bin/prepare-commit`)
+
+This script helps you generate a semantic commit message for your staged changes using an LLM. It copies the staged diff to your clipboard, prompts you for commit type and optional scope, and generates a commit message using the provided prompt template. You can review and regenerate the message as needed before committing. The final commit message is copied to your clipboard and pre-filled in the git commit editor.
+
+**Usage:**
+
+```sh
+/path/to/scripts/bin/prepare-commit \
+  --commit-message-prompt-path /path/to/commit-prompt.txt \
+  [--llm-model MODEL]
+```
+
 ### Plumbing Commands
 
 #### Select Folder (`bin/select-folder`)
