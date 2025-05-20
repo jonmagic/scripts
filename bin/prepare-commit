@@ -142,7 +142,7 @@ puts "Generating commit message using LLM..."
 
 # Step 6: Generate commit message using LLM
 commit_msg = generate_commit_msg(prompt_path, diff, commit_type, scope, options[:llm_model])
-puts "\nGenerated commit message:\n"
+puts "Generated commit message:\n\n"
 puts commit_msg
 
 # Step 7: Confirm or regenerate commit message
