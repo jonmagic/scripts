@@ -44,7 +44,8 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
 
 #### Archive Meeting
 
-This script helps you archive a meeting by combining transcripts and chat logs, generating an executive summary, and updating notes. It guides you through selecting the folder with the transcript(s), processes the files, and updates your markdown notes with wikilinks to the transcript and summary.
+
+This script helps you archive a meeting by combining transcripts and chat logs, generating an executive summary, generating detailed meeting notes (as if you took notes in the meeting), and updating notes. It guides you through selecting the folder with the transcript(s), processes the files, and updates your markdown notes with wikilinks to the transcript, summary, and detailed notes.
 
 **Usage:**
 
@@ -52,7 +53,8 @@ This script helps you archive a meeting by combining transcripts and chat logs, 
 /path/to/scripts/bin/archive-meeting \
   --transcripts-dir /path/to/Zoom/ \
   --target-dir /path/to/Notes/ \
-  --executive-summary-prompt-path /path/to/meeting-summary.txt
+  --executive-summary-prompt-path /path/to/meeting-summary.txt \
+  --detailed-notes-prompt-path /path/to/meeting-detailed-notes.txt
 ```
 
 #### Create Weekly Note

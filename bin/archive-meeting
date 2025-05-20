@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-# archive-meeting: Archive a meeting by combining transcripts and chat logs, generating an executive summary, and updating notes
+# archive-meeting: Archive a meeting by combining transcripts and chat logs, generating an executive summary, detailed notes, and updating notes
 #
 # This script helps you archive a meeting by:
 #   1. Ensuring required subfolders exist in your notes directory (Executive Summaries, Meeting Notes, Transcripts).
@@ -8,16 +8,18 @@
 #   3. Finding transcript and chat log files in the selected folder.
 #   4. Combining these files into a single transcript file, saved in a dated subfolder under Transcripts.
 #   5. Generating an executive summary for the meeting using an LLM (via the `llm` command and a prompt file), saved in Executive Summaries.
-#   6. Locating the latest Weekly Notes file and, with LLM+fzf, suggesting which Meeting Notes file (group/person/section) to update.
-#   7. Updating or creating the appropriate Meeting Notes file with links to the new transcript and executive summary.
+#   6. Generating detailed meeting notes (as if you took notes in the meeting) using an LLM and a special prompt, and adding them to the Meeting Notes file.
+#   7. Locating the latest Weekly Notes file and, with LLM+fzf, suggesting which Meeting Notes file (group/person/section) to update.
+#   8. Updating or creating the appropriate Meeting Notes file with links to the new transcript, executive summary, and detailed notes.
 #
 # Usage:
-#   archive-meeting --transcripts-dir DIR --target-dir DIR --executive-summary-prompt-path PATH [--llm-model MODEL]
+#   archive-meeting --transcripts-dir DIR --target-dir DIR --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH [--llm-model MODEL]
 #
 # Options:
 #   --transcripts-dir DIR                Path to the folder containing meeting folders (e.g., Zoom transcripts)
 #   --target-dir DIR                     Path to your notes directory (where subfolders like Meeting Notes, Transcripts, etc. live)
 #   --executive-summary-prompt-path PATH Path to the LLM prompt file for generating executive summaries
+#   --detailed-notes-prompt-path PATH    Path to the LLM prompt file for generating detailed meeting notes
 #   --llm-model MODEL                    (Optional) Model alias to use for the llm command
 #   -h, --help                           Show help message
 #
@@ -30,13 +32,14 @@
 # Typical workflow:
 #   1. Run the script with the required arguments.
 #   2. Select the meeting folder when prompted.
-#   3. The script combines transcripts, generates a summary, and helps you update the right notes file with links.
+#   3. The script combines transcripts, generates a summary, generates detailed notes, and helps you update the right notes file with links and detailed notes.
 #
 # Example:
 #   archive-meeting \
 #     --transcripts-dir ~/Documents/Zoom/ \
 #     --target-dir ~/Notes/ \
-#     --executive-summary-prompt-path ~/prompts/meeting-summary.txt
+#     --executive-summary-prompt-path ~/prompts/meeting-summary.txt \
+#     --detailed-notes-prompt-path ~/prompts/meeting-detailed-notes.txt
 
 require "date"
 require "fileutils"
@@ -62,21 +65,25 @@ end
 #
 # Provides helper methods for common file and directory tasks in the meeting workflow.
 module MeetingFileUtils
-  # Updates or creates a Meeting Notes file for a given group/person/section.
+  # Updates or creates a Meeting Notes file for a given group/person/section, including detailed notes.
   #
   # meeting_notes_file - The String path to the Meeting Notes file.
   # meeting_date       - The String date (YYYY-MM-DD).
   # transcript_link    - The String wikilink to the transcript.
   # summary_link       - The String wikilink to the executive summary.
+  # detailed_notes     - The String output from the LLM for detailed notes (should be list items, or will be split into them).
   # filename           - The String filename (without extension) for the note.
   #
-  # If the file exists and a section for this date exists, appends the new links to that section.
+  # If the file exists and a section for this date exists, appends the new links and detailed notes to that section.
   # Otherwise, prepends a new section for the date at the top.
   #
   # Returns nothing.
-  def self.update_meeting_notes_file(meeting_notes_file:, meeting_date:, transcript_link:, summary_link:, filename:)
+  def self.update_meeting_notes_file_with_details(meeting_notes_file:, meeting_date:, transcript_link:, summary_link:, detailed_notes:, filename:)
     date_section_header = "## #{meeting_date}"
-    new_links = "- #{transcript_link}\n- #{summary_link}\n\n"
+    # Ensure detailed_notes is a string of list items (one per line, starting with '-')
+    # Preserve indentation by only removing trailing whitespace
+    detailed_notes_items = detailed_notes.lines.map(&:rstrip).reject(&:empty?).map { |line| line.lstrip.start_with?("-") ? line : "- #{line}" }.join("\n")
+    new_content_block = "- #{transcript_link}\n- #{summary_link}\n" + (detailed_notes_items.empty? ? "" : "#{detailed_notes_items}\n") + "\n"
     if File.exist?(meeting_notes_file)
       content = File.read(meeting_notes_file)
       # Regex to find all date sections
@@ -86,8 +93,8 @@ module MeetingFileUtils
       new_content = sections.each_slice(2).map do |header, body|
         if header == date_section_header
           found = true
-          # Append new links to the end of this date section's body
-          header + (body || "") + new_links
+          # Append new links and detailed notes to the end of this date section's body
+          header + (body || "") + new_content_block
         elsif header
           header + (body || "")
         else
@@ -96,14 +103,14 @@ module MeetingFileUtils
       end.join
       unless found
         # Prepend new section if not found
-        new_section = "#{date_section_header}\n\n#{new_links}"
+        new_section = "#{date_section_header}\n\n#{new_content_block}"
         new_content = new_section + new_content
       end
       File.write(meeting_notes_file, new_content)
       puts "Updated existing Meeting Notes file: #{meeting_notes_file}"
     else
       # Create new file with just this section
-      new_section = "#{date_section_header}\n\n#{new_links}"
+      new_section = "#{date_section_header}\n\n#{new_content_block}"
       File.write(meeting_notes_file, new_section)
       puts "Created new Meeting Notes file: #{meeting_notes_file}"
     end
@@ -238,6 +245,21 @@ module LlmWorkflowUtils
     File.write(summary_file, summary)
     puts "Executive summary saved to: #{summary_file}"
   end
+
+  # Generates detailed notes using an LLM and returns the output as a string.
+  #
+  # dest_file   - The String path to the transcript file to summarize.
+  # llm_model   - The String model name or nil.
+  # prompt_path - The String path to the LLM prompt file for detailed notes.
+  #
+  # Returns the String output of the detailed notes.
+  def self.generate_detailed_notes(dest_file:, llm_model:, prompt_path:)
+    llm_model_flag = LlmUtils.llm_model_flag(llm_model)
+    llm_cmd = "cat #{Shellwords.escape(dest_file)} | llm #{llm_model_flag} -f #{Shellwords.escape(prompt_path)}"
+    puts "Generating detailed notes with llm..."
+    detailed_notes = `#{llm_cmd}`
+    detailed_notes
+  end
 end
 
 # === Workflow Step Functions ===
@@ -311,16 +333,17 @@ def select_meeting_notes_section(latest_weekly_notes:, summary_file:, llm_model:
   )
 end
 
-def update_meeting_notes(target_dir:, selection:, meeting_date:, filename:)
+def update_meeting_notes_with_details(target_dir:, selection:, meeting_date:, filename:, detailed_notes:)
   meeting_notes_file = File.join(target_dir, "Meeting Notes", "#{selection}.md")
   wikilink_name = File.basename(filename, ".md")
   transcript_link = "[[Transcripts/#{meeting_date}/#{wikilink_name}|Transcript]]"
   summary_link = "[[Executive Summaries/#{meeting_date}/#{wikilink_name}|Executive Summary]]"
-  MeetingFileUtils.update_meeting_notes_file(
+  MeetingFileUtils.update_meeting_notes_file_with_details(
     meeting_notes_file: meeting_notes_file,
     meeting_date: meeting_date,
     transcript_link: transcript_link,
     summary_link: summary_link,
+    detailed_notes: detailed_notes,
     filename: filename
   )
 end
@@ -332,13 +355,15 @@ options = {
   target_dir: nil,
   llm_model: nil,
   executive_summary_prompt_path: nil,
+  detailed_notes_prompt_path: nil,
 }
 
 opt_parser = OptionParser.new do |opts|
-  opts.banner = "Usage: #{$0} --transcripts-dir DIR --target-dir DIR --executive-summary-prompt-path PATH [--llm-model MODEL]"
+  opts.banner = "Usage: #{$0} --transcripts-dir DIR --target-dir DIR --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH [--llm-model MODEL]"
   opts.on("--transcripts-dir DIR", "Path to Zoom meetings folder") { |dir| options[:transcripts_dir] = dir }
   opts.on("--target-dir DIR", "Path to notes folder") { |dir| options[:target_dir] = dir }
-  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file") { |path| options[:executive_summary_prompt_path] = path }
+  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file for executive summary") { |path| options[:executive_summary_prompt_path] = path }
+  opts.on("--detailed-notes-prompt-path PATH", "Path to LLM prompt file for detailed notes") { |path| options[:detailed_notes_prompt_path] = path }
   opts.on("--llm-model MODEL", "Model alias to use for llm -m (default: nil)") { |model| options[:llm_model] = model }
   opts.on("-h", "--help", "Show this help message") { puts opts; exit }
 end
@@ -355,9 +380,13 @@ if options[:transcripts_dir].nil? || options[:target_dir].nil?
   puts opt_parser
   exit 1
 end
-
 if options[:executive_summary_prompt_path].nil?
-  puts "--llm-prompt-path is required."
+  puts "--executive-summary-prompt-path is required."
+  puts opt_parser
+  exit 1
+end
+if options[:detailed_notes_prompt_path].nil?
+  puts "--detailed-notes-prompt-path is required."
   puts opt_parser
   exit 1
 end
@@ -397,10 +426,18 @@ selection = select_meeting_notes_section(
   llm_model: options[:llm_model]
 )
 
-# Step 9: Update Meeting Notes file
-update_meeting_notes(
+# Step 9: Generate detailed notes using llm and the provided prompt
+detailed_notes = LlmWorkflowUtils.generate_detailed_notes(
+  dest_file: dest_file,
+  llm_model: options[:llm_model],
+  prompt_path: options[:detailed_notes_prompt_path]
+)
+
+# Step 10: Update Meeting Notes file with detailed notes
+update_meeting_notes_with_details(
   target_dir: options[:target_dir],
   selection: selection,
   meeting_date: meeting_date,
-  filename: filename
+  filename: filename,
+  detailed_notes: detailed_notes
 )
