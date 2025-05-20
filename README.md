@@ -34,11 +34,15 @@ This script will automatically install Homebrew (if needed) and fzf, so you don'
 This repo uses the terms **porcelain** and **plumbing** to describe its scripts, similar to how git distinguishes between user-facing and lower-level commands:
 
 - **Porcelain**: User-friendly scripts intended for direct use.
+  - [Archive Meeting](#archive-meeting)
+  - [Create Weekly Note](#create-weekly-note)
+  - [Prepare Commit](#prepare-commit)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
+  - [Select Folder](#select-folder)
 
 ### Porcelain Commands
 
-#### Archive Meeting (`bin/archive-meeting`)
+#### Archive Meeting
 
 This script helps you archive a meeting by combining transcripts and chat logs, generating an executive summary, and updating notes. It guides you through selecting the folder with the transcript(s), processes the files, and updates your markdown notes with wikilinks to the transcript and summary.
 
@@ -51,7 +55,7 @@ This script helps you archive a meeting by combining transcripts and chat logs, 
   --executive-summary-prompt-path /path/to/meeting-summary.txt
 ```
 
-#### Create Weekly Note (`bin/create-weekly-note`)
+#### Create Weekly Note
 
 This script helps you quickly create a new weekly note from a template and place it in your notes directory.
 
@@ -61,7 +65,7 @@ This script helps you quickly create a new weekly note from a template and place
 /path/to/scripts/bin/create-weekly-note --template-path /path/to/weekly/notes/template.md --target-dir /path/to/weekly/notes
 ```
 
-#### Prepare Commit (`bin/prepare-commit`)
+#### Prepare Commit
 
 This script helps you generate a semantic commit message for your staged changes using an LLM. It copies the staged diff to your clipboard, prompts you for commit type and optional scope, and generates a commit message using the provided prompt template. You can review and regenerate the message as needed before committing. The final commit message is copied to your clipboard and pre-filled in the git commit editor.
 
@@ -75,7 +79,7 @@ This script helps you generate a semantic commit message for your staged changes
 
 ### Plumbing Commands
 
-#### Select Folder (`bin/select-folder`)
+#### Select Folder
 
 This script takes a target directory as an argument and returns the 10 names of the most recently updated folders in that directory. It then lets you select a folder using arrow keys or fuzzy search (via `fzf`) and returns the full path of the selected folder.
 
