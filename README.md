@@ -66,6 +66,9 @@ This script helps you quickly create a new weekly note from a template and place
 
 This script helps you generate a semantic commit message for your staged changes using an LLM. It copies the staged diff to your clipboard, prompts you for commit type and optional scope, and generates a commit message using the provided prompt template. You can review and regenerate the message as needed before committing. The final commit message is copied to your clipboard and pre-filled in the git commit editor.
 
+> [!NOTE]
+> If a file named `commit-message-guidelines.txt` exists in the directory where you run `prepare-commit`, its contents will be included in the LLM context (after the prompt template and before the commit type/scope header). This allows you to provide project specific commit message guidelines that will help the LLM generate better commit messages.
+
 **Usage:**
 
 ```sh

@@ -77,6 +77,9 @@ end
 # Returns the generated commit message as a String.
 def generate_commit_msg(prompt_path, diff, commit_type, scope, llm_model)
   prompt_content = File.read(prompt_path)
+  # Look for commit-message-guidelines.txt in the current directory
+  guidelines_path = File.join(Dir.pwd, "commit-message-guidelines.txt")
+  guidelines_content = File.exist?(guidelines_path) ? File.read(guidelines_path) : nil
   header_line = if scope.empty?
     "Commit type: #{commit_type}"
   else
@@ -84,6 +87,7 @@ def generate_commit_msg(prompt_path, diff, commit_type, scope, llm_model)
   end
   Tempfile.create(["llm_commit_prompt", ".txt"]) do |tmp|
     tmp.puts prompt_content
+    tmp.puts guidelines_content if guidelines_content
     tmp.puts header_line
     tmp.flush
     model_flag = llm_model_flag(llm_model)
