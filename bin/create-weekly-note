@@ -6,7 +6,6 @@
 require "fileutils"
 require "optparse"
 
-
 options = {}
 OptionParser.new do |opts|
   opts.banner = "Usage: #{$0} --template-path TEMPLATE_PATH --target-dir TARGET_DIR"

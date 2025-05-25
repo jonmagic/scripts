@@ -30,3 +30,11 @@ if ! command -v llm >/dev/null 2>&1; then
 else
   echo "llm is already installed."
 fi
+
+# Check if gh (GitHub CLI) is installed, install via Homebrew if not
+if ! command -v gh >/dev/null 2>&1; then
+  echo "gh (GitHub CLI) not found. Installing via Homebrew..."
+  brew install gh
+else
+  echo "gh (GitHub CLI) is already installed."
+fi

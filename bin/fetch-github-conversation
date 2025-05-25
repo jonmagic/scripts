@@ -1,0 +1,138 @@
+#!/usr/bin/env ruby
+
+# fetch-github-conversation: Fetch and export GitHub issue, pull request, or discussion data as structured JSON
+#
+# This script retrieves detailed data from a GitHub issue, pull request, or discussion URL using the GitHub CLI (`gh`).
+# It outputs a single JSON object containing the main conversation and all comments, suitable for archiving or further processing.
+#
+# Features:
+#   1. Accepts a GitHub URL for an issue, pull request, or discussion.
+#   2. Parses the URL to determine the type (issue, pull, discussion) and relevant identifiers.
+#   3. Fetches all relevant data using the GitHub CLI:
+#      - For issues: metadata and all comments.
+#      - For pull requests: metadata, comments, reviews, review comments, and the diff.
+#      - For discussions: metadata and all comments (via GraphQL).
+#   4. Outputs a single, pretty-printed JSON object to stdout.
+#
+# Usage:
+#   fetch-github-conversation <github_conversation_url>
+#
+# Arguments:
+#   <github_conversation_url>   The URL of the GitHub issue, pull request, or discussion to fetch.
+#
+# Requirements:
+#   - Ruby
+#   - The `gh` command-line tool (GitHub CLI) with appropriate authentication
+#
+# Typical workflow:
+#   1. Run the script with a GitHub issue, PR, or discussion URL as the only argument.
+#   2. The script fetches all relevant data and prints it as JSON.
+#   3. You can redirect the output to a file for archiving or further analysis.
+#
+# Example:
+#   fetch-github-conversation https://github.com/octocat/Hello-World/issues/42 > issue-42.json
+#
+#
+# The script will abort with an error message if the URL is not recognized or if any command fails.
+
+require "json"
+require "open3"
+require "uri"
+
+# Runs a shell command and returns stdout. Aborts if the command fails.
+#
+# @param cmd [String] the shell command to run
+# @return [String] the standard output of the command
+# @raise [SystemExit] if the command fails
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  unless status.success?
+    abort "Command failed: #{cmd}\n#{stderr}"
+  end
+  stdout
+end
+
+# Parses a GitHub conversation URL and extracts owner, repo, type, and number.
+#
+# @param url [String] the GitHub issue, pull, or discussion URL
+# @return [Array<String>] [owner, repo, type, number]
+# @raise [SystemExit] if the URL is not recognized
+def parse_github_url(url)
+  uri = URI.parse(url)
+  path = uri.path
+  m = path.match(%r{^/([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)})
+  unless m
+    abort "Unrecognized GitHub conversation URL: #{url}"
+  end
+  owner, repo, type, number = m.captures
+  [owner, repo, type, number]
+end
+
+# Fetches a GitHub issue and all its comments.
+#
+# @param owner [String] the repository owner
+# @param repo [String] the repository name
+# @param number [String] the issue number
+# @return [Hash] { issue: <issue_data>, comments: <comments_array> }
+def fetch_issue(owner, repo, number)
+  issue = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}"))
+  comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
+  { issue: issue, comments: comments }
+end
+
+# Fetches a GitHub discussion and all its comments using GraphQL.
+#
+# @param owner [String] the repository owner
+# @param repo [String] the repository name
+# @param number [String] the discussion number
+# @return [Hash] { "discussion" => <discussion_data>, "comments" => <comments_array> }
+def fetch_discussion(owner, repo, number)
+  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } createdAt url comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url } } } } }'")
+  data = JSON.parse(json)
+  discussion = data.dig("data", "repository", "discussion")
+  # Reshape to match issue/pr output: { "discussion": { ... }, "comments": [ ... ] }
+  comments = (discussion["comments"] && discussion["comments"]["nodes"]) || []
+  # Remove comments from main discussion object
+  discussion_out = discussion.dup
+  discussion_out.delete("comments")
+  {
+    "discussion" => discussion_out,
+    "comments" => comments
+  }
+end
+
+# Fetches a GitHub pull request, all comments, reviews, review comments, and the diff.
+#
+# @param owner [String] the repository owner
+# @param repo [String] the repository name
+# @param number [String] the pull request number
+# @return [Hash] { pr: <pr_data>, comments: <comments_array>, reviews: <reviews_array>, review_comments: <review_comments_array>, diff: <diff_string> }
+def fetch_pr(owner, repo, number)
+  pr = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}"))
+  comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
+  reviews = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}/reviews --paginate"))
+  review_comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}/comments --paginate"))
+  diff = run_cmd("gh pr diff #{number} -R #{owner}/#{repo}")
+  { pr: pr, comments: comments, reviews: reviews, review_comments: review_comments, diff: diff }
+end
+
+# Main
+if ARGV.length != 1
+  abort "Usage: #{$0} <github_conversation_url>"
+end
+
+url = ARGV[0]
+owner, repo, type, number = parse_github_url(url)
+
+data = case type
+when "issues"
+  fetch_issue(owner, repo, number)
+when "discussions"
+  fetch_discussion(owner, repo, number)
+when "pull"
+  fetch_pr(owner, repo, number)
+else
+  abort "Unknown conversation type: #{type}"
+end
+
+puts JSON.pretty_generate(data)

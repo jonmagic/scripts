@@ -32,6 +32,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
 - **Porcelain**: User-friendly scripts intended for direct use.
   - [Archive Meeting](#archive-meeting)
   - [Create Weekly Note](#create-weekly-note)
+  - [Fetch GitHub Conversation](#fetch-github-conversation)
   - [Prepare Commit](#prepare-commit)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
   - [Select Folder](#select-folder)
@@ -61,6 +62,18 @@ This script helps you quickly create a new weekly note from a template and place
 ```sh
 /path/to/scripts/bin/create-weekly-note --template-path /path/to/weekly/notes/template.md --target-dir /path/to/weekly/notes
 ```
+
+### Fetch GitHub Conversation
+
+Fetch and export GitHub issue, pull request, or discussion data as structured JSON. This script retrieves all relevant data from a GitHub issue, pull request, or discussion URL using the GitHub CLI (`gh`). It outputs a single JSON object containing the main conversation and all comments, suitable for archiving or further processing.
+
+**Usage:**
+
+```sh
+/path/to/scripts/bin/fetch-github-conversation <github_conversation_url>
+```
+
+The script will abort with an error message if the URL is not recognized or if any command fails.
 
 ### Prepare Commit
 
