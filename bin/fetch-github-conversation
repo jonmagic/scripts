@@ -1,49 +1,53 @@
 #!/usr/bin/env ruby
 
 # fetch-github-conversation: Fetch and export GitHub issue, pull request, or discussion data as structured JSON
+# and optionally cache the results for future use.
 #
 # This script retrieves detailed data from a GitHub issue, pull request, or discussion URL using the GitHub CLI (`gh`).
 # It outputs a single JSON object containing the main conversation and all comments, suitable for archiving or further processing.
 #
 # Features:
-#   1. Accepts a GitHub URL for an issue, pull request, or discussion.
-#   2. Parses the URL to determine the type (issue, pull, discussion) and relevant identifiers.
-#   3. Fetches all relevant data using the GitHub CLI:
-#      - For issues: metadata and all comments.
-#      - For pull requests: metadata, comments, reviews, review comments, and the diff.
-#      - For discussions: metadata and all comments (via GraphQL).
-#   4. Outputs a single, pretty-printed JSON object to stdout.
+# - Accepts a GitHub URL for an issue, pull request, or discussion.
+# - Parses the URL to determine the type (issue, pull, discussion) and relevant identifiers.
+# - Fetches all relevant data using the GitHub CLI:
+#   - For issues: metadata and all comments.
+#   - For pull requests: metadata, comments, reviews, review comments, and the diff.
+#   - For discussions: metadata and all comments (via GraphQL).
+# - Outputs a single, pretty-printed JSON object to stdout.
 #
-# Usage:
+# Examples
+#
 #   fetch-github-conversation <github_conversation_url>
-#
-# Arguments:
-#   <github_conversation_url>   The URL of the GitHub issue, pull request, or discussion to fetch.
-#
-# Requirements:
-#   - Ruby
-#   - The `gh` command-line tool (GitHub CLI) with appropriate authentication
-#
-# Typical workflow:
-#   1. Run the script with a GitHub issue, PR, or discussion URL as the only argument.
-#   2. The script fetches all relevant data and prints it as JSON.
-#   3. You can redirect the output to a file for archiving or further analysis.
-#
-# Example:
 #   fetch-github-conversation https://github.com/octocat/Hello-World/issues/42 > issue-42.json
 #
+#   # Using flags:
+#   fetch-github-conversation --cache-path ./cache --updated-at 2025-05-26T00:00:00Z https://github.com/octocat/Hello-World/issues/42
+#   fetch-github-conversation --cache-path ./cache octocat/Hello-World/issues/42
+#
+# Arguments
+#
+#   github_conversation_url - The URL of the GitHub issue, pull request, or discussion to fetch.
+#
+# Requirements
+#
+# - Ruby
+# - The `gh` command-line tool (GitHub CLI) with appropriate authentication
 #
 # The script will abort with an error message if the URL is not recognized or if any command fails.
 
+# Require standard libraries for JSON parsing, shell execution, URI handling, file utilities, and option parsing.
 require "json"
 require "open3"
 require "uri"
+require "fileutils"
+require "optparse"
 
-# Runs a shell command and returns stdout. Aborts if the command fails.
+# Public: Runs a shell command and returns stdout. Aborts if the command fails.
 #
-# @param cmd [String] the shell command to run
-# @return [String] the standard output of the command
-# @raise [SystemExit] if the command fails
+# cmd - The shell command to run (String).
+#
+# Returns the standard output of the command (String).
+# Raises SystemExit if the command fails.
 def run_cmd(cmd)
   stdout, stderr, status = Open3.capture3(cmd)
   unless status.success?
@@ -52,11 +56,12 @@ def run_cmd(cmd)
   stdout
 end
 
-# Parses a GitHub conversation URL and extracts owner, repo, type, and number.
+# Public: Parses a GitHub conversation URL and extracts owner, repo, type, and number.
 #
-# @param url [String] the GitHub issue, pull, or discussion URL
-# @return [Array<String>] [owner, repo, type, number]
-# @raise [SystemExit] if the URL is not recognized
+# url - The GitHub issue, pull, or discussion URL (String).
+#
+# Returns an Array of [owner, repo, type, number].
+# Raises SystemExit if the URL is not recognized.
 def parse_github_url(url)
   uri = URI.parse(url)
   path = uri.path
@@ -68,45 +73,66 @@ def parse_github_url(url)
   [owner, repo, type, number]
 end
 
-# Fetches a GitHub issue and all its comments.
+# Internal: Recursively convert all hash keys from camelCase to snake_case.
 #
-# @param owner [String] the repository owner
-# @param repo [String] the repository name
-# @param number [String] the issue number
-# @return [Hash] { issue: <issue_data>, comments: <comments_array> }
+# obj - The object to convert (Array, Hash, or other).
+#
+# Returns the object with all hash keys in snake_case.
+def deep_snake_case(obj)
+  case obj
+  when Array
+    obj.map { |v| deep_snake_case(v) }
+  when Hash
+    obj.each_with_object({}) do |(k, v), h|
+      new_key = k.gsub(/([A-Z])/, '_\1').downcase
+      h[new_key] = deep_snake_case(v)
+    end
+  else
+    obj
+  end
+end
+
+# Public: Fetches a GitHub issue and all its comments.
+#
+# owner  - The repository owner (String).
+# repo   - The repository name (String).
+# number - The issue number (String).
+#
+# Returns a Hash with :issue and :comments keys.
 def fetch_issue(owner, repo, number)
   issue = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}"))
   comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
   { issue: issue, comments: comments }
 end
 
-# Fetches a GitHub discussion and all its comments using GraphQL.
+# Public: Fetches a GitHub discussion and all its comments using GraphQL.
 #
-# @param owner [String] the repository owner
-# @param repo [String] the repository name
-# @param number [String] the discussion number
-# @return [Hash] { "discussion" => <discussion_data>, "comments" => <comments_array> }
+# owner  - The repository owner (String).
+# repo   - The repository name (String).
+# number - The discussion number (String).
+#
+# Returns a Hash with "discussion" and "comments" keys.
 def fetch_discussion(owner, repo, number)
-  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } createdAt url comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url } } } } }'")
+  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } createdAt url updatedAt comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt } } } } } }'")
   data = JSON.parse(json)
   discussion = data.dig("data", "repository", "discussion")
-  # Reshape to match issue/pr output: { "discussion": { ... }, "comments": [ ... ] }
   comments = (discussion["comments"] && discussion["comments"]["nodes"]) || []
-  # Remove comments from main discussion object
   discussion_out = discussion.dup
   discussion_out.delete("comments")
+  # Convert all keys to snake_case for consistency
   {
-    "discussion" => discussion_out,
-    "comments" => comments
+    "discussion" => deep_snake_case(discussion_out),
+    "comments" => deep_snake_case(comments)
   }
 end
 
-# Fetches a GitHub pull request, all comments, reviews, review comments, and the diff.
+# Public: Fetches a GitHub pull request, all comments, reviews, review comments, and the diff.
 #
-# @param owner [String] the repository owner
-# @param repo [String] the repository name
-# @param number [String] the pull request number
-# @return [Hash] { pr: <pr_data>, comments: <comments_array>, reviews: <reviews_array>, review_comments: <review_comments_array>, diff: <diff_string> }
+# owner  - The repository owner (String).
+# repo   - The repository name (String).
+# number - The pull request number (String).
+#
+# Returns a Hash with :pr, :comments, :reviews, :review_comments, and :diff keys.
 def fetch_pr(owner, repo, number)
   pr = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}"))
   comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
@@ -116,23 +142,121 @@ def fetch_pr(owner, repo, number)
   { pr: pr, comments: comments, reviews: reviews, review_comments: review_comments, diff: diff }
 end
 
-# Main
-if ARGV.length != 1
-  abort "Usage: #{$0} <github_conversation_url>"
+# Internal: Load cached data if present.
+#
+# path - The path to the cache file (String).
+#
+# Returns the parsed JSON data or nil if not present.
+def load_cache(path)
+  return nil unless path && File.exist?(path)
+  JSON.parse(File.read(path))
 end
 
-url = ARGV[0]
-owner, repo, type, number = parse_github_url(url)
+# Internal: Save data to cache.
+#
+# path - The path to the cache file (String).
+# data - The data to save (Object).
+def save_cache(path, data)
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, JSON.pretty_generate(data))
+end
 
-data = case type
-when "issues"
-  fetch_issue(owner, repo, number)
-when "discussions"
-  fetch_discussion(owner, repo, number)
-when "pull"
-  fetch_pr(owner, repo, number)
+# Internal: Accept either a URL or <owner>/<repo>/<type>/<number> as input.
+#
+# input - The input string (String).
+#
+# Returns an Array of [owner, repo, type, number].
+def parse_input(input)
+  if input =~ %r{^https://github.com/}
+    parse_github_url(input)
+  elsif input =~ %r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$}
+    m = input.match(%r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$})
+    [m[1], m[2], m[3], m[4]]
+  else
+    abort "Input must be a GitHub URL or <owner>/<repo>/<type>/<number>"
+  end
+end
+
+# Internal: Returns the updated_at timestamp from the fetched data (as ISO8601 string).
+#
+# data - The fetched data (Hash).
+# type - The conversation type (String).
+#
+# Returns the updated_at timestamp (String) or nil.
+def get_updated_at(data, type)
+  case type
+  when "issues"
+    data["issue"]["updated_at"]
+  when "pull"
+    data["pr"]["updated_at"]
+  when "discussions"
+    data["discussion"]["updated_at"]
+  else
+    nil
+  end
+end
+
+# CLI options hash for OptionParser.
+options = {
+  cache_path: nil,
+  updated_at: nil
+}
+
+# Set up OptionParser for CLI arguments.
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} <github_conversation_url|owner/repo/type/number> [options]"
+  opts.on("--cache-path PATH", "Root path for caching fetched data") { |v| options[:cache_path] = v }
+  opts.on("--updated-at TIME", "Timestamp to compare against (ISO8601)") { |v| options[:updated_at] = v }
+end
+opt_parser.parse!
+opt_parser.order!(ARGV)
+
+# Find the first non-option argument as the input (positional argument).
+input = ARGV[0]
+if input.nil?
+  abort opt_parser.to_s
+end
+
+# Remove the positional argument from ARGV so it doesn't interfere with later logic.
+ARGV.delete(input)
+
+# Parse the input into owner, repo, type, and number.
+owner, repo, type, number = parse_input(input)
+
+# Determine cache file path if caching is enabled.
+cache_file = nil
+if options[:cache_path]
+  cache_file = File.join(options[:cache_path], "conversations", owner, repo, type, "#{number}.json")
+end
+
+# Load cached data if available.
+should_fetch = true
+cached_data = load_cache(cache_file)
+
+if cached_data && options[:updated_at]
+  # Compare updated_at from cache and flag.
+  cached_time = get_updated_at(cached_data, type)
+  should_fetch = options[:updated_at] > cached_time if cached_time
+elsif cached_data
+  should_fetch = false
+end
+
+# Fetch data from GitHub if needed, otherwise use cache.
+if should_fetch
+  data = case type
+  when "issues"
+    fetch_issue(owner, repo, number)
+  when "discussions"
+    fetch_discussion(owner, repo, number)
+  when "pull"
+    fetch_pr(owner, repo, number)
+  else
+    abort "Unknown conversation type: #{type}"
+  end
+  save_cache(cache_file, data) if cache_file
 else
-  abort "Unknown conversation type: #{type}"
+  data = cached_data
 end
 
+# Output the result as pretty-printed JSON.
 puts JSON.pretty_generate(data)

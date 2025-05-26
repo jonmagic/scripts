@@ -65,15 +65,35 @@ This script helps you quickly create a new weekly note from a template and place
 
 ### Fetch GitHub Conversation
 
-Fetch and export GitHub issue, pull request, or discussion data as structured JSON. This script retrieves all relevant data from a GitHub issue, pull request, or discussion URL using the GitHub CLI (`gh`). It outputs a single JSON object containing the main conversation and all comments, suitable for archiving or further processing.
+Fetch and export GitHub issue, pull request, or discussion data as structured JSON. This script retrieves all relevant data from a GitHub issue, pull request, or discussion using the GitHub CLI (`gh`). It outputs a single JSON object containing the main conversation and all comments, suitable for archiving or further processing. Supports caching to avoid redundant API calls.
 
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/fetch-github-conversation <github_conversation_url>
+/path/to/scripts/bin/fetch-github-conversation <github_conversation_url> \
+  [--cache-path <cache_root>] [--updated-at <iso8601>]
 ```
 
-The script will abort with an error message if the URL is not recognized or if any command fails.
+- `<github_conversation_url>`: A GitHub issue, pull request, or discussion URL (e.g. `https://github.com/octocat/Hello-World/issues/42`)
+- `owner/repo/type/number`: Alternative input form (e.g. `octocat/Hello-World/issues/42`)
+- `--cache-path <cache_root>`: (Optional) Root directory for caching. Data is stored as `conversations/<owner>/<repo>/<type>/<number>.json` under this path.
+- `--updated-at <timestamp>`: (Optional) Only fetch if the remote conversation is newer than this ISO8601 timestamp (or the cached data).
+
+**Examples:**
+
+Fetch and print a GitHub issue:
+
+```sh
+bin/fetch-github-conversation https://github.com/octocat/Hello-World/issues/42
+```
+
+Fetch and cache a pull request, only if updated:
+
+```sh
+bin/fetch-github-conversation octocat/Hello-World/pull/123 --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
+```
+
+The script will abort with an error message if the input is not recognized or if any command fails.
 
 ### Prepare Commit
 
