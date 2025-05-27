@@ -1,5 +1,11 @@
 #!/usr/bin/env ruby
+
 # bin/prepare-commit: Prepare a commit message using staged changes and LLM, following semantic commit guidelines.
+#
+# It allows the user to select a semantic commit type, optionally enter a scope, and generates a
+# commit message that can be copied to the clipboard or used directly in a git commit.
+#
+# Usage: prepare-commit --commit-message-prompt-path PATH [--llm-model MODEL]
 
 require "open3"
 require "optparse"

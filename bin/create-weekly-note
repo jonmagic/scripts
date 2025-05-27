@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
 # create-weekly-note: Generate a file from a template
+#
 # Usage: create-weekly-note --template-path TEMPLATE_PATH --target-dir TARGET_DIR
 
 require "fileutils"
