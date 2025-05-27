@@ -1,0 +1,182 @@
+#!/usr/bin/env ruby
+
+# summarize-github-conversation: Generate an executive summary of a GitHub conversation using the llm CLI and a prompt file.
+#
+# Usage:
+#   summarize-github-conversation <url> --executive-summary-prompt-path <prompt_path> [--cache-path <cache_path>] [--updated-at <iso8601>]
+#
+# This script fetches or loads a cached GitHub conversation (issue, pull, or discussion) as JSON using the fetch-github-conversation script,
+# extracts the text content, and uses the llm CLI to generate an executive summary using the provided prompt file. Optionally, it saves the summary as a JSON file in the cache.
+#
+# Requirements:
+# - Ruby
+# - fetch-github-conversation script in PATH
+# - llm CLI in PATH
+# - A prompt file for executive summary (see --executive-summary-prompt-path)
+
+require "fileutils"
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+
+# Run a shell command and return stdout, abort on failure.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout
+end
+
+# Parse a GitHub conversation URL or <owner>/<repo>/<type>/<number>.
+def parse_input(input)
+  if input =~ %r{^https://github.com/}
+    m = input.match(%r{github.com/([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)})
+    abort "Unrecognized GitHub conversation URL: #{input}" unless m
+    [m[1], m[2], m[3], m[4]]
+  elsif input =~ %r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$}
+    m = input.match(%r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$})
+    [m[1], m[2], m[3], m[4]]
+  else
+    abort "Input must be a GitHub URL or <owner>/<repo>/<type>/<number>"
+  end
+end
+
+# Extract all text content from the conversation JSON for summarization.
+def extract_text(data)
+  if data["issue"]
+    body = data["issue"]["body"] || ""
+    comments = (data["comments"] || []).map { |c| c["body"] }.join("\n\n")
+    "Issue: #{body}\n\nComments:\n#{comments}"
+  elsif data["pr"]
+    body = data["pr"]["body"] || ""
+    comments = (data["comments"] || []).map { |c| c["body"] }.join("\n\n")
+    reviews = (data["reviews"] || []).map { |r| r["body"] }.join("\n\n")
+    review_comments = (data["review_comments"] || []).map { |c| c["body"] }.join("\n\n")
+    "Pull Request: #{body}\n\nComments:\n#{comments}\n\nReviews:\n#{reviews}\n\nReview Comments:\n#{review_comments}"
+  elsif data["discussion"]
+    body = data["discussion"]["body"] || ""
+    comments = (data["comments"] || []).map { |c| c["body"] }.join("\n\n")
+    "Discussion: #{body}\n\nComments:\n#{comments}"
+  else
+    abort "Unrecognized conversation data structure."
+  end
+end
+
+# Extract updated_at from the conversation data
+def get_updated_at(data, type)
+  case type
+  when "issues"
+    data["issue"] && data["issue"]["updated_at"]
+  when "pull"
+    data["pr"] && data["pr"]["updated_at"]
+  when "discussions"
+    data["discussion"] && data["discussion"]["updated_at"]
+  else
+    nil
+  end
+end
+
+# Format the conversation type for output
+def format_type(type)
+  case type
+  when "issues"
+    "issue"
+  when "pull"
+    "pr"
+  when "discussions"
+    "discussion"
+  else
+    abort "Unrecognized conversation type: #{type}"
+  end
+end
+
+# Helper to load cached summary if it exists
+def load_summary_cache(path)
+  return nil unless path && File.exist?(path)
+  JSON.parse(File.read(path))
+end
+
+# CLI options
+
+options = {
+  cache_path: nil,
+  updated_at: nil,
+  executive_summary_prompt_path: nil
+}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} <github_conversation_url|owner/repo/type/number> --executive-summary-prompt-path <prompt_path> [options]"
+  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file for executive summary (required)") { |v| options[:executive_summary_prompt_path] = v }
+  opts.on("--cache-path PATH", "Root path for caching summary output") { |v| options[:cache_path] = v }
+  opts.on("--updated-at TIME", "Timestamp to pass to fetch-github-conversation") { |v| options[:updated_at] = v }
+end
+opt_parser.parse!
+opt_parser.order!(ARGV)
+
+if options[:executive_summary_prompt_path].nil?
+  puts "--executive-summary-prompt-path is required."
+  puts opt_parser
+  exit 1
+end
+
+input = ARGV[0]
+abort opt_parser.to_s unless input
+ARGV.delete(input)
+
+owner, repo, type, number = parse_input(input)
+
+# Find the directory of this script
+script_dir = File.expand_path(File.dirname(__FILE__))
+fetch_script = File.join(script_dir, "fetch-github-conversation")
+
+# Build fetch-github-conversation command using the script's directory
+fetch_cmd = [fetch_script]
+fetch_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
+fetch_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
+fetch_cmd << input
+
+# Determine summary cache path if caching is enabled
+summary_path = nil
+if options[:cache_path]
+  summary_path = File.join(options[:cache_path], "summaries", owner, repo, type, "#{number}.json")
+end
+
+# Fetch conversation JSON
+conversation_json = run_cmd(fetch_cmd.join(" "))
+data = JSON.parse(conversation_json)
+conversation_updated_at = get_updated_at(data, type)
+
+# Check summary cache freshness
+cached_summary = load_summary_cache(summary_path)
+if cached_summary && cached_summary["updated_at"] && conversation_updated_at && cached_summary["updated_at"] >= conversation_updated_at
+  # Cached summary is up-to-date, print and exit
+  puts cached_summary["summary"]
+  exit 0
+end
+
+# Extract text for summarization
+text = extract_text(data)
+
+# Prepare executive summary prompt
+prompt_path = options[:executive_summary_prompt_path]
+
+# Run llm CLI to generate summary using the -f flag for the prompt file
+summary = run_cmd("llm -f #{Shellwords.escape(prompt_path)} <<< #{Shellwords.escape(text)}")
+
+# Optionally save summary as JSON, including updated_at from the conversation
+if summary_path
+  FileUtils.mkdir_p(File.dirname(summary_path))
+  File.write(summary_path, JSON.pretty_generate({
+    url: input,
+    owner: owner,
+    repo: repo,
+    type: format_type(type),
+    number: number,
+    summary: summary.strip,
+    updated_at: conversation_updated_at,
+    generated_at: Time.now.utc.iso8601
+  }))
+end
+
+# Output summary to stdout
+puts summary.strip

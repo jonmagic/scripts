@@ -33,6 +33,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Archive Meeting](#archive-meeting)
   - [Create Weekly Note](#create-weekly-note)
   - [Fetch GitHub Conversation](#fetch-github-conversation)
+  - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
   - [Select Folder](#select-folder)
@@ -94,6 +95,38 @@ bin/fetch-github-conversation octocat/Hello-World/pull/123 --cache-path ./cache 
 ```
 
 The script will abort with an error message if the input is not recognized or if any command fails.
+
+### Summarize GitHub Conversation
+
+Generate an executive summary of a GitHub issue, pull request, or discussion using the `llm` CLI and a required prompt file. This script fetches or loads a cached conversation (using `fetch-github-conversation`), extracts the text content, and uses the `llm` CLI to generate a summary using the provided prompt file. Optionally, it saves the summary as a JSON file in the cache.
+
+**Usage:**
+
+```sh
+bin/summarize-github-conversation <github_conversation_url> --executive-summary-prompt-path <prompt_path> [--cache-path <cache_root>] [--updated-at <iso8601>]
+```
+
+- `<github_conversation_url>`: A GitHub issue, pull request, or discussion URL (e.g. `https://github.com/octocat/Hello-World/issues/42`)
+- `owner/repo/type/number`: Alternative input form (e.g. `octocat/Hello-World/issues/42`)
+- `--executive-summary-prompt-path <prompt_path>`: **(Required)** Path to the prompt file to use for the executive summary. The prompt file should contain instructions for the LLM; the conversation text will be appended as input.
+- `--cache-path <cache_root>`: (Optional) Root directory for caching. Summary is stored as `summaries/<owner>/<repo>/<type>/<number>.json` under this path.
+- `--updated-at <timestamp>`: (Optional) Only fetch if the remote conversation is newer than this ISO8601 timestamp (or the cached data).
+
+**Examples:**
+
+Summarize a GitHub issue:
+
+```sh
+bin/summarize-github-conversation https://github.com/octocat/Hello-World/issues/42 --executive-summary-prompt-path ./prompts/github-summary.txt
+```
+
+Summarize and cache a pull request, only if updated:
+
+```sh
+bin/summarize-github-conversation octocat/Hello-World/pull/123 --executive-summary-prompt-path ./prompts/github-summary.txt --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
+```
+
+The script will abort with an error message if the input is not recognized, if the prompt path is not provided, or if any command fails.
 
 ### Prepare Commit
 
