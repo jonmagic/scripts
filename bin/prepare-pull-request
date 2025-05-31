@@ -101,7 +101,7 @@ def copy_to_clipboard(text)
   IO.popen("pbcopy", "w") { |f| f << text }
 end
 
-# Edit the provided text using the user's editor.
+# Edit the provided text using the editor configured in git.
 #
 # text - The String text to edit.
 #
@@ -111,7 +111,14 @@ def edit_text(text)
     tmp.puts text
     tmp.flush
 
-    editor = ENV["EDITOR"] || "nano"
+    # Try to get the editor from git config, then fall back to EDITOR env var, and finally to nano
+    git_editor, git_editor_status = Open3.capture2("git config --get core.editor")
+    editor = if git_editor_status.success? && !git_editor.strip.empty?
+      git_editor.strip
+    else
+      ENV["EDITOR"] || "nano"
+    end
+
     system("#{editor} #{tmp.path}")
 
     return File.read(tmp.path)
