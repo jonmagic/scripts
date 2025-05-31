@@ -35,6 +35,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Fetch GitHub Conversation](#fetch-github-conversation)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
+  - [Prepare Pull Request](#prepare-pull-request)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
   - [Select Folder](#select-folder)
 
@@ -142,6 +143,23 @@ This script helps you generate a semantic commit message for your staged changes
   --commit-message-prompt-path /path/to/commit-prompt.txt \
   [--llm-model MODEL]
 ```
+
+### Prepare Pull Request
+
+This script helps you generate a pull request title and body based on commits between your current branch and the base branch. It uses an LLM to analyze your commit messages and diffs to generate a meaningful PR description. You can review and edit both the title and body before creating the PR using the GitHub CLI. If you choose not to create the PR immediately, the title and body are copied to your clipboard for later use.
+
+**Usage:**
+
+```sh
+/path/to/scripts/bin/prepare-pull-request \
+  --base-branch main \
+  --pr-body-prompt-path /path/to/pr-prompt.txt \
+  [--llm-model MODEL]
+```
+
+- `--base-branch`: The name of the base branch to compare against (e.g., main, master, develop)
+- `--pr-body-prompt-path`: Path to the prompt file for generating the PR body
+- `--llm-model`: (Optional) Specify a specific LLM model to use
 
 ## Plumbing Commands
 
