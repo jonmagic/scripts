@@ -126,6 +126,21 @@ def has_remote_branch?
   status.success? && !output.strip.empty?
 end
 
+# Pushes the current branch to origin and sets up tracking.
+#
+# Returns a Boolean indicating success or failure.
+def push_branch
+  puts "Pushing current branch to remote..."
+  result = system("git push -u origin HEAD")
+  if result
+    puts "Branch pushed successfully!"
+    return true
+  else
+    puts "Failed to push branch. Please check your remote configuration."
+    return false
+  end
+end
+
 # Creates a pull request using the GitHub CLI.
 #
 # title - The String PR title.
@@ -135,7 +150,15 @@ end
 # Returns nothing.
 def create_pull_request(title, body, base)
   unless has_remote_branch?
-    error_exit("Current branch does not have a remote tracking branch. Push your branch first with 'git push -u origin HEAD'.")
+    print "Current branch is not pushed to remote. Push branch now? (y/n): "
+    yn = gets.strip.downcase
+    if yn == "y"
+      unless push_branch
+        error_exit("Cannot create pull request without pushing branch.")
+      end
+    else
+      error_exit("Cannot create pull request without pushing branch.")
+    end
   end
 
   Tempfile.create(["pr_body", ".md"]) do |tmp|
