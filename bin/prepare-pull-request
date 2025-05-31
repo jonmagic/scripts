@@ -156,16 +156,24 @@ end
 #
 # Returns nothing.
 def create_pull_request(title, body, base)
-  unless has_remote_branch?
+  # Check if branch has remote tracking
+  remote_exists = has_remote_branch?
+
+  # Ask to push only if there's no remote branch
+  if !remote_exists
     print "Current branch is not pushed to remote. Push branch now? (y/n): "
     yn = gets.strip.downcase
-    if yn == "y"
-      unless push_branch
-        error_exit("Cannot create pull request without pushing branch.")
-      end
-    else
+    if yn.downcase != "y"
       error_exit("Cannot create pull request without pushing branch.")
     end
+  else
+    # If remote already exists, always push to ensure latest commits are there
+    puts "Ensuring remote branch is up-to-date..."
+  end
+
+  # Push the branch with tracking
+  unless push_branch
+    error_exit("Cannot create pull request without pushing branch.")
   end
 
   Tempfile.create(["pr_body", ".md"]) do |tmp|
