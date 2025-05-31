@@ -1,0 +1,244 @@
+#!/usr/bin/env ruby
+
+# bin/prepare-pull-request: Prepare a pull request using commits between HEAD and base branch, using LLM to generate content.
+#
+# It allows the user to generate a PR title and body based on commit messages, review them, and then create the PR.
+# The script uses the GitHub CLI to open the PR once the user is satisfied with the content.
+#
+# Usage: prepare-pull-request --base-branch BRANCH --pr-body-prompt-path PATH [--llm-model MODEL]
+
+require "open3"
+require "optparse"
+require "shellwords"
+require "tempfile"
+
+# --- Helper Methods ---
+
+# Exits the script with an error message.
+#
+# message - The String error message to display.
+#
+# Returns nothing. Exits the script.
+def error_exit(message)
+  puts "Error: #{message}"
+  exit 1
+end
+
+# Checks if a required command-line dependency is available in PATH.
+#
+# cmd - The String name of the command to check.
+#
+# Returns nothing. Exits if not found.
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || error_exit("Required dependency '#{cmd}' not found in PATH.")
+end
+
+# Gets the commit messages and changes between HEAD and the base branch.
+#
+# base_branch - The String name of the base branch to compare against.
+#
+# Returns the commit log and diff as a String.
+def get_commit_context(base_branch)
+  log_output, log_status = Open3.capture2("git log --reverse --pretty=format:'%h %s%n%b' #{base_branch}..HEAD")
+  error_exit("Failed to get commit log, are you on a branch with commits?") unless log_status.success?
+
+  diff_output, diff_status = Open3.capture2("git diff #{base_branch}...HEAD")
+  error_exit("Failed to get diff between branches") unless diff_status.success?
+
+  context = "# Commit messages between '#{base_branch}' and 'HEAD':\n\n"
+  context += log_output
+  context += "\n\n# Summary of changes:\n\n"
+
+  # Get a summary of files changed
+  files_changed, _ = Open3.capture2("git diff --name-status #{base_branch}...HEAD")
+  context += files_changed
+
+  return context
+end
+
+# Returns the model flag for the llm command, or an empty string if no model is specified.
+#
+# llm_model - The String model name or nil.
+#
+# Returns a String suitable for the llm command.
+def llm_model_flag(llm_model)
+  llm_model && !llm_model.strip.empty? ? "-m #{Shellwords.escape(llm_model)}" : ""
+end
+
+# Generates a PR title and body using the LLM, given the prompt and commit context.
+#
+# prompt_path - The String path to the PR body prompt template.
+# context     - The String commit context to provide as input.
+# llm_model   - The String model name or nil.
+#
+# Returns a Hash with the generated title and body.
+def generate_pr_content(prompt_path, context, llm_model)
+  prompt_content = File.read(prompt_path)
+
+  Tempfile.create(["llm_pr_prompt", ".txt"]) do |tmp|
+    tmp.puts prompt_content
+    tmp.flush
+    model_flag = llm_model_flag(llm_model)
+    cmd = "llm #{model_flag} -f #{tmp.path}"
+
+    output, _ = Open3.capture2(cmd, stdin_data: context)
+
+    # Extract title and body from the output
+    lines = output.strip.split("\n")
+    title = lines.first.strip
+    body = lines[2..-1].join("\n").strip if lines.length > 2
+
+    return { title: title, body: body }
+  end
+end
+
+# Copies the given text to the macOS clipboard using pbcopy.
+#
+# text - The String to copy.
+#
+# Returns nothing.
+def copy_to_clipboard(text)
+  IO.popen("pbcopy", "w") { |f| f << text }
+end
+
+# Edit the provided text using the user's editor.
+#
+# text - The String text to edit.
+#
+# Returns the edited text as a String.
+def edit_text(text)
+  Tempfile.create(["pr_edit", ".md"]) do |tmp|
+    tmp.puts text
+    tmp.flush
+
+    editor = ENV["EDITOR"] || "nano"
+    system("#{editor} #{tmp.path}")
+
+    return File.read(tmp.path)
+  end
+end
+
+# Checks if the current branch has a remote tracking branch.
+#
+# Returns a Boolean indicating if the branch has a remote.
+def has_remote_branch?
+  output, status = Open3.capture2("git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null")
+  status.success? && !output.strip.empty?
+end
+
+# Creates a pull request using the GitHub CLI.
+#
+# title - The String PR title.
+# body  - The String PR body.
+# base  - The String base branch name.
+#
+# Returns nothing.
+def create_pull_request(title, body, base)
+  unless has_remote_branch?
+    error_exit("Current branch does not have a remote tracking branch. Push your branch first with 'git push -u origin HEAD'.")
+  end
+
+  Tempfile.create(["pr_body", ".md"]) do |tmp|
+    tmp.puts body
+    tmp.flush
+
+    puts "Creating pull request..."
+    result = system("gh", "pr", "create", "--title", title, "--body-file", tmp.path, "--base", base)
+    error_exit("Failed to create pull request.") unless result
+
+    puts "Pull request created successfully!"
+  end
+end
+
+# === Main Script ===
+
+# Step 1: Parse command-line options
+options = {}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: prepare-pull-request [options]"
+  opts.on("--base-branch=BRANCH", "Name of the base branch (required)") do |b|
+    options[:base_branch] = b
+  end
+  opts.on("--pr-body-prompt-path=PATH", "Path to PR body prompt template (required)") do |p|
+    options[:prompt] = p
+  end
+  opts.on("--llm-model MODEL", "Model alias to use for llm -m (optional)") do |model|
+    options[:llm_model] = model
+  end
+end.parse!
+
+# Step 2: Validate required options
+if options[:base_branch].nil? || options[:base_branch].strip.empty?
+  error_exit("You must provide a base branch name using --base-branch.")
+end
+
+prompt_path = options[:prompt]
+prompt_path = File.expand_path(prompt_path) if prompt_path
+if prompt_path.nil? || prompt_path.strip.empty? || !File.exist?(prompt_path)
+  error_exit("You must provide a valid path to the PR body prompt template using --pr-body-prompt-path.")
+end
+
+# Step 3: Check dependencies
+check_dependency("git")
+check_dependency("gh")
+check_dependency("llm")
+
+# Step 4: Get commit context
+puts "Getting commit context between #{options[:base_branch]} and HEAD..."
+context = get_commit_context(options[:base_branch])
+
+# Step 5: Generate PR title and body using LLM
+puts "Generating PR content using LLM..."
+pr_content = generate_pr_content(prompt_path, context, options[:llm_model])
+puts "Generated PR title: #{pr_content[:title]}"
+puts "\nGenerated PR body:\n\n#{pr_content[:body]}"
+
+# Step 6: Let user review and edit the title
+loop do
+  print "\nDo you want to edit the PR title? (y/n): "
+  yn = gets.strip.downcase
+  if yn == "y"
+    print "Enter a new PR title: "
+    pr_content[:title] = gets.strip
+    puts "New PR title: #{pr_content[:title]}"
+  elsif yn == "n"
+    break
+  else
+    puts "Please answer y or n."
+  end
+
+  print "Are you satisfied with the PR title? (y/n): "
+  yn = gets.strip.downcase
+  break if yn == "y"
+end
+
+# Step 7: Let user review and edit the PR body
+loop do
+  print "Do you want to edit the PR body? (y/n): "
+  yn = gets.strip.downcase
+  if yn == "y"
+    puts "Opening editor to edit PR body..."
+    pr_content[:body] = edit_text(pr_content[:body])
+    puts "PR body updated."
+  elsif yn == "n"
+    break
+  else
+    puts "Please answer y or n."
+  end
+
+  print "Are you satisfied with the PR body? (y/n): "
+  yn = gets.strip.downcase
+  break if yn == "y"
+end
+
+# Step 8: Ask whether to create the PR now
+print "Do you want to create the PR now? (y/n): "
+yn = gets.strip.downcase
+if yn == "y"
+  create_pull_request(pr_content[:title], pr_content[:body], options[:base_branch])
+else
+  puts "PR content has been prepared but not submitted. You can create the PR manually."
+  puts "Title and body have been copied to clipboard."
+  copy_to_clipboard("#{pr_content[:title]}\n\n#{pr_content[:body]}")
+end
