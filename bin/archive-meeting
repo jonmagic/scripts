@@ -334,7 +334,10 @@ def select_meeting_notes_section(latest_weekly_notes:, summary_file:, llm_model:
 end
 
 def update_meeting_notes_with_details(target_dir:, selection:, meeting_date:, filename:, detailed_notes:)
-  meeting_notes_file = File.join(target_dir, "Meeting Notes", "#{selection}.md")
+  # Guard against LLM returning full path instead of just filename
+  # Strip any "Meeting Notes/" prefix to avoid path doubling
+  clean_selection = selection.sub(/^Meeting Notes\//, '')
+  meeting_notes_file = File.join(target_dir, "Meeting Notes", "#{clean_selection}.md")
   wikilink_name = File.basename(filename, ".md")
   transcript_link = "[[Transcripts/#{meeting_date}/#{wikilink_name}|Transcript]]"
   summary_link = "[[Executive Summaries/#{meeting_date}/#{wikilink_name}|Executive Summary]]"
