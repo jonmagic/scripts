@@ -39,6 +39,21 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
   - [Select Folder](#select-folder)
 
+### Aliases
+
+The raw scripts are useful but require a lot of typing so I recommend adding aliases to your shell configuration to make things easier. For example, here are my aliases (which can be added to your `.bashrc` or `.zshrc`):
+
+```sh
+alias cwn='/path/to/create-weekly-note --template-path /path/to/Templates/Week\ of\ \{\{date\}\}.md --target-dir /path/to/Weekly\ Notes/'
+alias am='/path/to/archive-meeting --transcripts-dir ~/Documents/Zoom/ --target-dir /path/to --executive-summary-prompt-path /path/to/zoom-transcript-executive-summary.md --detailed-notes-prompt-path /path/to/transcript-meeting-notes.md'
+alias commit='/path/to/prepare-commit --commit-message-prompt-path /path/to/commit-message.md'
+alias fgc='/path/to/fetch-github-conversation'
+alias es='llm -f /path/to/github-conversation-executive-summary.md'
+alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
+```
+
+All of the referenced prompts can be found here: https://github.com/jonmagic/prompts
+
 ## Porcelain Commands
 
 ### Archive Meeting
@@ -48,7 +63,7 @@ This script helps you archive a meeting by combining transcripts and chat logs, 
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/archive-meeting \
+/path/to/archive-meeting \
   --transcripts-dir /path/to/Zoom/ \
   --target-dir /path/to/Notes/ \
   --executive-summary-prompt-path /path/to/meeting-summary.txt \
@@ -62,7 +77,7 @@ This script helps you quickly create a new weekly note from a template and place
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/create-weekly-note --template-path /path/to/weekly/notes/template.md --target-dir /path/to/weekly/notes
+/path/to/create-weekly-note --template-path /path/to/weekly/notes/template.md --target-dir /path/to/weekly/notes
 ```
 
 ### Fetch GitHub Conversation
@@ -72,7 +87,7 @@ Fetch and export GitHub issue, pull request, or discussion data as structured JS
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/fetch-github-conversation <github_conversation_url> \
+/path/to/fetch-github-conversation <github_conversation_url> \
   [--cache-path <cache_root>] [--updated-at <iso8601>]
 ```
 
@@ -86,13 +101,13 @@ Fetch and export GitHub issue, pull request, or discussion data as structured JS
 Fetch and print a GitHub issue:
 
 ```sh
-bin/fetch-github-conversation https://github.com/octocat/Hello-World/issues/42
+/path/to/fetch-github-conversation https://github.com/octocat/Hello-World/issues/42
 ```
 
 Fetch and cache a pull request, only if updated:
 
 ```sh
-bin/fetch-github-conversation octocat/Hello-World/pull/123 --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
+/path/to/fetch-github-conversation octocat/Hello-World/pull/123 --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
 ```
 
 The script will abort with an error message if the input is not recognized or if any command fails.
@@ -104,7 +119,7 @@ Generate an executive summary of a GitHub issue, pull request, or discussion usi
 **Usage:**
 
 ```sh
-bin/summarize-github-conversation <github_conversation_url> --executive-summary-prompt-path <prompt_path> [--cache-path <cache_root>] [--updated-at <iso8601>]
+/path/to/summarize-github-conversation <github_conversation_url> --executive-summary-prompt-path <prompt_path> [--cache-path <cache_root>] [--updated-at <iso8601>]
 ```
 
 - `<github_conversation_url>`: A GitHub issue, pull request, or discussion URL (e.g. `https://github.com/octocat/Hello-World/issues/42`)
@@ -118,13 +133,13 @@ bin/summarize-github-conversation <github_conversation_url> --executive-summary-
 Summarize a GitHub issue:
 
 ```sh
-bin/summarize-github-conversation https://github.com/octocat/Hello-World/issues/42 --executive-summary-prompt-path ./prompts/github-summary.txt
+/path/to/summarize-github-conversation https://github.com/octocat/Hello-World/issues/42 --executive-summary-prompt-path /path/to/github-summary.txt
 ```
 
 Summarize and cache a pull request, only if updated:
 
 ```sh
-bin/summarize-github-conversation octocat/Hello-World/pull/123 --executive-summary-prompt-path ./prompts/github-summary.txt --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
+/path/to/summarize-github-conversation octocat/Hello-World/pull/123 --executive-summary-prompt-path /path/to/github-summary.txt --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
 ```
 
 The script will abort with an error message if the input is not recognized, if the prompt path is not provided, or if any command fails.
@@ -139,7 +154,7 @@ This script helps you generate a semantic commit message for your staged changes
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/prepare-commit \
+/path/to/prepare-commit \
   --commit-message-prompt-path /path/to/commit-prompt.txt \
   [--llm-model MODEL]
 ```
@@ -151,7 +166,7 @@ This script helps you generate a pull request title and body based on commits be
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/prepare-pull-request \
+/path/to/prepare-pull-request \
   --base-branch main \
   --pr-body-prompt-path /path/to/pr-prompt.txt \
   [--llm-model MODEL]
@@ -170,7 +185,7 @@ This script takes a target directory as an argument and returns the 10 names of 
 **Usage:**
 
 ```sh
-/path/to/scripts/bin/select-folder --target-dir /path/to/target
+/path/to/select-folder --target-dir /path/to/target
 ```
 
 ## Contributing
