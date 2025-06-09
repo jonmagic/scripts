@@ -198,22 +198,33 @@ module LlmWorkflowUtils
   #
   # Returns the String selection made by the user (group/person/section name).
   def self.select_meeting_notes_section(weekly_notes_content:, executive_summary_content:, llm_model:)
-    llm_instructions = <<~PROMPT
-      Given the following weekly notes and executive summary, suggest the most likely group/person or section in the Meeting Notes folder to update for this meeting. List only the group/person/section names, one per line, most likely first. Do not include any extra commentary or explanation.
+    # Extract the ## Schedule section
+    schedule_section = weekly_notes_content[/^## Schedule\n(.*?)(^## |\z)/m, 1]
+    if schedule_section.nil? || schedule_section.strip.empty?
+      puts "Could not find a '## Schedule' section in the Weekly Notes."
+      exit 1
+    end
+    # Extract all non-empty lines (person/group names)
+    options = schedule_section.lines.map(&:strip).reject { |l| l.empty? || l.start_with?('#') }
+    if options.empty?
+      puts "No entries found in the '## Schedule' section."
+      exit 1
+    end
 
-      WEEKLY NOTES:
-      #{weekly_notes_content}
+    llm_instructions = <<~PROMPT
+      Given the following list of people or groups from my schedule and the executive summary of a meeting, sort the list from most likely to least likely to be the correct person or group to attach this transcript to. Do not remove or filter any options. Output only the sorted list, one per line, with no extra commentary.
+
+      SCHEDULE OPTIONS:
+      #{options.join("\n")}
 
       EXECUTIVE SUMMARY:
       #{executive_summary_content}
-
-      Focus only on the "## Schedule" section of the Weekly Notes.
     PROMPT
 
     llm_model_flag = LlmUtils.llm_model_flag(llm_model)
     llm_cmd = "llm #{llm_model_flag}"
     fzf_cmd = "fzf --prompt='Select Meeting Notes group/person: '"
-    puts "Suggesting Meeting Notes section with LLM and fzf..."
+    puts "Suggesting Meeting Notes section with LLM (sorting only) and fzf..."
     selection = nil
     Open3.popen3(llm_cmd) do |stdin, stdout, stderr, wait_thr|
       stdin.puts llm_instructions
@@ -335,9 +346,25 @@ end
 
 def update_meeting_notes_with_details(target_dir:, selection:, meeting_date:, filename:, detailed_notes:)
   # Guard against LLM returning full path instead of just filename
-  # Strip any "Meeting Notes/" prefix to avoid path doubling
+  # Extract the value inside a wikilink ([[...]]), and handle optional | alias and Meeting Notes/ prefix
   clean_selection = selection.sub(/^Meeting Notes\//, '')
-  meeting_notes_file = File.join(target_dir, "Meeting Notes", "#{clean_selection}.md")
+  canonical = if clean_selection =~ /\[\[(.+?)\]\]/
+    wikilink = $1
+    # If there's a |, take only the part before it
+    wikilink = wikilink.split('|').first
+    # Remove any leading Meeting Notes/ from the wikilink
+    wikilink.sub(/^Meeting Notes\//, '')
+  else
+    # Try to find a wikilink anywhere in the string
+    if (wikilink = clean_selection[/\[\[(.+?)\]\]/, 1])
+      wikilink = wikilink.split('|').first
+      wikilink.sub(/^Meeting Notes\//, '')
+    else
+      # Remove any leading numbers or non-word chars, then take last word
+      clean_selection.strip.split(/\s+/).last.gsub(/[^\w-]/, '')
+    end
+  end
+  meeting_notes_file = File.join(target_dir, "Meeting Notes", "#{canonical}.md")
   wikilink_name = File.basename(filename, ".md")
   transcript_link = "[[Transcripts/#{meeting_date}/#{wikilink_name}|Transcript]]"
   summary_link = "[[Executive Summaries/#{meeting_date}/#{wikilink_name}|Executive Summary]]"
