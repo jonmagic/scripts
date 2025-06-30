@@ -335,11 +335,9 @@ def find_latest_weekly_notes(target_dir:)
 end
 
 def select_meeting_notes_section(latest_weekly_notes:, summary_file:, llm_model:)
-  weekly_notes_content = File.read(latest_weekly_notes)
-  executive_summary_content = File.read(summary_file)
-  LlmWorkflowUtils.select_meeting_notes_section(
-    weekly_notes_content: weekly_notes_content,
-    executive_summary_content: executive_summary_content,
+  MeetingFileUtils.select_meeting_notes_section(
+    latest_weekly_notes: latest_weekly_notes,
+    summary_file: summary_file,
     llm_model: llm_model
   )
 end

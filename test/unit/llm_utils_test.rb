@@ -5,8 +5,8 @@ class LlmUtilsTest < Minitest::Test
   include LlmUtils
 
   def test_llm_model_flag_with_model
-    result = llm_model_flag("gpt-4")
-    assert_equal "-m gpt-4", result
+    result = llm_model_flag("gpt-4.1")
+    assert_equal "-m gpt-4.1", result
   end
 
   def test_llm_model_flag_with_nil

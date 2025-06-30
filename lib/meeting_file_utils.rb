@@ -1,9 +1,13 @@
 require 'fileutils'
+require 'open3'
+require 'shellwords'
+require_relative 'llm_utils'
 
 # MeetingFileUtils: Utilities for meeting-related file and directory operations
 #
 # Provides helper methods for common file and directory tasks in the meeting workflow.
 module MeetingFileUtils
+  include LlmUtils
   # Creates required subfolders if they don't exist.
   #
   # target_dir - The String path to the notes directory.
@@ -96,5 +100,31 @@ module MeetingFileUtils
       # Create new file with date section
       File.write(meeting_notes_file, "# Meeting Notes\n\n" + date_section_header + "\n" + new_content_block)
     end
+  end
+
+  # Selects meeting notes section using LLM and fzf
+  #
+  # latest_weekly_notes - String path to the latest weekly notes file
+  # summary_file - String path to the executive summary file
+  # llm_model - String model name or nil
+  #
+  # Returns String containing the selected meeting notes entry
+  def self.select_meeting_notes_section(latest_weekly_notes:, summary_file:, llm_model:)
+    weekly_content = File.read(latest_weekly_notes)
+    summary_content = File.read(summary_file)
+
+    # Use LLM to suggest meeting notes sections
+    llm_prompt = "Based on this executive summary, suggest which meeting notes section this should go in (return just the filename/section name):\n\n#{summary_content}\n\nWeekly notes context:\n#{weekly_content}"
+
+    model_flag = LlmUtils.new.llm_model_flag(llm_model)
+    cmd = "llm #{model_flag}".strip
+
+    suggested_section, _ = Open3.capture2(cmd, stdin_data: llm_prompt)
+
+    # Use fzf to let user select/confirm the section
+    fzf_input = suggested_section.strip
+    selected, _ = Open3.capture2("fzf --prompt='Select meeting notes section: '", stdin_data: fzf_input)
+
+    selected.strip
   end
 end
