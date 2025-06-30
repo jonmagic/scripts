@@ -1,0 +1,185 @@
+#!/usr/bin/env ruby
+
+# index-summary: Generate an embedding from a conversation summary and index it in a Qdrant collection.
+#
+# Usage:
+#   index-summary --summary-text <text> --url <github_url> [options]
+#   index-summary --url <github_url> [options] < summary.txt
+#
+# This script takes a conversation summary (either via --summary-text or stdin), generates an embedding
+# using the llm CLI with the text-embedding-3-small model, and indexes it in a Qdrant collection
+# with associated metadata about the conversation.
+#
+# Requirements:
+# - Ruby
+# - llm CLI in PATH with embedding support
+# - Qdrant server accessible for indexing
+
+require "fileutils"
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+require "net/http"
+require "uri"
+require "time"
+
+# Run a shell command and return stdout, abort on failure.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout
+end
+
+# Parse a GitHub conversation URL or <owner>/<repo>/<type>/<number>.
+def parse_input(input)
+  if input =~ %r{^https://github.com/}
+    m = input.match(%r{github.com/([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)})
+    abort "Unrecognized GitHub conversation URL: #{input}" unless m
+    [m[1], m[2], m[3], m[4]]
+  elsif input =~ %r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$}
+    m = input.match(%r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$})
+    [m[1], m[2], m[3], m[4]]
+  else
+    abort "Input must be a GitHub URL or <owner>/<repo>/<type>/<number>"
+  end
+end
+
+# Format the conversation type for output
+def format_type(type)
+  case type
+  when "issues"
+    "issue"
+  when "pull"
+    "pr"
+  when "discussions"
+    "discussion"
+  else
+    abort "Unrecognized conversation type: #{type}"
+  end
+end
+
+# Generate embedding for the summary text using llm embed
+def generate_embedding(summary_text, model = "text-embedding-3-small")
+  cmd = ["llm", "embed", "-m", model]
+  
+  stdout, stderr, status = Open3.capture3(*cmd, stdin_data: summary_text)
+  unless status.success?
+    abort "Command failed: #{cmd.join(' ')}\n#{stderr}"
+  end
+  
+  # Parse the embedding output (expecting JSON format)
+  begin
+    JSON.parse(stdout)
+  rescue JSON::ParserError
+    abort "Failed to parse embedding output as JSON: #{stdout.strip}"
+  end
+end
+
+# Index the embedding in Qdrant collection
+def index_in_qdrant(embedding, metadata, options)
+  qdrant_url = options[:qdrant_url]
+  collection_name = options[:collection_name]
+  
+  # Generate a unique ID for this embedding based on the conversation
+  point_id = "#{metadata[:owner]}_#{metadata[:repo]}_#{metadata[:type]}_#{metadata[:number]}"
+  
+  # Prepare the payload for Qdrant
+  payload = {
+    id: point_id,
+    vector: embedding,
+    payload: metadata
+  }
+  
+  # Make HTTP request to Qdrant
+  uri = URI("#{qdrant_url}/collections/#{collection_name}/points")
+  
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.use_ssl = true if uri.scheme == 'https'
+  
+  request = Net::HTTP::Put.new(uri)
+  request['Content-Type'] = 'application/json'
+  request.body = {
+    points: [payload]
+  }.to_json
+  
+  response = http.request(request)
+  
+  unless response.code.to_i.between?(200, 299)
+    abort "Failed to index in Qdrant: #{response.code} #{response.body}"
+  end
+  
+  puts "Successfully indexed embedding for #{point_id}"
+  response
+end
+
+# CLI options
+options = {
+  summary_text: nil,
+  url: nil,
+  topics: nil,
+  qdrant_url: "http://localhost:6333",
+  collection_name: "summaries",
+  model: "text-embedding-3-small"
+}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} --url <github_url> [options]"
+  opts.on("--summary-text TEXT", "Summary text to embed (if not provided via stdin)") { |v| options[:summary_text] = v }
+  opts.on("--url URL", "GitHub conversation URL (required)") { |v| options[:url] = v }
+  opts.on("--topics TOPICS", "Comma-separated list of topics") { |v| options[:topics] = v.split(",").map(&:strip) }
+  opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
+  opts.on("--collection-name NAME", "Qdrant collection name (default: summaries)") { |v| options[:collection_name] = v }
+  opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
+  opts.on("-h", "--help", "Show this help message") { puts opts; exit }
+end
+opt_parser.parse!
+
+# Validate required options
+if options[:url].nil?
+  puts "--url is required."
+  puts opt_parser
+  exit 1
+end
+
+# Parse the GitHub URL to extract metadata
+owner, repo, type, number = parse_input(options[:url])
+
+# Get summary text from either CLI argument or stdin
+summary_text = options[:summary_text]
+if summary_text.nil? || summary_text.strip.empty?
+  if STDIN.tty?
+    abort "Summary text must be provided via --summary-text or piped to stdin"
+  else
+    summary_text = STDIN.read.strip
+  end
+end
+
+if summary_text.empty?
+  abort "Summary text cannot be empty"
+end
+
+# Prepare metadata
+metadata = {
+  url: options[:url],
+  owner: owner,
+  repo: repo,
+  type: format_type(type),
+  number: number.to_i,
+  summary: summary_text,
+  topics: options[:topics] || [],
+  indexed_at: Time.now.utc.iso8601
+}
+
+puts "Generating embedding for #{owner}/#{repo}/#{format_type(type)}/#{number}..."
+
+# Generate embedding
+embedding = generate_embedding(summary_text, options[:model])
+
+puts "Embedding generated with #{embedding.length} dimensions"
+
+# Index in Qdrant
+puts "Indexing in Qdrant collection '#{options[:collection_name]}'..."
+index_in_qdrant(embedding, metadata, options)
+
+puts "Summary successfully indexed!"
