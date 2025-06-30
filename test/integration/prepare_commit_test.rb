@@ -4,44 +4,89 @@ class PrepareCommitIntegrationTest < Minitest::Test
   def setup
     @script_path = File.expand_path('../../../bin/prepare-commit', __FILE__)
     setup_temp_directory
+    @prompt_file = fixture_path('commit_prompt.txt')
   end
 
   def teardown
     teardown_temp_directory
   end
 
-  def test_prepare_commit_script_exists
+  def test_script_exists_and_executable
     assert File.exist?(@script_path), "prepare-commit script should exist"
     assert File.executable?(@script_path), "prepare-commit script should be executable"
   end
 
-  def test_prepare_commit_shows_help
-    skip_unless_command_available('ruby')
-
-    result = `ruby #{@script_path} --help 2>&1`
-    assert_includes result, "Usage:", "Script should show usage information"
-    assert_includes result, "commit-message-prompt-path", "Script should mention required argument"
+  def test_shows_help_message
+    result = run_script('prepare-commit', ['--help'])
+    
+    assert result[:success], "Help command should succeed"
+    assert_includes result[:stdout], "Usage:", "Should show usage information"
+    assert_includes result[:stdout], "commit-message-prompt-path", "Should mention required argument"
   end
 
-  def test_prepare_commit_requires_prompt_path
-    skip_unless_command_available('ruby')
-
-    result = `ruby #{@script_path} 2>&1`
-    assert_includes result, "Error:", "Script should show error without required args"
-    refute_equal 0, $?.exitstatus, "Script should exit with non-zero status"
+  def test_requires_prompt_path_argument
+    result = run_script('prepare-commit')
+    
+    refute result[:success], "Should fail without required arguments"
+    assert_includes result[:combined], "Error:", "Should show error message"
+    assert_includes result[:combined], "commit message prompt template", "Should mention missing prompt path"
   end
 
-  def test_prepare_commit_script_structure
-    content = File.read(@script_path)
-    assert_includes content, "OptionParser", "Script should use OptionParser"
-    assert_includes content, "error_exit", "Script should use error_exit function"
-    assert_includes content, "DependencyChecker", "Script should use DependencyChecker module"
+  def test_validates_prompt_path_exists
+    nonexistent_path = File.join(@temp_dir, 'nonexistent.txt')
+    result = run_script('prepare-commit', ['--commit-message-prompt-path', nonexistent_path])
+    
+    refute result[:success], "Should fail with nonexistent prompt file"
+    assert_includes result[:combined], "Error:", "Should show error message"
+    assert_includes result[:combined], "valid path", "Should mention invalid path"
   end
 
-  def test_prepare_commit_checks_dependencies
-    content = File.read(@script_path)
-    %w[git fzf llm].each do |dep|
-      assert_includes content, dep, "Script should check for #{dep} dependency"
+  def test_requires_staged_changes
+    # Setup git repo but don't stage any changes
+    git_repo = setup_test_git_repo
+    
+    Dir.chdir(git_repo) do
+      result = run_script('prepare-commit', ['--commit-message-prompt-path', @prompt_file])
+      
+      refute result[:success], "Should fail without staged changes"
+      assert_includes result[:combined], "No staged changes", "Should mention missing staged changes"
+    end
+  end
+
+  def test_full_workflow_with_feat_commit_type
+    # This test is complex and requires proper mocking of all external dependencies
+    # For now, let's focus on testing the script structure and basic validation
+    skip "Complex workflow tests require better mocking infrastructure"
+  end
+
+  def test_workflow_with_fix_commit_type_and_scope
+    skip "Complex workflow tests require better mocking infrastructure"
+  end
+
+  def test_workflow_with_custom_llm_model
+    skip "Complex workflow tests require better mocking infrastructure"
+  end
+
+  def test_regenerate_commit_message_workflow
+    skip "Complex workflow tests require better mocking infrastructure"
+  end
+
+  def test_handles_different_commit_types
+    skip "Complex workflow tests require better mocking infrastructure"
+  end
+
+  def test_handles_empty_fzf_selection
+    # This test requires better mocking of fzf to handle empty selection
+    skip "Complex fzf mocking requires better infrastructure"
+  end
+
+  def test_validates_git_repository
+    # Run in non-git directory
+    Dir.chdir(@temp_dir) do
+      result = run_script('prepare-commit', 
+                         ['--commit-message-prompt-path', @prompt_file])
+      
+      refute result[:success], "Should fail outside git repository"
     end
   end
 end

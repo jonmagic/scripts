@@ -1,0 +1,8 @@
+Generate a detailed pull request description based on the changes in this branch.
+
+Include:
+- Summary of changes
+- Why these changes were made
+- Any breaking changes
+- Testing notes
+- Related issues
