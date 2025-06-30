@@ -1,0 +1,217 @@
+#!/usr/bin/env ruby
+
+# extract-topics: Extract key thematic topics from a GitHub conversation using the llm CLI and a prompt file.
+#
+# Usage:
+#   extract-topics <url> --topics-prompt-path <prompt_path> [--cache-path <cache_path>] [--updated-at <iso8601>] [--max-topics <number>]
+#
+# This script fetches or loads a cached GitHub conversation (issue, pull, or discussion) as JSON using the fetch-github-conversation script,
+# extracts the text content, and uses the llm CLI to extract thematic topics using the provided prompt file. 
+# Optionally, it saves the topics as a JSON file in the cache and can limit the number of topics extracted.
+#
+# Requirements:
+# - Ruby
+# - fetch-github-conversation script in PATH
+# - llm CLI in PATH
+# - A prompt file for topic extraction (see --topics-prompt-path)
+
+require "fileutils"
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+
+# Run a shell command and return stdout, abort on failure.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout
+end
+
+# Parse a GitHub conversation URL or <owner>/<repo>/<type>/<number>.
+def parse_input(input)
+  if input =~ %r{^https://github.com/}
+    m = input.match(%r{github.com/([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)})
+    abort "Unrecognized GitHub conversation URL: #{input}" unless m
+    [m[1], m[2], m[3], m[4]]
+  elsif input =~ %r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$}
+    m = input.match(%r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$})
+    [m[1], m[2], m[3], m[4]]
+  else
+    abort "Input must be a GitHub URL or <owner>/<repo>/<type>/<number>"
+  end
+end
+
+# Extract all text content from the conversation JSON for topic extraction.
+def extract_text(data)
+  if data["issue"]
+    body = data["issue"]["body"] || ""
+    comments = (data["comments"] || []).map { |c| c["body"] }.join("\n\n")
+    "Issue: #{body}\n\nComments:\n#{comments}"
+  elsif data["pr"]
+    body = data["pr"]["body"] || ""
+    comments = (data["comments"] || []).map { |c| c["body"] }.join("\n\n")
+    reviews = (data["reviews"] || []).map { |r| r["body"] }.join("\n\n")
+    review_comments = (data["review_comments"] || []).map { |c| c["body"] }.join("\n\n")
+    "Pull Request: #{body}\n\nComments:\n#{comments}\n\nReviews:\n#{reviews}\n\nReview Comments:\n#{review_comments}"
+  elsif data["discussion"]
+    body = data["discussion"]["body"] || ""
+    comments = (data["comments"] || []).map { |c| c["body"] }.join("\n\n")
+    "Discussion: #{body}\n\nComments:\n#{comments}"
+  else
+    abort "Unrecognized conversation data structure."
+  end
+end
+
+# Extract updated_at from the conversation data
+def get_updated_at(data, type)
+  case type
+  when "issues"
+    data["issue"] && data["issue"]["updated_at"]
+  when "pull"
+    data["pr"] && data["pr"]["updated_at"]
+  when "discussions"
+    data["discussion"] && data["discussion"]["updated_at"]
+  else
+    nil
+  end
+end
+
+# Format the conversation type for output
+def format_type(type)
+  case type
+  when "issues"
+    "issue"
+  when "pull"
+    "pr"
+  when "discussions"
+    "discussion"
+  else
+    abort "Unrecognized conversation type: #{type}"
+  end
+end
+
+# Helper to load cached topics if they exist
+def load_topics_cache(path)
+  return nil unless path && File.exist?(path)
+  JSON.parse(File.read(path))
+end
+
+# Parse and validate JSON output from LLM, ensuring it's an array of strings
+def parse_topics_output(llm_output, max_topics = nil)
+  begin
+    # Try to parse as JSON first
+    topics = JSON.parse(llm_output.strip)
+    
+    # Ensure it's an array
+    topics = [topics] unless topics.is_a?(Array)
+    
+    # Convert all elements to strings and filter out empty ones
+    topics = topics.map(&:to_s).reject(&:empty?)
+    
+    # Limit topics if max_topics is specified
+    topics = topics.first(max_topics) if max_topics && max_topics > 0
+    
+    topics
+  rescue JSON::ParserError
+    # If JSON parsing fails, try to extract topics from text
+    lines = llm_output.strip.split("\n")
+    topics = lines.map { |line| line.gsub(/^[-*•]\s*/, '').strip }.reject(&:empty?)
+    
+    # Limit topics if max_topics is specified
+    topics = topics.first(max_topics) if max_topics && max_topics > 0
+    
+    topics
+  end
+end
+
+# CLI options
+
+options = {
+  cache_path: nil,
+  updated_at: nil,
+  topics_prompt_path: nil,
+  max_topics: nil
+}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} <github_conversation_url|owner/repo/type/number> --topics-prompt-path <prompt_path> [options]"
+  opts.on("--topics-prompt-path PATH", "Path to LLM prompt file for topic extraction (required)") { |v| options[:topics_prompt_path] = v }
+  opts.on("--cache-path PATH", "Root path for caching topics output") { |v| options[:cache_path] = v }
+  opts.on("--updated-at TIME", "Timestamp to pass to fetch-github-conversation") { |v| options[:updated_at] = v }
+  opts.on("--max-topics NUMBER", Integer, "Maximum number of topics to extract") { |v| options[:max_topics] = v }
+end
+opt_parser.parse!
+opt_parser.order!(ARGV)
+
+if options[:topics_prompt_path].nil?
+  puts "--topics-prompt-path is required."
+  puts opt_parser
+  exit 1
+end
+
+input = ARGV[0]
+abort opt_parser.to_s unless input
+ARGV.delete(input)
+
+owner, repo, type, number = parse_input(input)
+
+# Find the directory of this script
+script_dir = File.expand_path(File.dirname(__FILE__))
+fetch_script = File.join(script_dir, "fetch-github-conversation")
+
+# Build fetch-github-conversation command using the script's directory
+fetch_cmd = [fetch_script]
+fetch_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
+fetch_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
+fetch_cmd << input
+
+# Determine topics cache path if caching is enabled
+topics_path = nil
+if options[:cache_path]
+  topics_path = File.join(options[:cache_path], "topics", owner, repo, type, "#{number}.json")
+end
+
+# Fetch conversation JSON
+conversation_json = run_cmd(fetch_cmd.join(" "))
+data = JSON.parse(conversation_json)
+conversation_updated_at = get_updated_at(data, type)
+
+# Check topics cache freshness
+cached_topics = load_topics_cache(topics_path)
+if cached_topics && cached_topics["updated_at"] && conversation_updated_at && cached_topics["updated_at"] >= conversation_updated_at && cached_topics["max_topics"] == options[:max_topics]
+  # Cached topics are up-to-date, print and exit
+  puts JSON.generate(cached_topics["topics"])
+  exit 0
+end
+
+# Extract text for topic extraction
+text = extract_text(data)
+
+# Prepare topics prompt
+prompt_path = options[:topics_prompt_path]
+
+# Run llm CLI to generate topics using the -f flag for the prompt file
+llm_output = run_cmd("llm -f #{Shellwords.escape(prompt_path)} <<< #{Shellwords.escape(text)}")
+
+# Parse and validate the topics output
+topics = parse_topics_output(llm_output, options[:max_topics])
+
+# Optionally save topics as JSON, including updated_at from the conversation
+if topics_path
+  FileUtils.mkdir_p(File.dirname(topics_path))
+  File.write(topics_path, JSON.pretty_generate({
+    url: input,
+    owner: owner,
+    repo: repo,
+    type: format_type(type),
+    number: number,
+    topics: topics,
+    max_topics: options[:max_topics],
+    updated_at: conversation_updated_at,
+    generated_at: Time.now.utc.iso8601
+  }))
+end
+
+# Output topics to stdout as JSON array
+puts JSON.generate(topics)
