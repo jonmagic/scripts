@@ -21,7 +21,22 @@ Personal productivity scripts for managing markdown-based notes, GitHub workflow
 - `bin/select-folder --target-dir DIR` - Interactive folder selection with fzf
 
 ### Testing
-No formal test suite. Scripts are tested manually and used daily in production workflows.
+Comprehensive test suite using minitest with both unit and integration tests. All new functionality should include tests.
+
+**Test Structure:**
+```
+test/
+├── test_helper.rb      # Shared test utilities
+├── unit/               # Unit tests for lib modules
+├── integration/        # End-to-end script tests
+└── example_test.rb     # Basic infrastructure test
+```
+
+**Running Tests:**
+- `rake test` - Run all tests
+- `rake unit` - Run only unit tests  
+- `rake integration` - Run only integration tests
+- `rake stats` - Show test statistics
 
 ## Architecture
 
@@ -39,25 +54,57 @@ No formal test suite. Scripts are tested manually and used daily in production w
 ### File Organization
 ```
 bin/           # Executable scripts (all chmod +x)
+lib/           # Shared Ruby modules and utilities
+test/          # Test suite (unit and integration tests)
 data/          # Cached data (gitignored)
   conversations/  # GitHub conversation cache
   summaries/      # AI-generated summaries
 ```
 
+### Shared Libraries
+Common functionality is extracted into reusable modules in `lib/`:
+- **ErrorHandling**: Consistent error handling with `error_exit`
+- **DependencyChecker**: Command dependency validation with `check_dependency`
+- **LlmUtils**: LLM model flag handling and execution utilities
+- **ClipboardUtils**: Cross-platform clipboard functionality
+- **ShellUtils**: Safe shell command execution with error handling
+- **MeetingFileUtils**: Meeting-specific file operations and utilities
+- **LlmWorkflowUtils**: Complex LLM workflow operations
+
 ## Code Style & Patterns
 
 ### Ruby Scripts
 - Use `#!/usr/bin/env ruby` shebang
+- Import shared modules: `require 'error_handling'`, `include ErrorHandling`
 - OptionParser for CLI argument handling
-- Open3.capture3 for shell command execution
+- Open3.capture3 for shell command execution (or use ShellUtils module)
 - JSON.pretty_generate for output formatting
 - Descriptive method names with docstring comments
 - Snake_case for variables and methods
 
 ### Error Handling
-- Use `abort "message"` for fatal errors with user-friendly messages
-- Check for required dependencies and files before proceeding
+- Use `error_exit("message")` from ErrorHandling module for fatal errors
+- Use `check_dependency("command")` from DependencyChecker module
 - Validate CLI arguments and provide usage messages
+- Always handle missing files and invalid inputs gracefully
+
+### Using Shared Modules
+Scripts should import and use shared modules instead of duplicating code:
+
+```ruby
+# Add lib directory to load path
+$LOAD_PATH.unshift(File.expand_path('../../lib', __FILE__))
+
+# Import required modules
+require 'error_handling'
+require 'dependency_checker'
+require 'llm_utils'
+
+# Include functionality
+include ErrorHandling
+include DependencyChecker
+include LlmUtils
+```
 
 ### Shell Integration
 - Use Open3 for safe shell command execution
@@ -74,9 +121,25 @@ data/          # Cached data (gitignored)
 ### Adding New Scripts
 - Place executable scripts in `bin/` directory
 - Use descriptive filenames without extensions
+- Import and use shared modules from `lib/` directory
 - Include usage documentation in script comments
-- Add dependency checks where needed
+- Add dependency checks using DependencyChecker module
 - Update README.md with new command documentation
+- **Add tests**: Create integration test in `test/integration/` for new scripts
+
+### Adding New Shared Functionality  
+- Extract common patterns into modules in `lib/` directory
+- Use descriptive module names and follow existing patterns
+- Add comprehensive unit tests in `test/unit/` for new modules
+- Update existing scripts to use new shared functionality
+- Document module usage in these copilot instructions
+
+### Test-Driven Development
+- Write integration tests first to capture expected behavior
+- Extract and test shared functionality with unit tests
+- Run tests frequently: `rake test` during development
+- Ensure all tests pass before committing changes
+- Aim for high test coverage of critical functionality
 
 ### External Integrations
 - Always check for tool availability before use
