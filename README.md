@@ -32,6 +32,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
 - **Porcelain**: User-friendly scripts intended for direct use.
   - [Archive Meeting](#archive-meeting)
   - [Create Weekly Note](#create-weekly-note)
+  - [Extract Topics](#extract-topics)
   - [Fetch GitHub Conversation](#fetch-github-conversation)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
@@ -48,6 +49,7 @@ alias cwn='/path/to/create-weekly-note --template-path /path/to/Templates/Week\ 
 alias am='/path/to/archive-meeting --transcripts-dir ~/Documents/Zoom/ --target-dir /path/to --executive-summary-prompt-path /path/to/zoom-transcript-executive-summary.md --detailed-notes-prompt-path /path/to/transcript-meeting-notes.md'
 alias commit='/path/to/prepare-commit --commit-message-prompt-path /path/to/commit-message.md'
 alias fgc='/path/to/fetch-github-conversation'
+alias et='/path/to/extract-topics --topics-prompt-path /path/to/topic-extraction.txt'
 alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
 ```
@@ -140,6 +142,46 @@ Summarize and cache a pull request, only if updated:
 
 ```sh
 /path/to/summarize-github-conversation octocat/Hello-World/pull/123 --executive-summary-prompt-path /path/to/github-summary.txt --cache-path ./cache --updated-at 2024-05-01T00:00:00Z
+```
+
+The script will abort with an error message if the input is not recognized, if the prompt path is not provided, or if any command fails.
+
+### Extract Topics
+
+Extract key thematic topics or labels from a GitHub conversation using the `llm` CLI and a prompt file. This script fetches or loads a cached GitHub conversation (using `fetch-github-conversation`), extracts the text content, and uses the `llm` CLI to identify and extract thematic topics using the provided prompt file. Topics are returned as a JSON array of strings. Optionally, it saves the topics as a JSON file in the cache and can limit the number of topics extracted.
+
+**Usage:**
+
+```sh
+/path/to/extract-topics <github_conversation_url> --topics-prompt-path <prompt_path> [--cache-path <cache_root>] [--updated-at <iso8601>] [--max-topics <number>]
+```
+
+- `<github_conversation_url>`: A GitHub issue, pull request, or discussion URL (e.g. `https://github.com/octocat/Hello-World/issues/42`)
+- `owner/repo/type/number`: Alternative input form (e.g. `octocat/Hello-World/issues/42`)
+- `--topics-prompt-path <prompt_path>`: **(Required)** Path to the prompt file to use for topic extraction. The prompt file should contain instructions for the LLM; the conversation text will be appended as input.
+- `--cache-path <cache_root>`: (Optional) Root directory for caching. Topics are stored as `topics/<owner>/<repo>/<type>/<number>.json` under this path.
+- `--updated-at <timestamp>`: (Optional) Only fetch if the remote conversation is newer than this ISO8601 timestamp (or the cached data).
+- `--max-topics <number>`: (Optional) Maximum number of topics to extract from the conversation.
+
+**Output Format:**
+
+The script outputs a JSON array of strings to STDOUT, for example:
+```json
+["performance", "authentication", "database", "caching", "bug-fix"]
+```
+
+**Examples:**
+
+Extract topics from a GitHub issue:
+
+```sh
+/path/to/extract-topics https://github.com/octocat/Hello-World/issues/42 --topics-prompt-path /path/to/topic-extraction.txt
+```
+
+Extract and cache topics from a pull request, limiting to 5 topics:
+
+```sh
+/path/to/extract-topics octocat/Hello-World/pull/123 --topics-prompt-path /path/to/topic-extraction.txt --cache-path ./cache --max-topics 5
 ```
 
 The script will abort with an error message if the input is not recognized, if the prompt path is not provided, or if any command fails.
