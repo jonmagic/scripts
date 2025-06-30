@@ -37,3 +37,12 @@ if ! command -v gh >/dev/null 2>&1; then
 else
   echo "gh (GitHub CLI) is already installed."
 fi
+
+# Install Ruby gems using Bundler
+if ! command -v bundle >/dev/null 2>&1; then
+  echo "Bundler not found. Installing via gem..."
+  gem install bundler
+fi
+
+echo "Installing Ruby gems..."
+bundle install

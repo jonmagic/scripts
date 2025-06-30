@@ -7,7 +7,9 @@ Personal productivity scripts for managing markdown-based notes, GitHub workflow
 ## Core Commands
 
 ### Setup & Dependencies
-- `bin/bootstrap` - Install required dependencies (homebrew, fzf, llm, gh)
+- `bin/bootstrap` - Install required dependencies (homebrew, fzf, llm, gh, bundler, gems)
+- `Gemfile` - Ruby dependency management
+- `bundle install` - Install Ruby gems
 
 ### Main Scripts (Porcelain)
 - `bin/create-weekly-note --template-path TEMPLATE --target-dir DIR` - Generate weekly notes from templates
@@ -37,6 +39,11 @@ test/
 - `rake unit` - Run only unit tests  
 - `rake integration` - Run only integration tests
 - `rake stats` - Show test statistics
+
+**Continuous Integration:**
+- GitHub Actions CI workflow runs tests on Ruby 3.0, 3.1, 3.2, and 3.3
+- Automatically installs system dependencies (fzf, gh, llm)
+- Runs full test suite and reports statistics
 
 ## Architecture
 
@@ -146,6 +153,12 @@ include LlmUtils
 - Provide clear error messages for missing dependencies
 - Use standard CLI patterns for consistency
 - Cache expensive operations when possible
+
+### Dependency Management
+- Use `Gemfile` for Ruby gem dependencies
+- Run `bundle install` after adding new gems
+- Update `bin/bootstrap` if new system dependencies are needed
+- CI workflow automatically tests across multiple Ruby versions
 
 ### Markdown Processing
 - Maintain wikilink compatibility for note cross-references
