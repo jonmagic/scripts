@@ -140,6 +140,7 @@ opt_parser = OptionParser.new do |opts|
   opts.on("--cache-path PATH", "Root path for caching topics output") { |v| options[:cache_path] = v }
   opts.on("--updated-at TIME", "Timestamp to pass to fetch-github-conversation") { |v| options[:updated_at] = v }
   opts.on("--max-topics NUMBER", Integer, "Maximum number of topics to extract") { |v| options[:max_topics] = v }
+  opts.on("-h", "--help", "Show this help message") { puts opts; exit }
 end
 opt_parser.parse!
 opt_parser.order!(ARGV)
