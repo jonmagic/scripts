@@ -34,6 +34,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Create Weekly Note](#create-weekly-note)
   - [Extract Topics](#extract-topics)
   - [Fetch GitHub Conversation](#fetch-github-conversation)
+  - [Index Summary](#index-summary)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
   - [Prepare Pull Request](#prepare-pull-request)
@@ -50,6 +51,7 @@ alias am='/path/to/archive-meeting --transcripts-dir ~/Documents/Zoom/ --target-
 alias commit='/path/to/prepare-commit --commit-message-prompt-path /path/to/commit-message.md'
 alias fgc='/path/to/fetch-github-conversation'
 alias et='/path/to/extract-topics --topics-prompt-path /path/to/topic-extraction.txt'
+alias is='/path/to/index-summary'
 alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
 ```
@@ -185,6 +187,47 @@ Extract and cache topics from a pull request, limiting to 5 topics:
 ```
 
 The script will abort with an error message if the input is not recognized, if the prompt path is not provided, or if any command fails.
+
+### Index Summary
+
+This script generates embeddings from conversation summaries and indexes them in a Qdrant vector database for semantic search and retrieval. It takes a summary text (either via command line argument or stdin), generates a vector embedding using the `llm embed` command with the `text-embedding-3-small` model, and stores it in a specified Qdrant collection with associated metadata.
+
+**Usage:**
+
+```sh
+/path/to/index-summary --url <github_url> [options]
+```
+
+**Options:**
+
+- `--url <github_url>`: **(Required)** GitHub conversation URL to associate with the summary.
+- `--summary-text <text>`: Summary text to embed. If not provided, the script reads from stdin.
+- `--topics <topics>`: Comma-separated list of topics to include in metadata.
+- `--qdrant-url <url>`: Qdrant server URL (default: `http://localhost:6333`).
+- `--collection-name <name>`: Qdrant collection name (default: `summaries`).
+- `--model <model>`: Embedding model to use (default: `text-embedding-3-small`).
+
+**Examples:**
+
+Index a summary by providing text directly:
+
+```sh
+/path/to/index-summary --url https://github.com/octocat/Hello-World/issues/42 --summary-text "This issue discusses performance optimizations for the main API endpoint" --topics "performance,api,optimization"
+```
+
+Index a summary by piping text:
+
+```sh
+echo "Bug report about authentication failures in Safari" | /path/to/index-summary --url https://github.com/octocat/Hello-World/issues/43 --topics "bug,authentication,safari"
+```
+
+Use with the summarize-github-conversation script:
+
+```sh
+/path/to/summarize-github-conversation https://github.com/octocat/Hello-World/issues/42 --executive-summary-prompt-path /path/to/summary-prompt.txt | /path/to/index-summary --url https://github.com/octocat/Hello-World/issues/42
+```
+
+The script will abort with an error message if the URL is not provided, if the summary text is empty, if the embedding generation fails, or if the Qdrant indexing fails.
 
 ### Prepare Commit
 
