@@ -1,2 +1,4 @@
 # gitignore these paths
 /data
+/vendor/bundle
+/.bundle

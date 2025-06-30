@@ -41,7 +41,16 @@ fi
 # Install Ruby gems using Bundler
 if ! command -v bundle >/dev/null 2>&1; then
   echo "Bundler not found. Installing via gem..."
-  gem install bundler
+  gem install bundler:2.6.9
+fi
+
+# Ensure we're using the correct Bundler version
+current_bundler_version=$(bundle --version | grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+")
+required_bundler_version="2.6.9"
+
+if [ "$current_bundler_version" != "$required_bundler_version" ]; then
+  echo "Bundler version mismatch. Installing Bundler $required_bundler_version..."
+  gem install bundler:$required_bundler_version
 fi
 
 echo "Installing Ruby gems..."
