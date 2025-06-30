@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# llm-context - Concatenate README and bin scripts for LLM context
+#
+# This script outputs the contents of README.md and all files in the bin/
+# directory, with file path comments before each file's content. This is
+# useful for providing comprehensive context to LLMs about the repository.
+
+set -euo pipefail
+
+# Get the script directory (should be bin/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the repository root (parent of bin/)
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Function to output file with header comment
+output_file() {
+    local file_path="$1"
+    local relative_path="${file_path#$REPO_ROOT/}"
+
+    echo "##############################################"
+    echo "# File: $relative_path"
+    echo ""
+    cat "$file_path"
+    echo ""
+    echo ""
+}
+
+# Start with README.md
+readme_path="$REPO_ROOT/README.md"
+if [[ -f "$readme_path" ]]; then
+    output_file "$readme_path"
+else
+    echo "##############################################"
+    echo "# File: README.md"
+    echo ""
+    echo "README.md not found"
+    echo ""
+    echo ""
+fi
+
+# Process all files in bin/ directory (excluding this script)
+current_script="$(basename "${BASH_SOURCE[0]}")"
+
+for file in "$SCRIPT_DIR"/*; do
+    # Skip if not a regular file
+    [[ -f "$file" ]] || continue
+
+    # Skip this script itself
+    basename_file="$(basename "$file")"
+    [[ "$basename_file" != "$current_script" ]] || continue
+
+    output_file "$file"
+done
