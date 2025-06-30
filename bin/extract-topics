@@ -6,7 +6,7 @@
 #   extract-topics <url> --topics-prompt-path <prompt_path> [--cache-path <cache_path>] [--updated-at <iso8601>] [--max-topics <number>]
 #
 # This script fetches or loads a cached GitHub conversation (issue, pull, or discussion) as JSON using the fetch-github-conversation script,
-# extracts the text content, and uses the llm CLI to extract thematic topics using the provided prompt file. 
+# extracts the text content, and uses the llm CLI to extract thematic topics using the provided prompt file.
 # Optionally, it saves the topics as a JSON file in the cache and can limit the number of topics extracted.
 #
 # Requirements:
@@ -97,32 +97,16 @@ def load_topics_cache(path)
   JSON.parse(File.read(path))
 end
 
-# Parse and validate JSON output from LLM, ensuring it's an array of strings
+# Parse topics output from LLM (one topic per line) into an array of strings
 def parse_topics_output(llm_output, max_topics = nil)
-  begin
-    # Try to parse as JSON first
-    topics = JSON.parse(llm_output.strip)
-    
-    # Ensure it's an array
-    topics = [topics] unless topics.is_a?(Array)
-    
-    # Convert all elements to strings and filter out empty ones
-    topics = topics.map(&:to_s).reject(&:empty?)
-    
-    # Limit topics if max_topics is specified
-    topics = topics.first(max_topics) if max_topics && max_topics > 0
-    
-    topics
-  rescue JSON::ParserError
-    # If JSON parsing fails, try to extract topics from text
-    lines = llm_output.strip.split("\n")
-    topics = lines.map { |line| line.gsub(/^[-*•]\s*/, '').strip }.reject(&:empty?)
-    
-    # Limit topics if max_topics is specified
-    topics = topics.first(max_topics) if max_topics && max_topics > 0
-    
-    topics
-  end
+  # Split output into lines and clean up each topic
+  lines = llm_output.strip.split("\n")
+  topics = lines.map { |line| line.gsub(/^[-*•]\s*/, '').strip }.reject(&:empty?)
+
+  # Limit topics if max_topics is specified
+  topics = topics.first(max_topics) if max_topics && max_topics > 0
+
+  topics
 end
 
 # CLI options
@@ -163,9 +147,9 @@ fetch_script = File.join(script_dir, "fetch-github-conversation")
 
 # Build fetch-github-conversation command using the script's directory
 fetch_cmd = [fetch_script]
+fetch_cmd << input
 fetch_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
 fetch_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
-fetch_cmd << input
 
 # Determine topics cache path if caching is enabled
 topics_path = nil
