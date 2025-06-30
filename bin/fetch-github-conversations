@@ -1,0 +1,156 @@
+#!/usr/bin/env ruby
+
+# fetch-github-conversations: Fetch and export GitHub issue, pull request, or discussion data for multiple URLs
+#
+# This script uses bin/fetch-github-conversation under the hood to fetch multiple GitHub conversations
+# at once. It accepts a list of URLs either from stdin (piped) or from a file, and streams the
+# JSON output to stdout.
+#
+# Features:
+# - Uses bin/fetch-github-conversation for each URL
+# - Passes through all CLI arguments (--cache-path, --updated-at, etc.)
+# - Accepts URLs from stdin (piped) or from a file
+# - Streams JSON output to stdout
+# - Continues processing even if individual URLs fail
+#
+# Examples
+#
+#   # From stdin (piped)
+#   echo "https://github.com/octocat/Hello-World/issues/42" | fetch-github-conversations
+#
+#   # From file
+#   fetch-github-conversations urls.txt
+#
+#   # With caching options
+#   fetch-github-conversations --cache-path ./cache --updated-at 2024-05-01T00:00:00Z urls.txt
+#
+# Arguments
+#
+#   file_path - Optional path to file containing URLs, one per line
+#               If not provided, reads from stdin
+#
+# Options
+#
+#   All options are passed through to bin/fetch-github-conversation
+#   --cache-path PATH   - Root path for caching fetched data
+#   --updated-at TIME   - Timestamp to compare against (ISO8601)
+#
+# Requirements
+#
+# - Ruby
+# - bin/fetch-github-conversation script in the same directory
+# - The `gh` command-line tool (GitHub CLI) with appropriate authentication
+#
+# The script will continue processing even if individual URLs fail, but will
+# output error messages to stderr for any failures.
+
+require "open3"
+require "optparse"
+
+# Public: Runs a shell command and returns stdout. Outputs errors to stderr but doesn't abort.
+#
+# cmd - The shell command to run (String).
+#
+# Returns the standard output of the command (String) or nil if command failed.
+def run_cmd_safe(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  unless status.success?
+    $stderr.puts "Command failed: #{cmd}"
+    $stderr.puts stderr
+    return nil
+  end
+  stdout
+end
+
+# Parse command line arguments, separating options from positional arguments
+options_for_underlying_script = []
+file_path = nil
+
+# We need to manually parse ARGV to separate options from the file path
+# because we want to pass options through to the underlying script
+i = 0
+while i < ARGV.length
+  arg = ARGV[i]
+  
+  if arg.start_with?("--")
+    # This is an option
+    options_for_underlying_script << arg
+    
+    # Check if this option expects a value
+    if arg.include?("=")
+      # Option with value in same argument (--option=value)
+      # Already handled
+    elsif i + 1 < ARGV.length && !ARGV[i + 1].start_with?("--")
+      # Next argument is the value for this option
+      i += 1
+      options_for_underlying_script << ARGV[i]
+    end
+  else
+    # This is a positional argument (file path)
+    if file_path.nil?
+      file_path = arg
+    else
+      $stderr.puts "Error: Multiple file paths provided. Only one file path is supported."
+      exit 1
+    end
+  end
+  
+  i += 1
+end
+
+# Determine the path to the fetch-github-conversation script
+script_dir = File.dirname(__FILE__)
+fetch_script = File.join(script_dir, "fetch-github-conversation")
+
+unless File.exist?(fetch_script) && File.executable?(fetch_script)
+  $stderr.puts "Error: fetch-github-conversation script not found or not executable at #{fetch_script}"
+  exit 1
+end
+
+# Get URLs from either file or stdin
+urls = []
+
+if file_path
+  # Read URLs from file
+  unless File.exist?(file_path)
+    $stderr.puts "Error: File not found: #{file_path}"
+    exit 1
+  end
+  
+  begin
+    urls = File.readlines(file_path).map(&:strip).reject(&:empty?)
+  rescue => e
+    $stderr.puts "Error reading file #{file_path}: #{e.message}"
+    exit 1
+  end
+else
+  # Read URLs from stdin
+  if $stdin.tty?
+    $stderr.puts "Error: No file path provided and stdin is not piped"
+    $stderr.puts "Usage: #{$0} [options] <file_path>"
+    $stderr.puts "   or: command | #{$0} [options]"
+    exit 1
+  end
+  
+  urls = $stdin.readlines.map(&:strip).reject(&:empty?)
+end
+
+if urls.empty?
+  $stderr.puts "Error: No URLs provided"
+  exit 1
+end
+
+# Process each URL
+urls.each do |url|
+  # Build command for fetch-github-conversation
+  cmd_parts = [fetch_script] + options_for_underlying_script + [url]
+  cmd = cmd_parts.map { |part| "'#{part.gsub("'", "'\\''")}'" }.join(" ")
+  
+  # Run the command and output result
+  result = run_cmd_safe(cmd)
+  if result
+    puts result
+  else
+    $stderr.puts "Failed to fetch: #{url}"
+  end
+end
