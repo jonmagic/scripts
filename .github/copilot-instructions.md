@@ -36,7 +36,7 @@ test/
 
 **Running Tests:**
 - `rake test` - Run all tests
-- `rake unit` - Run only unit tests  
+- `rake unit` - Run only unit tests
 - `rake integration` - Run only integration tests
 - `rake stats` - Show test statistics
 
@@ -79,6 +79,11 @@ Common functionality is extracted into reusable modules in `lib/`:
 - **LlmWorkflowUtils**: Complex LLM workflow operations
 
 ## Code Style & Patterns
+
+### File Formatting
+- Always insert a final newline at the end of files
+- Trim final newlines to ensure only one newline at file end
+- Trim trailing whitespace from all lines
 
 ### Ruby Scripts
 - Use `#!/usr/bin/env ruby` shebang
@@ -134,7 +139,7 @@ include LlmUtils
 - Update README.md with new command documentation
 - **Add tests**: Create integration test in `test/integration/` for new scripts
 
-### Adding New Shared Functionality  
+### Adding New Shared Functionality
 - Extract common patterns into modules in `lib/` directory
 - Use descriptive module names and follow existing patterns
 - Add comprehensive unit tests in `test/unit/` for new modules
