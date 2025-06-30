@@ -12,26 +12,22 @@ require "optparse"
 require "shellwords"
 require "tempfile"
 
+# Add lib directory to load path
+$LOAD_PATH.unshift(File.expand_path('../../lib', __FILE__))
+
+# Import shared modules
+require 'error_handling'
+require 'dependency_checker'
+require 'llm_utils'
+require 'clipboard_utils'
+
+# Include shared functionality
+include ErrorHandling
+include DependencyChecker
+include LlmUtils
+include ClipboardUtils
+
 # --- Helper Methods ---
-
-# Exits the script with an error message.
-#
-# message - The String error message to display.
-#
-# Returns nothing. Exits the script.
-def error_exit(message)
-  puts "Error: #{message}"
-  exit 1
-end
-
-# Checks if a required command-line dependency is available in PATH.
-#
-# cmd - The String name of the command to check.
-#
-# Returns nothing. Exits if not found.
-def check_dependency(cmd)
-  system("which #{cmd} > /dev/null 2>&1") || error_exit("Required dependency '#{cmd}' not found in PATH.")
-end
 
 # Gets the commit messages and changes between HEAD and the base branch.
 #
@@ -97,15 +93,6 @@ end
 # text - The String to copy.
 #
 # Returns nothing.
-def copy_to_clipboard(text)
-  IO.popen("pbcopy", "w") { |f| f << text }
-end
-
-# Edit the provided text using the editor configured in git.
-#
-# text - The String text to edit.
-#
-# Returns the edited text as a String.
 def edit_text(text)
   Tempfile.create(["pr_edit", ".md"]) do |tmp|
     tmp.puts text

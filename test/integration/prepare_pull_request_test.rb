@@ -36,7 +36,7 @@ class PrepareFullRequestIntegrationTest < Minitest::Test
     content = File.read(@script_path)
     assert_includes content, "OptionParser", "Script should use OptionParser"
     assert_includes content, "error_exit", "Script should use error_exit function"
-    assert_includes content, "check_dependency", "Script should check dependencies"
+    assert_includes content, "DependencyChecker", "Script should use DependencyChecker module"
   end
 
   def test_prepare_pull_request_checks_dependencies

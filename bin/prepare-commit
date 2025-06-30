@@ -12,26 +12,22 @@ require "optparse"
 require "shellwords"
 require "tempfile"
 
+# Add lib directory to load path
+$LOAD_PATH.unshift(File.expand_path('../../lib', __FILE__))
+
+# Import shared modules
+require 'error_handling'
+require 'dependency_checker'
+require 'llm_utils'
+require 'clipboard_utils'
+
+# Include shared functionality
+include ErrorHandling
+include DependencyChecker
+include LlmUtils
+include ClipboardUtils
+
 # --- Helper Methods ---
-
-# Exits the script with an error message.
-#
-# message - The String error message to display.
-#
-# Returns nothing. Exits the script.
-def error_exit(message)
-  puts "Error: #{message}"
-  exit 1
-end
-
-# Checks if a required command-line dependency is available in PATH.
-#
-# cmd - The String name of the command to check.
-#
-# Returns nothing. Exits if not found.
-def check_dependency(cmd)
-  system("which #{cmd} > /dev/null 2>&1") || error_exit("Required dependency '#{cmd}' not found in PATH.")
-end
 
 # Prompts the user to select a commit type using fzf.
 #
@@ -63,15 +59,6 @@ def staged_diff
   diff
 end
 
-# Returns the model flag for the llm command, or an empty string if no model is specified.
-#
-# llm_model - The String model name or nil.
-#
-# Returns a String suitable for the llm command.
-def llm_model_flag(llm_model)
-  llm_model && !llm_model.strip.empty? ? "-m #{Shellwords.escape(llm_model)}" : ""
-end
-
 # Generates a commit message using the LLM, given the prompt, diff, type, and scope.
 #
 # prompt_path - The String path to the commit message prompt template.
@@ -101,15 +88,6 @@ def generate_commit_msg(prompt_path, diff, commit_type, scope, llm_model)
     msg, _ = Open3.capture2(cmd, stdin_data: diff)
     return msg.strip
   end
-end
-
-# Copies the given text to the macOS clipboard using pbcopy.
-#
-# text - The String to copy.
-#
-# Returns nothing.
-def copy_to_clipboard(text)
-  IO.popen("pbcopy", "w") { |f| f << text }
 end
 
 # === Main Script ===
