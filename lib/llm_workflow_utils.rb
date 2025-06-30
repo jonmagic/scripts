@@ -10,37 +10,37 @@ module LlmWorkflowUtils
   include LlmUtils
   include ShellUtils
 
-  # Generates an executive summary for a meeting transcript
+  # Processes input file with LLM using a prompt and saves result to output file
   #
-  # dest_file - String path to the source transcript file
-  # summary_file - String path to the output summary file
+  # input_file - String path to the source input file
+  # output_file - String path to the output file
   # llm_model - String model name or nil
   # prompt_path - String path to the LLM prompt template
   #
-  # Returns nothing. Creates the summary file.
-  def self.generate_executive_summary(dest_file:, summary_file:, llm_model:, prompt_path:)
-    transcript_content = File.read(dest_file)
+  # Returns nothing. Creates the output file.
+  def self.process_and_save_with_llm(input_file:, output_file:, llm_model:, prompt_path:)
+    input_content = File.read(input_file)
     model_flag = LlmUtils.new.llm_model_flag(llm_model)
     cmd = "llm -f #{Shellwords.escape(prompt_path)} #{model_flag}".strip
 
-    summary, _ = Open3.capture2(cmd, stdin_data: transcript_content)
-    File.write(summary_file, summary)
+    output, _ = Open3.capture2(cmd, stdin_data: input_content)
+    File.write(output_file, output)
   end
 
-  # Generates detailed meeting notes using LLM
+  # Processes input file with LLM using a prompt and returns result
   #
-  # dest_file - String path to the source transcript file
+  # input_file - String path to the source input file
   # llm_model - String model name or nil
   # prompt_path - String path to the LLM prompt template
   #
-  # Returns String containing the generated detailed notes
-  def self.generate_detailed_notes(dest_file:, llm_model:, prompt_path:)
-    transcript_content = File.read(dest_file)
+  # Returns String containing the generated output
+  def self.process_with_llm(input_file:, llm_model:, prompt_path:)
+    input_content = File.read(input_file)
     model_flag = LlmUtils.new.llm_model_flag(llm_model)
     cmd = "llm -f #{Shellwords.escape(prompt_path)} #{model_flag}".strip
 
-    detailed_notes, _ = Open3.capture2(cmd, stdin_data: transcript_content)
-    detailed_notes.strip
+    output, _ = Open3.capture2(cmd, stdin_data: input_content)
+    output.strip
   end
 
   # Selects meeting notes section using LLM and fzf

@@ -236,60 +236,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to this pr
 
 ### Development Setup
 
-1. **Install dependencies**: Run the bootstrap script to install required system dependencies:
-   ```sh
-   bin/bootstrap
-   ```
-
-2. **Install Ruby gems**: After bootstrap, install Ruby development dependencies:
-   ```sh
-   bundle install
-   ```
-
-### Testing
-
-This project uses a comprehensive test suite with both unit and integration tests.
-
-**Running Tests:**
-```sh
-# Run all tests
-rake test
-
-# Run only unit tests
-rake unit
-
-# Run only integration tests  
-rake integration
-
-# Show test statistics
-rake stats
-```
-
-**Test Structure:**
-- `test/unit/` - Unit tests for shared modules in `lib/`
-- `test/integration/` - Integration tests for executable scripts in `bin/`
-- `test/test_helper.rb` - Shared test utilities and setup
-
-**Adding Tests:**
-- Add unit tests in `test/unit/` for new shared modules
-- Add integration tests in `test/integration/` for new executable scripts
-- Follow existing test patterns and use minitest assertions
-- Ensure all tests pass before submitting pull requests
-
-**Test Coverage:**
-The test suite includes 51 tests with 143 assertions covering:
-- All shared modules in `lib/`
-- Key functionality of executable scripts
-- Error handling and edge cases
-- Cross-platform compatibility
-
-### Code Style
-
-- Use Ruby's standard conventions (snake_case, descriptive names)
-- Extract common functionality into shared modules in `lib/`
-- Include comprehensive error handling using the ErrorHandling module
-- Add dependency checks using the DependencyChecker module
-- Follow the existing patterns for CLI argument parsing with OptionParser
+1. **Install dependencies**: `bin/bootstrap`
+2. **Run tests**: `rake test`
 
 ## Contributors
 
