@@ -46,6 +46,11 @@ data/          # Cached data (gitignored)
 
 ## Code Style & Patterns
 
+### File Formatting
+- Always insert a final newline at the end of files
+- Trim final newlines to ensure only one newline at file end
+- Trim trailing whitespace from all lines
+
 ### Ruby Scripts
 - Use `#!/usr/bin/env ruby` shebang
 - OptionParser for CLI argument handling
