@@ -127,11 +127,11 @@ end
 # repo   - The repository name (String).
 # number - The issue number (String).
 #
-# Returns a Hash with :issue and :comments keys.
+# Returns a Hash with "issue" and "comments" keys.
 def fetch_issue(owner, repo, number)
   issue = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}"))
   comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
-  { issue: issue, comments: comments }
+  { "issue" => issue, "comments" => comments }
 end
 
 # Public: Fetches a GitHub discussion and all its comments using GraphQL.
@@ -165,7 +165,7 @@ end
 # repo   - The repository name (String).
 # number - The pull request number (String).
 #
-# Returns a Hash with :pr, :comments, :reviews, :review_comments, :diff, and :commits keys.
+# Returns a Hash with "pr", "comments", "reviews", "review_comments", "diff", and "commits" keys.
 def fetch_pr(owner, repo, number)
   pr = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}"))
   comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
@@ -176,7 +176,7 @@ def fetch_pr(owner, repo, number)
   # Fetch detailed commit information
   commits = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}/commits --paginate"))
 
-  { pr: pr, comments: comments, reviews: reviews, review_comments: review_comments, diff: diff, commits: commits }
+  { "pr" => pr, "comments" => comments, "reviews" => reviews, "review_comments" => review_comments, "diff" => diff, "commits" => commits }
 end
 
 # Internal: Load cached data if present.
@@ -223,11 +223,11 @@ end
 def get_updated_at(data, type)
   case type
   when "issues"
-    data[:issue]["updated_at"]
+    data["issue"]["updated_at"]
   when "pull"
-    data[:pr]["updated_at"]
+    data["pr"]["updated_at"]
   when "discussions"
-    data[:discussion]["updated_at"]
+    data["discussion"]["updated_at"]
   else
     nil
   end
@@ -243,9 +243,9 @@ def extract_filtered_conversation(data, type)
   result = {}
 
   conversation_key = {
-    "pull" => :pr,
-    "issues" => :issue,
-    "discussions" => :discussion,
+    "pull" => "pr",
+    "issues" => "issue",
+    "discussions" => "discussion",
   }[type]
 
   conversation = data[conversation_key]
@@ -253,79 +253,79 @@ def extract_filtered_conversation(data, type)
 
   # Base fields common to all types
   result[conversation_key] = {
-    title: conversation["title"],
-    body: conversation["body"],
-    html_url: conversation["html_url"] || conversation["url"],
-    created_at: conversation["created_at"],
-    updated_at: conversation["updated_at"],
-    closed_at: conversation["closed_at"],
-    state: conversation["state"],
-    author: conversation.dig("user", "login") || conversation.dig("author", "login")
+    "title" => conversation["title"],
+    "body" => conversation["body"],
+    "html_url" => conversation["html_url"] || conversation["url"],
+    "created_at" => conversation["created_at"],
+    "updated_at" => conversation["updated_at"],
+    "closed_at" => conversation["closed_at"],
+    "state" => conversation["state"],
+    "author" => conversation.dig("user", "login") || conversation.dig("author", "login")
   }
 
   # Assignees and labels (shared by issues & PRs)
   if conversation["assignees"]
-    result[conversation_key][:assignees] = conversation["assignees"].map { |a| a["login"] }
+    result[conversation_key]["assignees"] = conversation["assignees"].map { |a| a["login"] }
   end
 
   if conversation["labels"]
-    result[conversation_key][:labels] = conversation["labels"].map { |l| l["name"] }
+    result[conversation_key]["labels"] = conversation["labels"].map { |l| l["name"] }
   end
 
   # PR-only fields
   if type == "pull"
-    result[conversation_key][:merged_at] = conversation["merged_at"]
-    result[conversation_key][:draft] = conversation["draft"]
-    result[conversation_key][:merged_by] = conversation.dig("merged_by", "login")
-    result[conversation_key][:requested_reviewers] = conversation.fetch("requested_reviewers", []).map { |r| r["login"] }
-    result[conversation_key][:base_branch] = conversation.dig("base", "ref")
-    result[conversation_key][:head_branch] = conversation.dig("head", "ref")
-    result[conversation_key][:additions] = conversation["additions"]
-    result[conversation_key][:deletions] = conversation["deletions"]
-    result[conversation_key][:changed_files] = conversation["changed_files"]
-    result[conversation_key][:commits] = conversation["commits"]
+    result[conversation_key]["merged_at"] = conversation["merged_at"]
+    result[conversation_key]["draft"] = conversation["draft"]
+    result[conversation_key]["merged_by"] = conversation.dig("merged_by", "login")
+    result[conversation_key]["requested_reviewers"] = conversation.fetch("requested_reviewers", []).map { |r| r["login"] }
+    result[conversation_key]["base_branch"] = conversation.dig("base", "ref")
+    result[conversation_key]["head_branch"] = conversation.dig("head", "ref")
+    result[conversation_key]["additions"] = conversation["additions"]
+    result[conversation_key]["deletions"] = conversation["deletions"]
+    result[conversation_key]["changed_files"] = conversation["changed_files"]
+    result[conversation_key]["commits"] = conversation["commits"]
 
     # Include the full diff
-    if data[:diff]
-      result[:diff] = data[:diff]
+    if data["diff"]
+      result["diff"] = data["diff"]
     end
 
     # Include detailed commit metadata
-    if data[:commits]
-      result[:commits] = data[:commits].map do |commit|
+    if data["commits"]
+      result["commits"] = data["commits"].map do |commit|
         {
-          sha: commit["sha"],
-          message: commit.dig("commit", "message"),
-          author: commit.dig("commit", "author", "name"),
-          author_email: commit.dig("commit", "author", "email"),
-          authored_date: commit.dig("commit", "author", "date"),
-          committer: commit.dig("commit", "committer", "name"),
-          committer_email: commit.dig("commit", "committer", "email"),
-          committed_date: commit.dig("commit", "committer", "date"),
-          url: commit["html_url"]
+          "sha" => commit["sha"],
+          "message" => commit.dig("commit", "message"),
+          "author" => commit.dig("commit", "author", "name"),
+          "author_email" => commit.dig("commit", "author", "email"),
+          "authored_date" => commit.dig("commit", "author", "date"),
+          "committer" => commit.dig("commit", "committer", "name"),
+          "committer_email" => commit.dig("commit", "committer", "email"),
+          "committed_date" => commit.dig("commit", "committer", "date"),
+          "url" => commit["html_url"]
         }.compact
       end
     end
   end
 
   # Comments (shared)
-  if data[:comments]
-    result[:comments] = data[:comments].map do |c|
+  if data["comments"]
+    result["comments"] = data["comments"].map do |c|
       comment = {
-        author: c.dig("user", "login") || c.dig("author", "login"),
-        body: c["body"],
-        created_at: c["created_at"],
-        reply_to: c.dig("reply_to", "id")
+        "author" => c.dig("user", "login") || c.dig("author", "login"),
+        "body" => c["body"],
+        "created_at" => c["created_at"],
+        "reply_to" => c.dig("reply_to", "id")
       }.compact
 
       # Include replies for discussion comments
       if c["replies"] && c["replies"].is_a?(Array)
-        comment[:replies] = c["replies"].map do |r|
+        comment["replies"] = c["replies"].map do |r|
           {
-            author: r.dig("user", "login") || r.dig("author", "login"),
-            body: r["body"],
-            created_at: r["created_at"],
-            reply_to: r.dig("reply_to", "id")
+            "author" => r.dig("user", "login") || r.dig("author", "login"),
+            "body" => r["body"],
+            "created_at" => r["created_at"],
+            "reply_to" => r.dig("reply_to", "id")
           }.compact
         end
       end
@@ -335,27 +335,27 @@ def extract_filtered_conversation(data, type)
   end
 
   # PR reviews
-  if type == "pull" && data[:reviews]
-    result[:reviews] = data[:reviews].map do |r|
+  if type == "pull" && data["reviews"]
+    result["reviews"] = data["reviews"].map do |r|
       {
-        author: r.dig("user", "login"),
-        state: r["state"],
-        body: r["body"],
-        submitted_at: r["submitted_at"]
+        "author" => r.dig("user", "login"),
+        "state" => r["state"],
+        "body" => r["body"],
+        "submitted_at" => r["submitted_at"]
       }.compact
     end
   end
 
   # PR review comments
-  if type == "pull" && data[:review_comments]
-    result[:review_comments] = data[:review_comments].map do |rc|
+  if type == "pull" && data["review_comments"]
+    result["review_comments"] = data["review_comments"].map do |rc|
       {
-        author: rc.dig("user", "login"),
-        path: rc["path"],
-        position: rc["position"],
-        line: rc["line"],
-        body: rc["body"],
-        created_at: rc["created_at"]
+        "author" => rc.dig("user", "login"),
+        "path" => rc["path"],
+        "position" => rc["position"],
+        "line" => rc["line"],
+        "body" => rc["body"],
+        "created_at" => rc["created_at"]
       }.compact
     end
   end
