@@ -1,17 +1,17 @@
 #!/usr/bin/env ruby
 
-# index-summary: Generate an embedding from a conversation summary and index it in a Qdrant collection.
+# index-summary: Generate embeddings from GitHub conversation summaries and index them in a Qdrant collection.
 #
 # Usage:
-#   index-summary --summary-text <text> --url <github_url> [options]
-#   index-summary --url <github_url> [options] < summary.txt
+#   index-summary <github_conversation_url> --executive-summary-prompt-path <prompt_path> --topics-prompt-path <prompt_path> [options]
 #
-# This script takes a conversation summary (either via --summary-text or stdin), generates an embedding
-# using the llm CLI with the text-embedding-3-small model, and indexes it in a Qdrant collection
-# with associated metadata about the conversation.
+# This script uses the existing fetch-github-conversation, summarize-github-conversation, and extract-topics
+# commands to get conversation data, generates embeddings using the llm CLI, and indexes them in Qdrant
+# with comprehensive metadata for semantic search.
 #
 # Requirements:
 # - Ruby
+# - fetch-github-conversation, summarize-github-conversation, and extract-topics scripts in PATH
 # - llm CLI in PATH with embedding support
 # - Qdrant server accessible for indexing
 
@@ -59,6 +59,28 @@ def format_type(type)
   end
 end
 
+# Extract metadata from conversation data for Qdrant indexing
+def extract_metadata(data, type, topics)
+  conversation_key = {
+    "pull" => "pr",
+    "issues" => "issue", 
+    "discussions" => "discussion"
+  }[type]
+  
+  conversation = data[conversation_key]
+  return {} unless conversation
+  
+  {
+    url: conversation["html_url"] || conversation["url"],
+    created_at: conversation["created_at"],
+    updated_at: conversation["updated_at"],
+    closed_at: conversation["closed_at"],
+    state: conversation["state"],
+    author: conversation["author"],
+    topics: topics
+  }.compact
+end
+
 # Generate embedding for the summary text using llm embed
 def generate_embedding(summary_text, model = "text-embedding-3-small")
   cmd = ["llm", "embed", "-m", model]
@@ -77,18 +99,21 @@ def generate_embedding(summary_text, model = "text-embedding-3-small")
 end
 
 # Index the embedding in Qdrant collection
-def index_in_qdrant(embedding, metadata, options)
+def index_in_qdrant(embedding, metadata, summary_text, options)
   qdrant_url = options[:qdrant_url]
   collection_name = options[:collection_name]
   
   # Generate a unique ID for this embedding based on the conversation
-  point_id = "#{metadata[:owner]}_#{metadata[:repo]}_#{metadata[:type]}_#{metadata[:number]}"
+  point_id = "#{metadata[:url].gsub(/[^a-zA-Z0-9]/, '_')}"
   
-  # Prepare the payload for Qdrant
+  # Prepare the payload for Qdrant including the summary text
   payload = {
     id: point_id,
     vector: embedding,
-    payload: metadata
+    payload: metadata.merge(
+      summary: summary_text,
+      indexed_at: Time.now.utc.iso8601
+    )
   }
   
   # Make HTTP request to Qdrant
@@ -115,63 +140,97 @@ end
 
 # CLI options
 options = {
-  summary_text: nil,
-  url: nil,
-  topics: nil,
+  executive_summary_prompt_path: nil,
+  topics_prompt_path: nil,
+  cache_path: nil,
+  updated_at: nil,
   qdrant_url: "http://localhost:6333",
   collection_name: "summaries",
   model: "text-embedding-3-small"
 }
 
 opt_parser = OptionParser.new do |opts|
-  opts.banner = "Usage: #{$0} --url <github_url> [options]"
-  opts.on("--summary-text TEXT", "Summary text to embed (if not provided via stdin)") { |v| options[:summary_text] = v }
-  opts.on("--url URL", "GitHub conversation URL (required)") { |v| options[:url] = v }
-  opts.on("--topics TOPICS", "Comma-separated list of topics") { |v| options[:topics] = v.split(",").map(&:strip) }
+  opts.banner = "Usage: #{$0} <github_conversation_url> --executive-summary-prompt-path <prompt_path> --topics-prompt-path <prompt_path> [options]"
+  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file for summary generation (required)") { |v| options[:executive_summary_prompt_path] = v }
+  opts.on("--topics-prompt-path PATH", "Path to LLM prompt file for topic extraction (required)") { |v| options[:topics_prompt_path] = v }
+  opts.on("--cache-path PATH", "Root path for caching fetched data") { |v| options[:cache_path] = v }
+  opts.on("--updated-at TIME", "Timestamp to compare against (ISO8601)") { |v| options[:updated_at] = v }
   opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
   opts.on("--collection-name NAME", "Qdrant collection name (default: summaries)") { |v| options[:collection_name] = v }
   opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
   opts.on("-h", "--help", "Show this help message") { puts opts; exit }
 end
 opt_parser.parse!
+opt_parser.order!(ARGV)
 
 # Validate required options
-if options[:url].nil?
-  puts "--url is required."
+if options[:executive_summary_prompt_path].nil?
+  puts "--executive-summary-prompt-path is required."
   puts opt_parser
   exit 1
 end
 
-# Parse the GitHub URL to extract metadata
-owner, repo, type, number = parse_input(options[:url])
-
-# Get summary text from either CLI argument or stdin
-summary_text = options[:summary_text]
-if summary_text.nil? || summary_text.strip.empty?
-  if STDIN.tty?
-    abort "Summary text must be provided via --summary-text or piped to stdin"
-  else
-    summary_text = STDIN.read.strip
-  end
+if options[:topics_prompt_path].nil?
+  puts "--topics-prompt-path is required."
+  puts opt_parser
+  exit 1
 end
+
+input = ARGV[0]
+abort opt_parser.to_s unless input
+ARGV.delete(input)
+
+# Parse the GitHub URL to extract metadata
+owner, repo, type, number = parse_input(input)
+
+# Find the directory of this script to locate other scripts
+script_dir = File.expand_path(File.dirname(__FILE__))
+fetch_script = File.join(script_dir, "fetch-github-conversation")
+summarize_script = File.join(script_dir, "summarize-github-conversation")
+topics_script = File.join(script_dir, "extract-topics")
+
+# Build fetch-github-conversation command
+fetch_cmd = [fetch_script, input]
+fetch_cmd << "--cache-path" << options[:cache_path] if options[:cache_path]
+fetch_cmd << "--updated-at" << options[:updated_at] if options[:updated_at]
+
+# Build summarize-github-conversation command
+summarize_cmd = [summarize_script, input, "--executive-summary-prompt-path", options[:executive_summary_prompt_path]]
+summarize_cmd << "--cache-path" << options[:cache_path] if options[:cache_path]
+summarize_cmd << "--updated-at" << options[:updated_at] if options[:updated_at]
+
+# Build extract-topics command  
+topics_cmd = [topics_script, input, "--topics-prompt-path", options[:topics_prompt_path]]
+topics_cmd << "--cache-path" << options[:cache_path] if options[:cache_path]
+topics_cmd << "--updated-at" << options[:updated_at] if options[:updated_at]
+
+puts "Fetching GitHub conversation #{owner}/#{repo}/#{format_type(type)}/#{number}..."
+
+# Fetch conversation data
+conversation_json = run_cmd(fetch_cmd.shelljoin)
+data = JSON.parse(conversation_json)
+
+puts "Generating summary..."
+
+# Generate summary
+summary_text = run_cmd(summarize_cmd.shelljoin).strip
 
 if summary_text.empty?
-  abort "Summary text cannot be empty"
+  abort "Generated summary is empty"
 end
 
-# Prepare metadata
-metadata = {
-  url: options[:url],
-  owner: owner,
-  repo: repo,
-  type: format_type(type),
-  number: number.to_i,
-  summary: summary_text,
-  topics: options[:topics] || [],
-  indexed_at: Time.now.utc.iso8601
-}
+puts "Extracting topics..."
 
-puts "Generating embedding for #{owner}/#{repo}/#{format_type(type)}/#{number}..."
+# Extract topics
+topics_output = run_cmd(topics_cmd.shelljoin).strip
+topics = topics_output.empty? ? [] : topics_output.split(/[,\n]/).map(&:strip).reject(&:empty?)
+
+puts "Extracting metadata..."
+
+# Extract metadata from conversation data
+metadata = extract_metadata(data, type, topics)
+
+puts "Generating embedding for summary (#{summary_text.length} characters)..."
 
 # Generate embedding
 embedding = generate_embedding(summary_text, options[:model])
@@ -180,6 +239,6 @@ puts "Embedding generated with #{embedding.length} dimensions"
 
 # Index in Qdrant
 puts "Indexing in Qdrant collection '#{options[:collection_name]}'..."
-index_in_qdrant(embedding, metadata, options)
+index_in_qdrant(embedding, metadata, summary_text, options)
 
 puts "Summary successfully indexed!"

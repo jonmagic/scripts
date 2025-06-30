@@ -51,7 +51,7 @@ alias am='/path/to/archive-meeting --transcripts-dir ~/Documents/Zoom/ --target-
 alias commit='/path/to/prepare-commit --commit-message-prompt-path /path/to/commit-message.md'
 alias fgc='/path/to/fetch-github-conversation'
 alias et='/path/to/extract-topics --topics-prompt-path /path/to/topic-extraction.txt'
-alias is='/path/to/index-summary'
+alias is='/path/to/index-summary --executive-summary-prompt-path /path/to/summary-prompt.txt --topics-prompt-path /path/to/topics-prompt.txt'
 alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
 ```
@@ -190,44 +190,46 @@ The script will abort with an error message if the input is not recognized, if t
 
 ### Index Summary
 
-This script generates embeddings from conversation summaries and indexes them in a Qdrant vector database for semantic search and retrieval. It takes a summary text (either via command line argument or stdin), generates a vector embedding using the `llm embed` command with the `text-embedding-3-small` model, and stores it in a specified Qdrant collection with associated metadata.
+This script generates embeddings from GitHub conversation summaries and indexes them in a Qdrant vector database for semantic search and retrieval. It integrates with the existing `fetch-github-conversation`, `summarize-github-conversation`, and `extract-topics` scripts to automatically obtain conversation data, generate summaries, extract topics, create embeddings, and index everything with comprehensive metadata in Qdrant.
 
 **Usage:**
 
 ```sh
-/path/to/index-summary --url <github_url> [options]
+./path/to/index-summary <github_conversation_url> --executive-summary-prompt-path <prompt_path> --topics-prompt-path <prompt_path> [options]
 ```
 
 **Options:**
 
-- `--url <github_url>`: **(Required)** GitHub conversation URL to associate with the summary.
-- `--summary-text <text>`: Summary text to embed. If not provided, the script reads from stdin.
-- `--topics <topics>`: Comma-separated list of topics to include in metadata.
+- `--executive-summary-prompt-path <path>`: **(Required)** Path to LLM prompt file for summary generation.
+- `--topics-prompt-path <path>`: **(Required)** Path to LLM prompt file for topic extraction.
+- `--cache-path <path>`: Root path for caching fetched data.
+- `--updated-at <time>`: Timestamp to compare against (ISO8601).
 - `--qdrant-url <url>`: Qdrant server URL (default: `http://localhost:6333`).
 - `--collection-name <name>`: Qdrant collection name (default: `summaries`).
 - `--model <model>`: Embedding model to use (default: `text-embedding-3-small`).
 
 **Examples:**
 
-Index a summary by providing text directly:
+Index a GitHub issue with caching:
 
 ```sh
-/path/to/index-summary --url https://github.com/octocat/Hello-World/issues/42 --summary-text "This issue discusses performance optimizations for the main API endpoint" --topics "performance,api,optimization"
+./path/to/index-summary https://github.com/octocat/Hello-World/issues/42 \
+  --executive-summary-prompt-path /path/to/summary-prompt.txt \
+  --topics-prompt-path /path/to/topics-prompt.txt \
+  --cache-path ./cache
 ```
 
-Index a summary by piping text:
+Index with custom Qdrant settings:
 
 ```sh
-echo "Bug report about authentication failures in Safari" | /path/to/index-summary --url https://github.com/octocat/Hello-World/issues/43 --topics "bug,authentication,safari"
+./path/to/index-summary https://github.com/octocat/Hello-World/pull/123 \
+  --executive-summary-prompt-path /path/to/summary-prompt.txt \
+  --topics-prompt-path /path/to/topics-prompt.txt \
+  --qdrant-url https://my-qdrant-server.com \
+  --collection-name "github-conversations"
 ```
 
-Use with the summarize-github-conversation script:
-
-```sh
-/path/to/summarize-github-conversation https://github.com/octocat/Hello-World/issues/42 --executive-summary-prompt-path /path/to/summary-prompt.txt | /path/to/index-summary --url https://github.com/octocat/Hello-World/issues/42
-```
-
-The script will abort with an error message if the URL is not provided, if the summary text is empty, if the embedding generation fails, or if the Qdrant indexing fails.
+The script automatically fetches conversation data, generates summaries and topics, creates embeddings, and indexes with metadata including URL, creation/update timestamps, state, author, and extracted topics.
 
 ### Prepare Commit
 
