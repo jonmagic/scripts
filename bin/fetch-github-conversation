@@ -233,68 +233,6 @@ def get_updated_at(data, type)
   end
 end
 
-# CLI options hash for OptionParser.
-options = {
-  cache_path: nil,
-  updated_at: nil
-}
-
-# Set up OptionParser for CLI arguments.
-opt_parser = OptionParser.new do |opts|
-  opts.banner = "Usage: #{$0} <github_conversation_url|owner/repo/type/number> [options]"
-  opts.on("--cache-path PATH", "Root path for caching fetched data") { |v| options[:cache_path] = v }
-  opts.on("--updated-at TIME", "Timestamp to compare against (ISO8601)") { |v| options[:updated_at] = v }
-end
-opt_parser.parse!
-opt_parser.order!(ARGV)
-
-# Find the first non-option argument as the input (positional argument).
-input = ARGV[0]
-if input.nil?
-  abort opt_parser.to_s
-end
-
-# Remove the positional argument from ARGV so it doesn't interfere with later logic.
-ARGV.delete(input)
-
-# Parse the input into owner, repo, type, and number.
-owner, repo, type, number = parse_input(input)
-
-# Determine cache file path if caching is enabled.
-cache_file = nil
-if options[:cache_path]
-  cache_file = File.join(options[:cache_path], "conversations", owner, repo, type, "#{number}.json")
-end
-
-# Load cached data if available.
-should_fetch = true
-cached_data = load_cache(cache_file)
-
-if cached_data && options[:updated_at]
-  # Compare updated_at from cache and flag.
-  cached_time = get_updated_at(cached_data, type)
-  should_fetch = options[:updated_at] > cached_time if cached_time
-elsif cached_data
-  should_fetch = false
-end
-
-# Fetch data from GitHub if needed, otherwise use cache.
-if should_fetch
-  data = case type
-  when "issues"
-    fetch_issue(owner, repo, number)
-  when "discussions"
-    fetch_discussion(owner, repo, number)
-  when "pull"
-    fetch_pr(owner, repo, number)
-  else
-    abort "Unknown conversation type: #{type}"
-  end
-  save_cache(cache_file, data) if cache_file
-else
-  data = cached_data
-end
-
 # Internal: Extract a filtered version of a GitHub conversation (issue, PR, or discussion).
 #
 # data - The full data Hash returned by `fetch_*`.
@@ -425,7 +363,69 @@ def extract_filtered_conversation(data, type)
   result
 end
 
+# CLI options hash for OptionParser.
+options = {
+  cache_path: nil,
+  updated_at: nil
+}
+
+# Set up OptionParser for CLI arguments.
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} <github_conversation_url|owner/repo/type/number> [options]"
+  opts.on("--cache-path PATH", "Root path for caching fetched data") { |v| options[:cache_path] = v }
+  opts.on("--updated-at TIME", "Timestamp to compare against (ISO8601)") { |v| options[:updated_at] = v }
+end
+opt_parser.parse!
+opt_parser.order!(ARGV)
+
+# Find the first non-option argument as the input (positional argument).
+input = ARGV[0]
+if input.nil?
+  abort opt_parser.to_s
+end
+
+# Remove the positional argument from ARGV so it doesn't interfere with later logic.
+ARGV.delete(input)
+
+# Parse the input into owner, repo, type, and number.
+owner, repo, type, number = parse_input(input)
+
+# Determine cache file path if caching is enabled.
+cache_file = nil
+if options[:cache_path]
+  cache_file = File.join(options[:cache_path], "conversations", owner, repo, type, "#{number}.json")
+end
+
+# Load cached data if available.
+should_fetch = true
+cached_data = load_cache(cache_file)
+
+if cached_data && options[:updated_at]
+  # Compare updated_at from cache and flag.
+  cached_time = get_updated_at(cached_data, type)
+  should_fetch = options[:updated_at] > cached_time if cached_time
+elsif cached_data
+  should_fetch = false
+end
+
+# Fetch data from GitHub if needed, otherwise use cache.
+if should_fetch
+  data = case type
+  when "issues"
+    fetch_issue(owner, repo, number)
+  when "discussions"
+    fetch_discussion(owner, repo, number)
+  when "pull"
+    fetch_pr(owner, repo, number)
+  else
+    abort "Unknown conversation type: #{type}"
+  end
+  data = extract_filtered_conversation(data, type)
+  save_cache(cache_file, data) if cache_file
+else
+  data = cached_data
+end
+
 # Fetch the conversation data based on the type and filter down
 # to high-value metadata for use in other AI based workflows.
-filtered = extract_filtered_conversation(data, type)
-puts JSON.pretty_generate(filtered)
+puts JSON.pretty_generate(data)
