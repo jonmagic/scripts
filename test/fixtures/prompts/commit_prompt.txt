@@ -1,0 +1,7 @@
+Based on the provided git diff, generate a semantic commit message that:
+1. Uses conventional commit format (type: description)
+2. Is concise but descriptive
+3. Captures the essence of the changes
+
+Git diff:
+{{diff}}

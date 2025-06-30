@@ -1,0 +1,1 @@
+Empty template with no placeholders or content.

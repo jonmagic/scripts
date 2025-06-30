@@ -1,0 +1,1 @@
+Simple template with {{date}} placeholder and no other content.

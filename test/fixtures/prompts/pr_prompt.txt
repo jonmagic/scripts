@@ -1,0 +1,12 @@
+Generate a pull request description based on the provided context:
+
+Branch: {{branch}}
+Commits: {{commits}}
+Diff: {{diff}}
+
+Format:
+# Title
+Brief, descriptive title
+
+## Description
+What this PR does and why

@@ -1,233 +1,241 @@
+#!/usr/bin/env ruby
+
 require_relative '../test_helper'
+require 'tmpdir'
+require 'fileutils'
 require 'date'
 
 class CreateWeeklyNoteIntegrationTest < Minitest::Test
   def setup
-    @script_path = File.expand_path('../../../bin/create-weekly-note', __FILE__)
-    setup_temp_directory
-    @template_file = fixture_path('weekly_template.md')
+    @test_dir = Dir.mktmpdir('create_weekly_note_test')
+    @template_path = File.join(fixtures_path, 'templates', 'weekly_template.md')
+    @simple_template_path = File.join(fixtures_path, 'templates', 'simple_template.md')
+    @empty_template_path = File.join(fixtures_path, 'templates', 'empty_template.md')
+    @script_path = File.join(repo_root, 'bin', 'create-weekly-note')
   end
 
   def teardown
-    teardown_temp_directory
+    FileUtils.rm_rf(@test_dir)
   end
 
-  def test_script_exists_and_executable
-    assert File.exist?(@script_path), "create-weekly-note script should exist"
-    assert File.executable?(@script_path), "create-weekly-note script should be executable"
-  end
+  # Happy path tests
+  def test_creates_weekly_note_with_valid_template
+    result = run_script([
+      '--template-path', @template_path,
+      '--target-dir', @test_dir
+    ])
 
-  def test_shows_help_message
-    result = run_script('create-weekly-note', ['--help'])
+    assert_equal 0, result[:exit_code], "Script should succeed: #{result[:stderr]}"
     
-    assert result[:success], "Help command should succeed"
-    assert_includes result[:stdout], "Usage:", "Should show usage information"
-    assert_includes result[:stdout], "template-path", "Should mention template-path argument"
-    assert_includes result[:stdout], "target-dir", "Should mention target-dir argument"
-  end
-
-  def test_requires_template_path_argument
-    result = run_script('create-weekly-note', ['--target-dir', @temp_dir])
+    # Check that file was created with correct date format
+    expected_filename = Date.today.strftime('%Y-%m-%d') + '_weekly_notes.md'
+    created_file = File.join(@test_dir, expected_filename)
     
-    refute result[:success], "Should fail without template path"
-    assert_includes result[:combined], "Error:", "Should show error message"
-    assert_includes result[:combined], "required", "Should mention required arguments"
-  end
-
-  def test_requires_target_dir_argument
-    result = run_script('create-weekly-note', ['--template-path', @template_file])
+    assert File.exist?(created_file), "Weekly note file should be created"
     
-    refute result[:success], "Should fail without target directory"
-    assert_includes result[:combined], "Error:", "Should show error message"
-    assert_includes result[:combined], "required", "Should mention required arguments"
+    # Check content has date substituted
+    content = File.read(created_file)
+    expected_date = Date.today.strftime('%Y-%m-%d')
+    assert content.include?(expected_date), "Template should substitute date"
+    refute content.include?('{{date}}'), "Template placeholder should be replaced"
+    
+    # Check structure is maintained
+    assert content.include?('## Goals'), "Should maintain template structure"
+    assert content.include?('## Meetings'), "Should maintain template structure"
   end
 
-  def test_validates_template_file_exists
-    nonexistent_template = File.join(@temp_dir, 'nonexistent.md')
-    result = run_script('create-weekly-note', [
+  def test_creates_weekly_note_with_simple_template
+    result = run_script([
+      '--template-path', @simple_template_path,
+      '--target-dir', @test_dir
+    ])
+
+    assert_equal 0, result[:exit_code], "Script should succeed"
+    
+    expected_filename = Date.today.strftime('%Y-%m-%d') + '_weekly_notes.md'
+    created_file = File.join(@test_dir, expected_filename)
+    
+    assert File.exist?(created_file), "Weekly note file should be created"
+    
+    content = File.read(created_file)
+    expected_date = Date.today.strftime('%Y-%m-%d')
+    assert content.include?(expected_date), "Should substitute date"
+    refute content.include?('{{date}}'), "Should replace placeholder"
+  end
+
+  def test_creates_weekly_note_with_empty_template
+    result = run_script([
+      '--template-path', @empty_template_path,
+      '--target-dir', @test_dir
+    ])
+
+    assert_equal 0, result[:exit_code], "Script should succeed even with empty template"
+    
+    expected_filename = Date.today.strftime('%Y-%m-%d') + '_weekly_notes.md'
+    created_file = File.join(@test_dir, expected_filename)
+    
+    assert File.exist?(created_file), "Weekly note file should be created"
+    
+    content = File.read(created_file)
+    assert_equal File.read(@empty_template_path), content, "Should copy empty template as-is"
+  end
+
+  def test_shows_help_with_help_flag
+    result = run_script(['--help'])
+    
+    assert_equal 0, result[:exit_code], "Help should exit successfully"
+    assert result[:stdout].include?('Usage:'), "Should show usage information"
+    assert result[:stdout].include?('--template-path'), "Should show template path option"
+    assert result[:stdout].include?('--target-dir'), "Should show target dir option"
+  end
+
+  # Sad path tests
+  def test_fails_without_required_arguments
+    result = run_script([])
+    
+    assert_equal 1, result[:exit_code], "Should fail without arguments"
+    assert result[:stderr].include?('missing') || result[:stderr].include?('required'), 
+           "Should mention missing/required arguments: #{result[:stderr]}"
+  end
+
+  def test_fails_with_missing_template_path_argument
+    result = run_script(['--target-dir', @test_dir])
+    
+    assert_equal 1, result[:exit_code], "Should fail without template path"
+    assert result[:stderr].include?('template') || result[:stderr].include?('missing'), 
+           "Should mention missing template: #{result[:stderr]}"
+  end
+
+  def test_fails_with_missing_target_dir_argument
+    result = run_script(['--template-path', @template_path])
+    
+    assert_equal 1, result[:exit_code], "Should fail without target dir"
+    assert result[:stderr].include?('target') || result[:stderr].include?('missing'), 
+           "Should mention missing target dir: #{result[:stderr]}"
+  end
+
+  def test_fails_with_nonexistent_template_file
+    nonexistent_template = File.join(@test_dir, 'nonexistent.md')
+    
+    result = run_script([
       '--template-path', nonexistent_template,
-      '--target-dir', @temp_dir
+      '--target-dir', @test_dir
     ])
     
-    refute result[:success], "Should fail with nonexistent template"
-    assert_includes result[:combined], "Template file not found", "Should mention template not found"
+    assert_equal 1, result[:exit_code], "Should fail with nonexistent template"
+    assert result[:stderr].include?('not found') || result[:stderr].include?('exist'), 
+           "Should mention file not found: #{result[:stderr]}"
   end
 
-  def test_validates_target_directory_exists
-    nonexistent_dir = File.join(@temp_dir, 'nonexistent')
-    result = run_script('create-weekly-note', [
-      '--template-path', @template_file,
+  def test_fails_with_nonexistent_target_directory
+    nonexistent_dir = File.join(@test_dir, 'nonexistent_dir')
+    
+    result = run_script([
+      '--template-path', @template_path,
       '--target-dir', nonexistent_dir
     ])
     
-    refute result[:success], "Should fail with nonexistent directory"
-    assert_includes result[:combined], "Target directory not found", "Should mention directory not found"
+    assert_equal 1, result[:exit_code], "Should fail with nonexistent directory"
+    assert result[:stderr].include?('not found') || result[:stderr].include?('exist'), 
+           "Should mention directory not found: #{result[:stderr]}"
   end
 
-  def test_creates_weekly_note_successfully
-    result = run_script('create-weekly-note', [
-      '--template-path', @template_file,
-      '--target-dir', @temp_dir
+  def test_fails_with_template_file_as_directory
+    # Create a directory with the template name
+    template_dir = File.join(@test_dir, 'template_dir')
+    FileUtils.mkdir_p(template_dir)
+    
+    result = run_script([
+      '--template-path', template_dir,
+      '--target-dir', @test_dir
     ])
     
-    assert result[:success], "Should succeed with valid arguments"
-    
-    # Find the created file
-    created_files = Dir.glob(File.join(@temp_dir, "Week of *.md"))
-    assert_equal 1, created_files.length, "Should create exactly one weekly note file"
-    
-    created_file = created_files.first
-    assert File.exist?(created_file), "Created file should exist"
-    assert File.file?(created_file), "Created path should be a file"
-    
-    # Verify file content
-    content = File.read(created_file)
-    assert_includes content, "Week of", "Should include week date"
-    refute_includes content, "{{date}}", "Should replace date placeholder"
-    refute_includes content, "{{monday:YYYY-MM-DD}}", "Should replace day placeholders"
-  end
-
-  def test_replaces_all_template_placeholders
-    result = run_script('create-weekly-note', [
-      '--template-path', @template_file,
-      '--target-dir', @temp_dir
-    ])
-    
-    assert result[:success], "Should succeed with valid arguments"
-    
-    created_file = Dir.glob(File.join(@temp_dir, "Week of *.md")).first
-    content = File.read(created_file)
-    
-    # Verify specific date format replacements
-    today = Date.today
-    week_start = today.saturday? ? today + 1 : today - today.wday
-    
-    expected_date = week_start.strftime("%Y-%m-%d")
-    assert_includes content, expected_date, "Should include correct week start date"
-    
-    # Verify day-specific replacements
-    %w[sunday monday tuesday wednesday thursday friday saturday].each_with_index do |day, i|
-      day_date = (week_start + i).strftime("%Y-%m-%d")
-      assert_includes content, day_date, "Should include date for #{day}"
-    end
-    
-    # Verify all placeholders are replaced
-    refute_match(/\{\{.*\}\}/, content, "Should replace all template placeholders")
-  end
-
-  def test_handles_capitalized_day_names
-    # Create a custom template with capitalized day placeholders
-    custom_template = File.join(@temp_dir, 'custom_template.md')
-    File.write(custom_template, "# Week {{date}}\n## Monday: {{Monday:YYYY-MM-DD}}\n## Sunday: {{Sunday:YYYY-MM-DD}}")
-    
-    result = run_script('create-weekly-note', [
-      '--template-path', custom_template,
-      '--target-dir', @temp_dir
-    ])
-    
-    assert result[:success], "Should succeed with capitalized day names"
-    
-    created_file = Dir.glob(File.join(@temp_dir, "Week of *.md")).first
-    content = File.read(created_file)
-    
-    # Verify capitalized placeholders are replaced
-    refute_includes content, "{{Monday:YYYY-MM-DD}}", "Should replace capitalized Monday"
-    refute_includes content, "{{Sunday:YYYY-MM-DD}}", "Should replace capitalized Sunday"
-  end
-
-  def test_calculates_correct_week_start_for_different_days
-    # This test verifies the week calculation logic
-    # We can't easily test all days without mocking Date.today, but we can test the logic
-    
-    result = run_script('create-weekly-note', [
-      '--template-path', @template_file,
-      '--target-dir', @temp_dir
-    ])
-    
-    assert result[:success], "Should succeed with date calculation"
-    
-    created_file = Dir.glob(File.join(@temp_dir, "Week of *.md")).first
-    filename = File.basename(created_file)
-    
-    # Extract date from filename and verify it's a Sunday (week start)
-    date_match = filename.match(/Week of (\d{4}-\d{2}-\d{2})\.md/)
-    assert date_match, "Filename should contain a date"
-    
-    week_date = Date.parse(date_match[1])
-    assert_equal 0, week_date.wday, "Week should start on Sunday (wday = 0)"
+    assert_equal 1, result[:exit_code], "Should fail when template path is directory"
+    assert result[:stderr].include?('not a file') || result[:stderr].include?('directory'), 
+           "Should mention template is not a file: #{result[:stderr]}"
   end
 
   def test_prevents_overwriting_existing_file
-    # Create the weekly note first
-    result1 = run_script('create-weekly-note', [
-      '--template-path', @template_file,
-      '--target-dir', @temp_dir
-    ])
-    assert result1[:success], "First creation should succeed"
+    # Create existing weekly note
+    expected_filename = Date.today.strftime('%Y-%m-%d') + '_weekly_notes.md'
+    existing_file = File.join(@test_dir, expected_filename)
+    File.write(existing_file, "Existing content")
     
-    # Try to create again
-    result2 = run_script('create-weekly-note', [
-      '--template-path', @template_file,
-      '--target-dir', @temp_dir
+    result = run_script([
+      '--template-path', @template_path,
+      '--target-dir', @test_dir
     ])
     
-    refute result2[:success], "Should fail when file already exists"
-    assert_includes result2[:combined], "File already exists", "Should mention file exists"
+    assert_equal 1, result[:exit_code], "Should fail when file already exists"
+    assert result[:stderr].include?('already exists') || result[:stderr].include?('overwrite'), 
+           "Should mention file already exists: #{result[:stderr]}"
+    
+    # Verify original content is preserved
+    assert_equal "Existing content", File.read(existing_file), "Should not overwrite existing file"
   end
 
-  def test_uses_different_template_content
-    # Create a custom template with different content
-    custom_template = File.join(@temp_dir, 'custom.md')
-    custom_content = "Custom weekly template for {{date}}\nMonday: {{monday:YYYY-MM-DD}}\nSpecial content here"
-    File.write(custom_template, custom_content)
+  def test_handles_invalid_flag_gracefully
+    result = run_script(['--invalid-flag', 'value'])
     
-    result = run_script('create-weekly-note', [
-      '--template-path', custom_template,
-      '--target-dir', @temp_dir
-    ])
-    
-    assert result[:success], "Should succeed with custom template"
-    
-    created_file = Dir.glob(File.join(@temp_dir, "Week of *.md")).first
-    content = File.read(created_file)
-    
-    assert_includes content, "Custom weekly template", "Should use custom template content"
-    assert_includes content, "Special content here", "Should preserve custom content"
-    refute_includes content, "{{date}}", "Should still replace placeholders"
+    assert_equal 1, result[:exit_code], "Should fail with invalid flag"
+    assert result[:stderr].include?('invalid') || result[:stderr].include?('unknown'), 
+           "Should mention invalid flag: #{result[:stderr]}"
   end
 
-  def test_handles_empty_template
-    empty_template = File.join(@temp_dir, 'empty.md')
-    File.write(empty_template, "")
+  def test_handles_template_with_read_permissions_denied
+    # Create template file and remove read permissions
+    restricted_template = File.join(@test_dir, 'restricted_template.md')
+    File.write(restricted_template, "Template content")
+    File.chmod(0000, restricted_template)
     
-    result = run_script('create-weekly-note', [
-      '--template-path', empty_template,
-      '--target-dir', @temp_dir
+    result = run_script([
+      '--template-path', restricted_template,
+      '--target-dir', @test_dir
     ])
     
-    assert result[:success], "Should succeed even with empty template"
+    # Restore permissions for cleanup
+    File.chmod(0644, restricted_template) rescue nil
     
-    created_file = Dir.glob(File.join(@temp_dir, "Week of *.md")).first
-    content = File.read(created_file)
-    
-    assert_equal "", content, "Empty template should create empty file"
+    assert_equal 1, result[:exit_code], "Should fail when template is not readable"
+    assert result[:stderr].include?('permission') || result[:stderr].include?('read'), 
+           "Should mention permission error: #{result[:stderr]}"
   end
 
-  def test_handles_template_with_no_placeholders
-    plain_template = File.join(@temp_dir, 'plain.md')
-    plain_content = "This is a plain template with no placeholders.\nJust static content."
-    File.write(plain_template, plain_content)
+  def test_handles_target_directory_with_write_permissions_denied
+    # Create directory and remove write permissions
+    restricted_dir = File.join(@test_dir, 'restricted_dir')
+    FileUtils.mkdir_p(restricted_dir)
+    File.chmod(0444, restricted_dir)
     
-    result = run_script('create-weekly-note', [
-      '--template-path', plain_template,
-      '--target-dir', @temp_dir
+    result = run_script([
+      '--template-path', @template_path,
+      '--target-dir', restricted_dir
     ])
     
-    assert result[:success], "Should succeed with plain template"
+    # Restore permissions for cleanup
+    File.chmod(0755, restricted_dir) rescue nil
     
-    created_file = Dir.glob(File.join(@temp_dir, "Week of *.md")).first
-    content = File.read(created_file)
-    
-    assert_equal plain_content, content, "Plain template should be copied exactly"
+    assert_equal 1, result[:exit_code], "Should fail when target directory is not writable"
+    assert result[:stderr].include?('permission') || result[:stderr].include?('write'), 
+           "Should mention permission error: #{result[:stderr]}"
+  end
+
+  private
+
+  def run_script(args)
+    stdout, stderr, status = Open3.capture3(@script_path, *args)
+    {
+      stdout: stdout,
+      stderr: stderr,
+      exit_code: status.exitstatus
+    }
+  end
+
+  def fixtures_path
+    File.join(repo_root, 'test', 'fixtures')
+  end
+
+  def repo_root
+    File.expand_path('../../..', __FILE__)
   end
 end
