@@ -92,6 +92,35 @@ def deep_snake_case(obj)
   end
 end
 
+# Internal: Recursively flatten GraphQL node structures by pulling node contents up one level.
+#
+# obj - The object to flatten (Array, Hash, or other).
+#
+# Returns the object with GraphQL node wrappers removed.
+def flatten_graphql_nodes(obj)
+  case obj
+  when Array
+    obj.map { |v| flatten_graphql_nodes(v) }
+  when Hash
+    result = {}
+    obj.each do |k, v|
+      if v.is_a?(Hash) && v.key?("nodes") && v["nodes"].is_a?(Array)
+        # For structures like comments: { nodes: [...] } or replies: { nodes: [...] }
+        # Replace with just the array content
+        result[k] = flatten_graphql_nodes(v["nodes"])
+      elsif k == "nodes" && v.is_a?(Array)
+        # This should not happen with the above condition, but handle it just in case
+        return flatten_graphql_nodes(v)
+      else
+        result[k] = flatten_graphql_nodes(v)
+      end
+    end
+    result
+  else
+    obj
+  end
+end
+
 # Public: Fetches a GitHub issue and all its comments.
 #
 # owner  - The repository owner (String).
@@ -113,16 +142,20 @@ end
 #
 # Returns a Hash with "discussion" and "comments" keys.
 def fetch_discussion(owner, repo, number)
-  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } createdAt url updatedAt comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt } } } } } }'")
+  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } createdAt url updatedAt comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt replies(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt } } } } } } } }'")
   data = JSON.parse(json)
   discussion = data.dig("data", "repository", "discussion")
-  comments = (discussion["comments"] && discussion["comments"]["nodes"]) || []
-  discussion_out = discussion.dup
+
+  # Flatten the GraphQL nodes structure and extract comments
+  discussion_flattened = flatten_graphql_nodes(discussion)
+  comments = discussion_flattened["comments"] || []
+
+  discussion_out = discussion_flattened.dup
   discussion_out.delete("comments")
   # Convert all keys to snake_case for consistency
   {
-    "discussion" => deep_snake_case(discussion_out),
-    "comments" => deep_snake_case(comments)
+    discussion: deep_snake_case(discussion_out),
+    comments: deep_snake_case(comments)
   }
 end
 
@@ -132,14 +165,18 @@ end
 # repo   - The repository name (String).
 # number - The pull request number (String).
 #
-# Returns a Hash with :pr, :comments, :reviews, :review_comments, and :diff keys.
+# Returns a Hash with :pr, :comments, :reviews, :review_comments, :diff, and :commits keys.
 def fetch_pr(owner, repo, number)
   pr = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}"))
   comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/issues/#{number}/comments --paginate"))
   reviews = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}/reviews --paginate"))
   review_comments = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}/comments --paginate"))
   diff = run_cmd("gh pr diff #{number} -R #{owner}/#{repo}")
-  { pr: pr, comments: comments, reviews: reviews, review_comments: review_comments, diff: diff }
+
+  # Fetch detailed commit information
+  commits = JSON.parse(run_cmd("gh api repos/#{owner}/#{repo}/pulls/#{number}/commits --paginate"))
+
+  { pr: pr, comments: comments, reviews: reviews, review_comments: review_comments, diff: diff, commits: commits }
 end
 
 # Internal: Load cached data if present.
@@ -186,11 +223,11 @@ end
 def get_updated_at(data, type)
   case type
   when "issues"
-    data["issue"]["updated_at"]
+    data[:issue]["updated_at"]
   when "pull"
-    data["pr"]["updated_at"]
+    data[:pr]["updated_at"]
   when "discussions"
-    data["discussion"]["updated_at"]
+    data[:discussion]["updated_at"]
   else
     nil
   end
@@ -258,5 +295,137 @@ else
   data = cached_data
 end
 
-# Output the result as pretty-printed JSON.
-puts JSON.pretty_generate(data)
+# Internal: Extract a filtered version of a GitHub conversation (issue, PR, or discussion).
+#
+# data - The full data Hash returned by `fetch_*`.
+# type - One of "pull", "issues", or "discussions".
+#
+# Returns a compact Hash with only key metadata preserved.
+def extract_filtered_conversation(data, type)
+  result = {}
+
+  conversation_key = {
+    "pull" => :pr,
+    "issues" => :issue,
+    "discussions" => :discussion,
+  }[type]
+
+  conversation = data[conversation_key]
+  return {} unless conversation
+
+  # Base fields common to all types
+  result[conversation_key] = {
+    title: conversation["title"],
+    body: conversation["body"],
+    html_url: conversation["html_url"] || conversation["url"],
+    created_at: conversation["created_at"],
+    updated_at: conversation["updated_at"],
+    closed_at: conversation["closed_at"],
+    state: conversation["state"],
+    author: conversation.dig("user", "login") || conversation.dig("author", "login")
+  }
+
+  # Assignees and labels (shared by issues & PRs)
+  if conversation["assignees"]
+    result[conversation_key][:assignees] = conversation["assignees"].map { |a| a["login"] }
+  end
+
+  if conversation["labels"]
+    result[conversation_key][:labels] = conversation["labels"].map { |l| l["name"] }
+  end
+
+  # PR-only fields
+  if type == "pull"
+    result[conversation_key][:merged_at] = conversation["merged_at"]
+    result[conversation_key][:draft] = conversation["draft"]
+    result[conversation_key][:merged_by] = conversation.dig("merged_by", "login")
+    result[conversation_key][:requested_reviewers] = conversation.fetch("requested_reviewers", []).map { |r| r["login"] }
+    result[conversation_key][:base_branch] = conversation.dig("base", "ref")
+    result[conversation_key][:head_branch] = conversation.dig("head", "ref")
+    result[conversation_key][:additions] = conversation["additions"]
+    result[conversation_key][:deletions] = conversation["deletions"]
+    result[conversation_key][:changed_files] = conversation["changed_files"]
+    result[conversation_key][:commits] = conversation["commits"]
+
+    # Include the full diff
+    if data[:diff]
+      result[:diff] = data[:diff]
+    end
+
+    # Include detailed commit metadata
+    if data[:commits]
+      result[:commits] = data[:commits].map do |commit|
+        {
+          sha: commit["sha"],
+          message: commit.dig("commit", "message"),
+          author: commit.dig("commit", "author", "name"),
+          author_email: commit.dig("commit", "author", "email"),
+          authored_date: commit.dig("commit", "author", "date"),
+          committer: commit.dig("commit", "committer", "name"),
+          committer_email: commit.dig("commit", "committer", "email"),
+          committed_date: commit.dig("commit", "committer", "date"),
+          url: commit["html_url"]
+        }.compact
+      end
+    end
+  end
+
+  # Comments (shared)
+  if data[:comments]
+    result[:comments] = data[:comments].map do |c|
+      comment = {
+        author: c.dig("user", "login") || c.dig("author", "login"),
+        body: c["body"],
+        created_at: c["created_at"],
+        reply_to: c.dig("reply_to", "id")
+      }.compact
+
+      # Include replies for discussion comments
+      if c["replies"] && c["replies"].is_a?(Array)
+        comment[:replies] = c["replies"].map do |r|
+          {
+            author: r.dig("user", "login") || r.dig("author", "login"),
+            body: r["body"],
+            created_at: r["created_at"],
+            reply_to: r.dig("reply_to", "id")
+          }.compact
+        end
+      end
+
+      comment
+    end
+  end
+
+  # PR reviews
+  if type == "pull" && data[:reviews]
+    result[:reviews] = data[:reviews].map do |r|
+      {
+        author: r.dig("user", "login"),
+        state: r["state"],
+        body: r["body"],
+        submitted_at: r["submitted_at"]
+      }.compact
+    end
+  end
+
+  # PR review comments
+  if type == "pull" && data[:review_comments]
+    result[:review_comments] = data[:review_comments].map do |rc|
+      {
+        author: rc.dig("user", "login"),
+        path: rc["path"],
+        position: rc["position"],
+        line: rc["line"],
+        body: rc["body"],
+        created_at: rc["created_at"]
+      }.compact
+    end
+  end
+
+  result
+end
+
+# Fetch the conversation data based on the type and filter down
+# to high-value metadata for use in other AI based workflows.
+filtered = extract_filtered_conversation(data, type)
+puts JSON.pretty_generate(filtered)
