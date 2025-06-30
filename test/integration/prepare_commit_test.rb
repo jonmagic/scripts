@@ -17,7 +17,7 @@ class PrepareCommitIntegrationTest < Minitest::Test
 
   def test_prepare_commit_shows_help
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} --help 2>&1`
     assert_includes result, "Usage:", "Script should show usage information"
     assert_includes result, "commit-message-prompt-path", "Script should mention required argument"
@@ -25,7 +25,7 @@ class PrepareCommitIntegrationTest < Minitest::Test
 
   def test_prepare_commit_requires_prompt_path
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} 2>&1`
     assert_includes result, "Error:", "Script should show error without required args"
     refute_equal 0, $?.exitstatus, "Script should exit with non-zero status"

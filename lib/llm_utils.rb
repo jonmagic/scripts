@@ -22,12 +22,12 @@ module LlmUtils
   def execute_llm(prompt_path, input, llm_model = nil)
     model_flag = llm_model_flag(llm_model)
     cmd = "llm -f #{Shellwords.escape(prompt_path)} #{model_flag}".strip
-    
+
     stdout, stderr, status = Open3.capture3(cmd, stdin_data: input)
     unless status.success?
       raise "LLM command failed: #{stderr}"
     end
-    
+
     stdout
   end
 end

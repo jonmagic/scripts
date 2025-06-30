@@ -44,9 +44,9 @@ class Minitest::Test
     original_stderr = $stderr
     $stdout = StringIO.new
     $stderr = StringIO.new
-    
+
     yield
-    
+
     { stdout: $stdout.string, stderr: $stderr.string }
   ensure
     $stdout = original_stdout

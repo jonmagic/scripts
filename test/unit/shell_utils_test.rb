@@ -6,7 +6,7 @@ class ShellUtilsTest < Minitest::Test
 
   def test_execute_command_with_successful_command
     result = execute_command("echo 'hello world'")
-    
+
     assert result[:success]
     assert_equal 0, result[:exit_code]
     assert_includes result[:stdout], "hello world"
@@ -15,7 +15,7 @@ class ShellUtilsTest < Minitest::Test
 
   def test_execute_command_with_failing_command
     result = execute_command("nonexistentcommand123456")
-    
+
     refute result[:success]
     refute_equal 0, result[:exit_code]
     refute_empty result[:stderr]
@@ -23,7 +23,7 @@ class ShellUtilsTest < Minitest::Test
 
   def test_execute_command_with_stdin_data
     result = execute_command("cat", stdin_data: "test input")
-    
+
     assert result[:success]
     assert_equal "test input", result[:stdout]
   end

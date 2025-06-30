@@ -17,7 +17,7 @@ class ArchiveMeetingIntegrationTest < Minitest::Test
 
   def test_archive_meeting_shows_help
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} --help 2>&1`
     assert_includes result, "Usage:", "Script should show usage information"
     assert_includes result, "transcripts-dir", "Script should mention transcripts-dir argument"
@@ -26,7 +26,7 @@ class ArchiveMeetingIntegrationTest < Minitest::Test
 
   def test_archive_meeting_requires_arguments
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} 2>&1`
     refute_equal 0, $?.exitstatus, "Script should exit with non-zero status without args"
   end

@@ -22,7 +22,7 @@ module LlmWorkflowUtils
     transcript_content = File.read(dest_file)
     model_flag = LlmUtils.new.llm_model_flag(llm_model)
     cmd = "llm -f #{Shellwords.escape(prompt_path)} #{model_flag}".strip
-    
+
     summary, _ = Open3.capture2(cmd, stdin_data: transcript_content)
     File.write(summary_file, summary)
   end
@@ -38,7 +38,7 @@ module LlmWorkflowUtils
     transcript_content = File.read(dest_file)
     model_flag = LlmUtils.new.llm_model_flag(llm_model)
     cmd = "llm -f #{Shellwords.escape(prompt_path)} #{model_flag}".strip
-    
+
     detailed_notes, _ = Open3.capture2(cmd, stdin_data: transcript_content)
     detailed_notes.strip
   end
@@ -53,19 +53,19 @@ module LlmWorkflowUtils
   def self.select_meeting_notes_section(latest_weekly_notes:, summary_file:, llm_model:)
     weekly_content = File.read(latest_weekly_notes)
     summary_content = File.read(summary_file)
-    
+
     # Use LLM to suggest meeting notes sections
     llm_prompt = "Based on this executive summary, suggest which meeting notes section this should go in (return just the filename/section name):\n\n#{summary_content}\n\nWeekly notes context:\n#{weekly_content}"
-    
+
     model_flag = LlmUtils.new.llm_model_flag(llm_model)
     cmd = "llm #{model_flag}".strip
-    
+
     suggested_section, _ = Open3.capture2(cmd, stdin_data: llm_prompt)
-    
+
     # Use fzf to let user select/confirm the section
     fzf_input = suggested_section.strip
     selected, _ = Open3.capture2("fzf --prompt='Select meeting notes section: '", stdin_data: fzf_input)
-    
+
     selected.strip
   end
 end

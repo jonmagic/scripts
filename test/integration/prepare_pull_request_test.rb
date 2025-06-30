@@ -17,7 +17,7 @@ class PrepareFullRequestIntegrationTest < Minitest::Test
 
   def test_prepare_pull_request_shows_help
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} --help 2>&1`
     assert_includes result, "Usage:", "Script should show usage information"
     assert_includes result, "base-branch", "Script should mention base-branch argument"
@@ -26,7 +26,7 @@ class PrepareFullRequestIntegrationTest < Minitest::Test
 
   def test_prepare_pull_request_requires_arguments
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} 2>&1`
     assert_includes result, "Error:", "Script should show error without required args"
     refute_equal 0, $?.exitstatus, "Script should exit with non-zero status"

@@ -17,7 +17,7 @@ class SelectFolderIntegrationTest < Minitest::Test
 
   def test_select_folder_shows_help
     skip_unless_command_available('ruby')
-    
+
     result = `ruby #{@script_path} --help 2>&1`
     assert_includes result, "Usage:", "Script should show usage information"
     assert_includes result, "target-dir", "Script should mention target-dir argument"
