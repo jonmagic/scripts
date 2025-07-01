@@ -121,7 +121,7 @@ The script will abort with an error message if the input is not recognized or if
 
 ### Fetch GitHub Conversations
 
-Fetch and export GitHub issue, pull request, or discussion data for multiple URLs at once. This script uses `fetch-github-conversation` under the hood to process multiple GitHub conversations, accepting URLs either from stdin (piped) or from a file. It passes through all CLI options to the underlying script and streams JSON output to stdout.
+Fetch and export GitHub issue, pull request, or discussion data for multiple URLs at once. This script uses `fetch-github-conversation` under the hood to process multiple GitHub conversations, accepting URLs either from stdin (piped) or from a file. It supports both plain text URLs and JSON input from `search-conversations`, automatically using updated_at timestamps for efficient caching. It passes through all CLI options to the underlying script and streams JSON output to stdout.
 
 **Usage:**
 
@@ -131,30 +131,74 @@ Fetch and export GitHub issue, pull request, or discussion data for multiple URL
 command | /path/to/fetch-github-conversations [options]
 ```
 
-- `<file_path>`: Path to file containing GitHub URLs, one per line
+- `<file_path>`: Path to file containing GitHub URLs (plain text, one per line) or JSON data
 - Options are passed through to `fetch-github-conversation`:
   - `--cache-path <cache_root>`: (Optional) Root directory for caching
   - `--updated-at <timestamp>`: (Optional) Only fetch if newer than this ISO8601 timestamp
 
+**Input Formats:**
+
+1. **Plain text URLs**: One URL per line (existing format)
+2. **JSON from search-conversations**: Array of objects with `url` and `updated_at` fields
+
 **Examples:**
 
-Fetch multiple conversations from a file:
+Fetch multiple conversations from a plain text file:
 
 ```sh
 /path/to/fetch-github-conversations urls.txt
 ```
 
-Fetch from stdin with caching:
+Fetch from stdin with plain text URLs:
 
 ```sh
 echo "https://github.com/octocat/Hello-World/issues/42" | /path/to/fetch-github-conversations --cache-path ./cache
 ```
 
-Fetch multiple conversations with timestamp check:
+**Pipeline with search-conversations** (recommended workflow):
+
+```sh
+# Search for conversations and fetch them with automatic timestamp optimization
+/path/to/search-conversations 'repo:octocat/Hello-World created:>2025' | \
+  /path/to/fetch-github-conversations --cache-path ./cache
+```
+
+**Complete workflow example** (search → fetch → summarize → index):
+
+```sh
+# Step 1: Search for recent conversations
+/path/to/search-conversations 'repo:octocat/Hello-World created:>2025' > recent_conversations.json
+
+# Step 2: Fetch full conversation data with caching
+cat recent_conversations.json | /path/to/fetch-github-conversations --cache-path ./cache
+
+# Step 3: Extract URLs and generate summaries
+cat recent_conversations.json | jq -r '.[].url' | while read url; do
+  /path/to/summarize-github-conversation "$url" \
+    --executive-summary-prompt-path /path/to/summary-prompt.txt \
+    --cache-path ./cache
+done
+
+# Step 4: Index summaries for semantic search
+cat recent_conversations.json | jq -r '.[].url' | while read url; do
+  /path/to/index-summary "$url" \
+    --executive-summary-prompt-path /path/to/summary-prompt.txt \
+    --topics-prompt-path /path/to/topics-prompt.txt \
+    --collection github-conversations \
+    --cache-path ./cache \
+    --skip-if-up-to-date
+done
+```
+
+Fetch multiple conversations with global timestamp check:
 
 ```sh
 /path/to/fetch-github-conversations --cache-path ./cache --updated-at 2024-05-01T00:00:00Z urls.txt
 ```
+
+**Key Benefits of JSON Input:**
+
+When using JSON input from `search-conversations`, each conversation is fetched with its individual `updated_at` timestamp, providing optimal caching efficiency. This means conversations that haven't been updated since the last fetch will be served from cache, while only recently updated conversations will make new API calls.
 
 The script continues processing even if individual URLs fail and outputs error messages to stderr for any failures.
 
@@ -356,16 +400,28 @@ Search for pull requests only:
 /path/to/search-conversations 'repo:octocat/Hello-World is:pr created:>2025'
 ```
 
-Search for all conversation types:
+Search for all conversation types in a specific date range:
 
 ```sh
-/path/to/search-conversations 'repo:octocat/Hello-World created:>2025'
+/path/to/search-conversations 'repo:octocat/Hello-World created:2025-01-01..2025-06-30'
 ```
 
 Search for discussions only:
 
 ```sh
 /path/to/search-conversations 'repo:octocat/Hello-World is:discussion'
+```
+
+Search across multiple repositories:
+
+```sh
+/path/to/search-conversations 'org:octocat is:issue state:open created:>2025'
+```
+
+Search with specific labels or keywords:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World is:issue label:bug,enhancement in:title,body performance'
 ```
 
 **Example Output:**
