@@ -40,6 +40,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Prepare Commit](#prepare-commit)
   - [Prepare Pull Request](#prepare-pull-request)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
+  - [Search Conversations](#search-conversations)
   - [Select Folder](#select-folder)
   - [Vector Upsert](#vector-upsert)
 
@@ -326,6 +327,74 @@ This script helps you generate a pull request title and body based on commits be
 - `--llm-model`: (Optional) Specify a specific LLM model to use
 
 ## Plumbing Commands
+
+### Search Conversations
+
+Search GitHub conversations (issues, pull requests, discussions) using a GitHub search query string and the GraphQL API. This script aggregates search results and returns minimal metadata for each conversation, making it ideal for use in pipelines with other tools like `fetch-github-conversation`.
+
+**Usage:**
+
+```sh
+/path/to/search-conversations '<search_query>'
+```
+
+- `<search_query>`: A GitHub search query string using standard GitHub search syntax
+
+**Key Features:**
+
+- **Automatic type detection**: Inspects query for `is:issue`, `is:pr`, `is:discussion` modifiers to determine what to search
+- **Fallback search**: If no type specified, searches both issues/PRs and discussions automatically
+- **Pagination**: Handles pagination up to 1000 items per conversation type
+- **Consistent output**: Returns JSON array with `updated_at` and `url` for each result
+- **Sorted results**: Results are sorted by `updated_at` in descending order (most recent first)
+
+**Examples:**
+
+Search for pull requests only:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World is:pr created:>2025'
+```
+
+Search for all conversation types:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World created:>2025'
+```
+
+Search for discussions only:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World is:discussion'
+```
+
+**Example Output:**
+
+```json
+[
+  {
+    "updated_at": "2025-06-20T09:42:11Z",
+    "url": "https://github.com/octocat/Hello-World/issues/123"
+  },
+  {
+    "updated_at": "2025-06-18T14:23:05Z",
+    "url": "https://github.com/octocat/Hello-World/pull/456"
+  },
+  {
+    "updated_at": "2025-06-15T10:00:00Z",
+    "url": "https://github.com/octocat/Hello-World/discussions/789"
+  }
+]
+```
+
+**Requirements:**
+- The `gh` CLI must be installed and authenticated
+- Valid GitHub search query syntax
+
+**Error Handling:**
+- Aborts with clear error message for invalid queries
+- Aborts if `gh` CLI is not authenticated
+- Handles GraphQL API errors and rate limits
 
 ### Select Folder
 
