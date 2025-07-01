@@ -6,11 +6,16 @@
 #   echo "text to embed" | vector-upsert --collection COLLECTION \
 #     --metadata '{"url": "...", "topics": ["topic1", "topic2"], "key": "value"}' \
 #     --vector-id-key html_url \
+#     [--skip-if-up-to-date TIMESTAMP_KEY] \
 #     [options]
 #
 # This script takes arbitrary text via stdin, generates embeddings using the llm CLI, and upserts the resulting
 # vector along with flat JSON metadata into a specified Qdrant collection. Metadata can include arrays of primitive
 # values (strings, numbers, booleans, null) but cannot contain nested objects. The collection will be created if it doesn't exist.
+#
+# The --skip-if-up-to-date option enables an optimization to check if a vector with the same ID already exists in the
+# collection and if the timestamp in the specified metadata key is greater than or equal to the stored timestamp.
+# This can save significant time and computational resources when processing content that hasn't changed.
 #
 # Requirements:
 # - Ruby
@@ -122,6 +127,39 @@ rescue JSON::ParserError => e
   abort "Failed to parse embedding JSON: #{e.message}"
 end
 
+# Check if a vector already exists and if it's up-to-date based on timestamp
+def vector_up_to_date?(qdrant_url, collection_name, vector_id, updated_at_key, new_updated_at)
+  uri = URI("#{qdrant_url}/collections/#{collection_name}/points/#{vector_id}")
+
+  response = Net::HTTP.get_response(uri)
+
+  # Vector doesn't exist, needs to be created
+  return false if response.code == "404"
+
+  # For other errors, assume vector doesn't exist and proceed with upsert
+  return false unless response.code == "200"
+
+  # Parse the response to get the stored vector data
+  begin
+    vector_data = JSON.parse(response.body)
+    stored_payload = vector_data.dig("result", "payload")
+
+    # If no payload or no updated_at field, consider it outdated
+    return false unless stored_payload && stored_payload[updated_at_key]
+
+    stored_updated_at = stored_payload[updated_at_key]
+
+    # Compare timestamps - if stored is greater than or equal to new, it's up-to-date
+    stored_updated_at >= new_updated_at
+  rescue => e
+    # If we can't parse timestamps or there's any error, assume it needs updating
+    false
+  end
+rescue => e
+  # If there's any network error, assume vector doesn't exist and proceed
+  false
+end
+
 # Create Qdrant collection if it doesn't exist
 def ensure_collection_exists(qdrant_url, collection_name, vector_size)
   uri = URI("#{qdrant_url}/collections/#{collection_name}")
@@ -188,6 +226,7 @@ opt_parser = OptionParser.new do |opts|
   opts.on("--vector-id-key KEY", "Key in metadata that contains the main text for ID generation (default: use stdin content)") { |v| options[:vector_id_key] = v }
   opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
   opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
+  opts.on("--skip-if-up-to-date KEY", "Skip upserting if vector exists and timestamp in KEY is up-to-date") { |v| options[:skip_if_up_to_date] = v }
   opts.on("-h", "--help", "Show this help message") { puts opts; exit }
 end
 
@@ -229,12 +268,31 @@ if text_content.empty?
   abort "Error: Empty text content provided via stdin."
 end
 
+# Generate stable vector ID
+vector_id = generate_vector_id(metadata, options[:vector_id_key], text_content)
+
+# Check if vector already exists and is up-to-date (if skip-if-up-to-date option is enabled)
+if options[:skip_if_up_to_date]
+  updated_at_key = options[:skip_if_up_to_date]
+
+  unless metadata[updated_at_key]
+    abort "Error: Metadata must contain the key '#{updated_at_key}' when using --skip-if-up-to-date"
+  end
+
+  puts "Checking if vector exists and is up-to-date..."
+  if vector_up_to_date?(options[:qdrant_url], options[:collection], vector_id, updated_at_key, metadata[updated_at_key])
+    puts "Vector with ID #{vector_id} is up-to-date in collection '#{options[:collection]}'. Skipping upsert."
+    puts "Collection: #{options[:collection]}"
+    puts "Vector ID: #{vector_id}"
+    puts "Metadata keys: #{metadata.keys.join(', ')}"
+    puts "Stored timestamp: checking against #{updated_at_key} = #{metadata[updated_at_key]}"
+    exit 0
+  end
+end
+
 # Generate embedding
 puts "Generating embedding..."
 embedding = generate_embedding(text_content, options[:model])
-
-# Generate stable vector ID
-vector_id = generate_vector_id(metadata, options[:vector_id_key], text_content)
 
 # Ensure collection exists
 puts "Ensuring Qdrant collection '#{options[:collection]}' exists..."

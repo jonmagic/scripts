@@ -7,6 +7,7 @@
 #     --executive-summary-prompt-path <prompt_path> \
 #     --topics-prompt-path <prompt_path> \
 #     --collection <collection> \
+#     [--skip-if-up-to-date] \
 #     [options]
 #
 # This script orchestrates the complete pipeline for indexing a GitHub conversation summary:
@@ -15,6 +16,11 @@
 # 3. Extracts topics using extract-topics
 # 4. Builds flat metadata payload with conversation details and topics
 # 5. Calls vector-upsert to embed the summary and store it in Qdrant
+#
+# The --skip-if-up-to-date option enables an optimization to check if a vector with the same ID already
+# exists in the collection and if the stored updated_at timestamp is greater than or equal to the new
+# updated_at timestamp. This can save significant time and computational resources when processing content
+# that hasn't changed.
 #
 # Requirements:
 # - Ruby
@@ -156,6 +162,7 @@ opt_parser = OptionParser.new do |opts|
   opts.on("--model MODEL", "Embedding model to use for vector-upsert") { |v| options[:model] = v }
   opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
   opts.on("--max-topics NUMBER", Integer, "Maximum number of topics to extract") { |v| options[:max_topics] = v }
+  opts.on("--skip-if-up-to-date", "Skip indexing if vector exists and is up-to-date based on updated_at timestamp") { |v| options[:skip_if_up_to_date] = v }
   opts.on("-h", "--help", "Show this help message") { puts opts; exit }
 end
 
@@ -224,6 +231,7 @@ vector_cmd << "--collection #{options[:collection]}"
 vector_cmd << "--metadata #{Shellwords.escape(metadata.to_json)}"
 vector_cmd << "--model #{options[:model]}" if options[:model]
 vector_cmd << "--qdrant-url #{options[:qdrant_url]}" if options[:qdrant_url]
+vector_cmd << "--skip-if-up-to-date updated_at" if options[:skip_if_up_to_date]
 
 # Run vector-upsert with summary as stdin
 Open3.popen3(vector_cmd.join(" ")) do |stdin, stdout, stderr, wait_thr|

@@ -54,7 +54,7 @@ alias commit='/path/to/prepare-commit --commit-message-prompt-path /path/to/comm
 alias fgc='/path/to/fetch-github-conversation'
 alias et='/path/to/extract-topics --topics-prompt-path /path/to/topic-extraction.txt'
 alias es='llm -f /path/to/github-conversation-executive-summary.md'
-alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations'
+alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --skip-if-up-to-date'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
 ```
 
@@ -252,6 +252,7 @@ Index a GitHub conversation summary in a vector database (Qdrant) for semantic s
 - `--model <model>`: (Optional) Embedding model to use for vector generation
 - `--qdrant-url <url>`: (Optional) Qdrant server URL (default: http://localhost:6333)
 - `--max-topics <number>`: (Optional) Maximum number of topics to extract
+- `--skip-if-up-to-date`: (Optional) Skip indexing if vector exists and is up-to-date based on updated_at timestamp
 
 **Metadata Fields:**
 
@@ -275,7 +276,7 @@ Index a GitHub issue summary:
   --collection github-conversations
 ```
 
-Index with caching and custom model:
+Index with caching, custom model, and timestamp optimization:
 
 ```sh
 /path/to/index-summary octocat/Hello-World/pull/123 \
@@ -283,7 +284,8 @@ Index with caching and custom model:
   --topics-prompt-path /path/to/topics-prompt.txt \
   --collection github-conversations \
   --cache-path ./cache \
-  --model text-embedding-3-small
+  --model text-embedding-3-small \
+  --skip-if-up-to-date
 ```
 
 **Requirements:**
@@ -353,6 +355,7 @@ echo "text to embed" | /path/to/vector-upsert \
 - `--vector-id-key <key>`: (Optional) Key in metadata that contains the main text for ID generation (default: use stdin content)
 - `--model <model>`: (Optional) Embedding model to use (default: text-embedding-3-small)
 - `--qdrant-url <url>`: (Optional) Qdrant server URL (default: http://localhost:6333)
+- `--skip-if-up-to-date <timestamp_key>`: (Optional) Skip upserting if vector exists and timestamp in specified metadata key is up-to-date
 
 **Key Features:**
 
@@ -387,6 +390,15 @@ echo "Document content" | /path/to/vector-upsert \
   --metadata '{"title": "Document Title", "category": "technical"}' \
   --model text-embedding-3-large \
   --qdrant-url http://remote-qdrant:6333
+```
+
+Use timestamp-based optimization to skip upserting if content is up-to-date:
+
+```sh
+echo "Updated summary text" | /path/to/vector-upsert \
+  --collection summaries \
+  --metadata '{"url": "unique-identifier", "updated_at": "2024-05-15T10:30:00Z", "source": "github"}' \
+  --skip-if-up-to-date updated_at
 ```
 
 Specify which metadata field to use for ID generation:
