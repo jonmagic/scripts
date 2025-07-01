@@ -35,11 +35,13 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Extract Topics](#extract-topics)
   - [Fetch GitHub Conversation](#fetch-github-conversation)
   - [Fetch GitHub Conversations](#fetch-github-conversations)
+  - [Index Summary](#index-summary)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
   - [Prepare Pull Request](#prepare-pull-request)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
   - [Select Folder](#select-folder)
+  - [Vector Upsert](#vector-upsert)
 
 ### Aliases
 
@@ -52,6 +54,7 @@ alias commit='/path/to/prepare-commit --commit-message-prompt-path /path/to/comm
 alias fgc='/path/to/fetch-github-conversation'
 alias et='/path/to/extract-topics --topics-prompt-path /path/to/topic-extraction.txt'
 alias es='llm -f /path/to/github-conversation-executive-summary.md'
+alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --skip-if-up-to-date'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
 ```
 
@@ -226,6 +229,70 @@ Extract and cache topics from a pull request, limiting to 5 topics:
 
 The script will abort with an error message if the input is not recognized, if the prompt path is not provided, or if any command fails.
 
+### Index Summary
+
+Index a GitHub conversation summary in a vector database (Qdrant) for semantic search. This script orchestrates the complete pipeline: fetching conversation data, generating a summary, extracting topics, building metadata, and storing the summary as a vector embedding in Qdrant. It combines the functionality of `fetch-github-conversation`, `summarize-github-conversation`, `extract-topics`, and `vector-upsert` into a single workflow.
+
+**Usage:**
+
+```sh
+/path/to/index-summary <github_conversation_url> \
+  --executive-summary-prompt-path <summary_prompt_path> \
+  --topics-prompt-path <topics_prompt_path> \
+  --collection <collection_name> \
+  [options]
+```
+
+- `<github_conversation_url>`: A GitHub issue, pull request, or discussion URL (e.g. `https://github.com/octocat/Hello-World/issues/42`)
+- `--executive-summary-prompt-path <path>`: **(Required)** Path to the prompt file for generating executive summaries
+- `--topics-prompt-path <path>`: **(Required)** Path to the prompt file for extracting topics
+- `--collection <name>`: **(Required)** Qdrant collection name where the vector will be stored
+- `--cache-path <path>`: (Optional) Root directory for caching conversation data and processing results
+- `--updated-at <timestamp>`: (Optional) Only process if the remote conversation is newer than this ISO8601 timestamp
+- `--model <model>`: (Optional) Embedding model to use for vector generation
+- `--qdrant-url <url>`: (Optional) Qdrant server URL (default: http://localhost:6333)
+- `--max-topics <number>`: (Optional) Maximum number of topics to extract
+- `--skip-if-up-to-date`: (Optional) Skip indexing if vector exists and is up-to-date based on updated_at timestamp
+
+**Metadata Fields:**
+
+The script creates a flat JSON metadata payload that includes:
+- `url`, `owner`, `repo`, `type`, `number`, `title`, `author`, `state`
+- `created_at`, `updated_at`, `closed_at` (if applicable), `indexed_at`
+- `topics` (comma-separated list)
+- Type-specific fields:
+  - Issues: `labels`, `milestone`
+  - Pull Requests: `merged`, `merged_at`, `base_branch`, `head_branch`
+  - Discussions: `category`, `answered`
+
+**Examples:**
+
+Index a GitHub issue summary:
+
+```sh
+/path/to/index-summary https://github.com/octocat/Hello-World/issues/42 \
+  --executive-summary-prompt-path /path/to/summary-prompt.txt \
+  --topics-prompt-path /path/to/topics-prompt.txt \
+  --collection github-conversations
+```
+
+Index with caching, custom model, and timestamp optimization:
+
+```sh
+/path/to/index-summary octocat/Hello-World/pull/123 \
+  --executive-summary-prompt-path /path/to/summary-prompt.txt \
+  --topics-prompt-path /path/to/topics-prompt.txt \
+  --collection github-conversations \
+  --cache-path ./cache \
+  --model text-embedding-3-small \
+  --skip-if-up-to-date
+```
+
+**Requirements:**
+- A running Qdrant server (default: localhost:6333)
+- Valid LLM API credentials configured with the `llm` CLI
+- All prompt files must exist and be readable
+
 ### Prepare Commit
 
 This script helps you generate a semantic commit message for your staged changes using an LLM. It copies the staged diff to your clipboard, prompts you for commit type and optional scope, and generates a commit message using the provided prompt template. You can review and regenerate the message as needed before committing. The final commit message is copied to your clipboard and pre-filled in the git commit editor.
@@ -269,6 +336,89 @@ This script takes a target directory as an argument and returns the 10 names of 
 ```sh
 /path/to/select-folder --target-dir /path/to/target
 ```
+
+### Vector Upsert
+
+Generic tool for embedding arbitrary text and upserting vectors with metadata into Qdrant collections. This is a low-level plumbing script that handles the embedding generation and Qdrant integration, designed to be used by higher-level orchestration scripts like `index-summary` or in custom workflows.
+
+**Usage:**
+
+```sh
+echo "text to embed" | /path/to/vector-upsert \
+  --collection <collection_name> \
+  --metadata '<flat_json_object>' \
+  [options]
+```
+
+- `--collection <name>`: **(Required)** Qdrant collection name where the vector will be stored
+- `--metadata <json>`: **(Required)** Flat JSON metadata object with optional arrays of primitive values (no nested objects)
+- `--vector-id-key <key>`: (Optional) Key in metadata that contains the main text for ID generation (default: use stdin content)
+- `--model <model>`: (Optional) Embedding model to use (default: text-embedding-3-small)
+- `--qdrant-url <url>`: (Optional) Qdrant server URL (default: http://localhost:6333)
+- `--skip-if-up-to-date <timestamp_key>`: (Optional) Skip upserting if vector exists and timestamp in specified metadata key is up-to-date
+
+**Key Features:**
+
+- **Flat JSON validation**: Metadata must be a flat JSON object with optional arrays of primitive values (strings, numbers, booleans, null); the script will abort if nested objects or arrays containing nested structures are detected
+- **Stable vector IDs**: Generates deterministic SHA-256 hashes for consistent vector identification
+- **Auto-collection creation**: Creates Qdrant collections automatically if they don't exist
+- **Error handling**: Clear error messages for embedding failures, Qdrant connectivity issues, and validation errors
+
+**Examples:**
+
+Embed a simple text with metadata:
+
+```sh
+echo "This is a summary of a GitHub issue" | /path/to/vector-upsert \
+  --collection github-issues \
+  --metadata '{"url": "https://github.com/owner/repo/issues/123", "title": "Bug report", "author": "username"}'
+```
+
+Embed with array metadata (topics, labels, etc.):
+
+```sh
+echo "Summary of feature discussion" | /path/to/vector-upsert \
+  --collection github-conversations \
+  --metadata '{"url": "https://github.com/owner/repo/issues/456", "topics": ["performance", "caching", "database"], "labels": ["enhancement", "priority-high"]}'
+```
+
+Use a specific embedding model and Qdrant server:
+
+```sh
+echo "Document content" | /path/to/vector-upsert \
+  --collection documents \
+  --metadata '{"title": "Document Title", "category": "technical"}' \
+  --model text-embedding-3-large \
+  --qdrant-url http://remote-qdrant:6333
+```
+
+Use timestamp-based optimization to skip upserting if content is up-to-date:
+
+```sh
+echo "Updated summary text" | /path/to/vector-upsert \
+  --collection summaries \
+  --metadata '{"url": "unique-identifier", "updated_at": "2024-05-15T10:30:00Z", "source": "github"}' \
+  --skip-if-up-to-date updated_at
+```
+
+Specify which metadata field to use for ID generation:
+
+```sh
+echo "Summary text" | /path/to/vector-upsert \
+  --collection summaries \
+  --metadata '{"html_url": "unique-identifier", "summary": "Summary text", "source": "github"}' \
+  --vector-id-key html_url
+```
+
+**Error Conditions:**
+
+The script will abort with clear error messages for:
+- Missing required arguments (`--collection`, `--metadata`)
+- Invalid JSON or nested objects/arrays in `--metadata` (arrays of primitives are allowed)
+- Empty text input via stdin
+- Embedding generation failures (invalid model, API issues)
+- Qdrant connectivity or API errors
+- Missing dependencies (`llm`, `curl`)
 
 ## Contributing
 

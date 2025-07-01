@@ -1,0 +1,257 @@
+#!/usr/bin/env ruby
+
+# index-summary: Orchestrate the indexing of GitHub conversation summaries in Qdrant
+#
+# Usage:
+#   index-summary <github_url> \
+#     --executive-summary-prompt-path <prompt_path> \
+#     --topics-prompt-path <prompt_path> \
+#     --collection <collection> \
+#     [--skip-if-up-to-date] \
+#     [options]
+#
+# This script orchestrates the complete pipeline for indexing a GitHub conversation summary:
+# 1. Fetches the conversation data using fetch-github-conversation
+# 2. Generates a summary using summarize-github-conversation
+# 3. Extracts topics using extract-topics
+# 4. Builds flat metadata payload with conversation details and topics
+# 5. Calls vector-upsert to embed the summary and store it in Qdrant
+#
+# The --skip-if-up-to-date option enables an optimization to check if a vector with the same ID already
+# exists in the collection and if the stored updated_at timestamp is greater than or equal to the new
+# updated_at timestamp. This can save significant time and computational resources when processing content
+# that hasn't changed.
+#
+# Requirements:
+# - Ruby
+# - fetch-github-conversation script in PATH
+# - summarize-github-conversation script in PATH
+# - extract-topics script in PATH
+# - vector-upsert script in PATH
+# - All their respective dependencies (llm CLI, gh CLI, etc.)
+
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+require "time"
+
+# Run a shell command and return stdout, abort on failure.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout
+end
+
+# Check if a required command-line dependency is available in PATH.
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
+end
+
+# Parse a GitHub conversation URL or <owner>/<repo>/<type>/<number>.
+def parse_input(input)
+  if input =~ %r{^https://github.com/}
+    m = input.match(%r{github.com/([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)})
+    abort "Unrecognized GitHub conversation URL: #{input}" unless m
+    [m[1], m[2], m[3], m[4]]
+  elsif input =~ %r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$}
+    m = input.match(%r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$})
+    [m[1], m[2], m[3], m[4]]
+  else
+    abort "Input must be a GitHub URL or <owner>/<repo>/<type>/<number>"
+  end
+end
+
+# Format the conversation type for output
+def format_type(type)
+  case type
+  when "issues"
+    "issue"
+  when "pull"
+    "pr"
+  when "discussions"
+    "discussion"
+  else
+    abort "Unrecognized conversation type: #{type}"
+  end
+end
+
+# Extract key metadata from conversation data for indexing
+def extract_metadata(data, url, owner, repo, type, number, topics)
+  # Determine the main conversation object based on type
+  main_obj = case type
+  when "issues"
+    data["issue"]
+  when "pull"
+    data["pr"]
+  when "discussions"
+    data["discussion"]
+  else
+    abort "Unrecognized conversation type: #{type}"
+  end
+
+  abort "No conversation data found" unless main_obj
+
+  # Build flat metadata payload
+  metadata = {
+    "url" => url,
+    "owner" => owner,
+    "repo" => repo,
+    "type" => format_type(type),
+    "number" => number.to_i,
+    "title" => main_obj["title"] || "",
+    "author" => main_obj["user"] ? main_obj["user"]["login"] : "",
+    "state" => main_obj["state"] || "",
+    "created_at" => main_obj["created_at"] || "",
+    "updated_at" => main_obj["updated_at"] || "",
+    "topics" => topics.join(","), # Flatten topics array to comma-separated string
+    "indexed_at" => Time.now.utc.iso8601,
+    "summary" => ""  # This will be replaced by vector-upsert with the actual summary text
+  }
+
+  # Add type-specific fields
+  case type
+  when "issues"
+    metadata["labels"] = (main_obj["labels"] || []).map { |l| l["name"] }.join(",")
+    metadata["milestone"] = main_obj["milestone"] ? main_obj["milestone"]["title"] : ""
+  when "pull"
+    metadata["merged"] = main_obj["merged"] ? "true" : "false"
+    metadata["merged_at"] = main_obj["merged_at"] || ""
+    metadata["base_branch"] = main_obj["base"] ? main_obj["base"]["ref"] : ""
+    metadata["head_branch"] = main_obj["head"] ? main_obj["head"]["ref"] : ""
+  when "discussions"
+    metadata["category"] = main_obj["category"] ? main_obj["category"]["name"] : ""
+    metadata["answered"] = main_obj["answered"] ? "true" : "false"
+  end
+
+  # Add closed timestamp if available
+  if main_obj["closed_at"]
+    metadata["closed_at"] = main_obj["closed_at"]
+  end
+
+  metadata
+end
+
+# === Main Script ===
+
+# Find the directory of this script for relative script calls
+script_dir = File.expand_path(File.dirname(__FILE__))
+
+# Check for required scripts
+required_scripts = [
+  "#{script_dir}/fetch-github-conversation",
+  "#{script_dir}/summarize-github-conversation",
+  "#{script_dir}/extract-topics",
+  "#{script_dir}/vector-upsert"
+]
+
+required_scripts.each do |script|
+  abort "Required script not found: #{script}" unless File.executable?(script)
+end
+
+# Parse command-line options
+options = {}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} <github_url> --executive-summary-prompt-path <path> --topics-prompt-path <path> --collection <name> [options]"
+  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file for executive summary (required)") { |v| options[:executive_summary_prompt_path] = v }
+  opts.on("--topics-prompt-path PATH", "Path to LLM prompt file for topic extraction (required)") { |v| options[:topics_prompt_path] = v }
+  opts.on("--collection COLLECTION", "Qdrant collection name (required)") { |v| options[:collection] = v }
+  opts.on("--cache-path PATH", "Root path for caching conversation and processing output") { |v| options[:cache_path] = v }
+  opts.on("--updated-at TIME", "Timestamp to pass to fetch-github-conversation") { |v| options[:updated_at] = v }
+  opts.on("--model MODEL", "Embedding model to use for vector-upsert") { |v| options[:model] = v }
+  opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
+  opts.on("--max-topics NUMBER", Integer, "Maximum number of topics to extract") { |v| options[:max_topics] = v }
+  opts.on("--skip-if-up-to-date", "Skip indexing if vector exists and is up-to-date based on updated_at timestamp") { |v| options[:skip_if_up_to_date] = v }
+  opts.on("-h", "--help", "Show this help message") { puts opts; exit }
+end
+
+begin
+  opt_parser.parse!
+rescue OptionParser::InvalidOption => e
+  abort "#{e.message}\n\n#{opt_parser}"
+end
+
+# Validate required arguments
+input = ARGV[0]
+abort "Error: GitHub URL is required\n\n#{opt_parser}" unless input
+
+required_options = [:executive_summary_prompt_path, :topics_prompt_path, :collection]
+required_options.each do |opt|
+  if options[opt].nil? || options[opt].strip.empty?
+    abort "Error: --#{opt.to_s.gsub('_', '-')} is required\n\n#{opt_parser}"
+  end
+end
+
+# Parse input URL
+owner, repo, type, number = parse_input(input)
+
+puts "Indexing GitHub conversation executive summary: #{input}"
+
+# Step 1: Fetch conversation data
+puts "1. Fetching conversation data..."
+fetch_cmd = ["#{script_dir}/fetch-github-conversation"]
+fetch_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
+fetch_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
+fetch_cmd << input
+
+conversation_json = run_cmd(fetch_cmd.join(" "))
+conversation_data = JSON.parse(conversation_json)
+
+# Step 2: Generate summary
+puts "2. Generating executive summary..."
+summary_cmd = ["#{script_dir}/summarize-github-conversation"]
+summary_cmd << input
+summary_cmd << "--executive-summary-prompt-path #{options[:executive_summary_prompt_path]}"
+summary_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
+summary_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
+
+summary = run_cmd(summary_cmd.join(" ")).strip
+
+# Step 3: Extract topics
+puts "3. Extracting topics..."
+topics_cmd = ["#{script_dir}/extract-topics"]
+topics_cmd << input
+topics_cmd << "--topics-prompt-path #{options[:topics_prompt_path]}"
+topics_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
+topics_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
+topics_cmd << "--max-topics #{options[:max_topics]}" if options[:max_topics]
+
+topics_json = run_cmd(topics_cmd.join(" ")).strip
+topics = JSON.parse(topics_json)
+
+# Step 4: Build metadata payload
+puts "4. Building metadata payload..."
+metadata = extract_metadata(conversation_data, input, owner, repo, type, number, topics)
+
+# Step 5: Index in Qdrant via vector-upsert
+puts "5. Indexing summary in Qdrant..."
+vector_cmd = ["#{script_dir}/vector-upsert"]
+vector_cmd << "--collection #{options[:collection]}"
+vector_cmd << "--metadata #{Shellwords.escape(metadata.to_json)}"
+vector_cmd << "--model #{options[:model]}" if options[:model]
+vector_cmd << "--qdrant-url #{options[:qdrant_url]}" if options[:qdrant_url]
+vector_cmd << "--skip-if-up-to-date updated_at" if options[:skip_if_up_to_date]
+
+# Run vector-upsert with summary as stdin
+Open3.popen3(vector_cmd.join(" ")) do |stdin, stdout, stderr, wait_thr|
+  stdin.write(summary)
+  stdin.close
+
+  # Read all output
+  output = stdout.read
+  error = stderr.read
+
+  unless wait_thr.value.success?
+    abort "vector-upsert failed:\n#{error}"
+  end
+
+  puts output
+end
+
+puts "✅ Successfully indexed conversation summary!"
+puts "Collection: #{options[:collection]}"
+puts "URL: #{input}"
+puts "Topics: #{topics.join(', ')}"
+puts "Summary length: #{summary.length} characters"
+puts

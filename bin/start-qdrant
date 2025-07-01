@@ -1,0 +1,15 @@
+#!/bin/bash
+
+script/bootstrap
+
+# ensure docker is running and if not recommend orbstack or docker desktop
+if ! docker ps &> /dev/null; then
+  echo "Docker is not running. We recommend using Orbstack or Docker Desktop."
+  echo "Without Docker running, you won't be able to run the Qdrant server."
+  echo "Please start Docker and try again."
+  exit 1
+fi
+
+docker run -p 6333:6333 -p 6334:6334 \
+  -v "$(pwd)/data/qdrant:/qdrant/storage:z" \
+  qdrant/qdrant

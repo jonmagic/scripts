@@ -1,0 +1,308 @@
+#!/usr/bin/env ruby
+
+# vector-upsert: Generic tool for embedding text and upserting vectors with metadata into Qdrant collections
+#
+# Usage:
+#   echo "text to embed" | vector-upsert --collection COLLECTION \
+#     --metadata '{"url": "...", "topics": ["topic1", "topic2"], "key": "value"}' \
+#     --vector-id-key html_url \
+#     [--skip-if-up-to-date TIMESTAMP_KEY] \
+#     [options]
+#
+# This script takes arbitrary text via stdin, generates embeddings using the llm CLI, and upserts the resulting
+# vector along with flat JSON metadata into a specified Qdrant collection. Metadata can include arrays of primitive
+# values (strings, numbers, booleans, null) but cannot contain nested objects. The collection will be created if it doesn't exist.
+#
+# The --skip-if-up-to-date option enables an optimization to check if a vector with the same ID already exists in the
+# collection and if the timestamp in the specified metadata key is greater than or equal to the stored timestamp.
+# This can save significant time and computational resources when processing content that hasn't changed.
+#
+# Requirements:
+# - Ruby
+# - llm CLI in PATH with embedding model support
+# - curl for Qdrant HTTP API calls
+# - Qdrant server running and accessible
+
+require "digest"
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+require "uri"
+require "net/http"
+
+# Run a shell command and return stdout, abort on failure.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout
+end
+
+# Check if a required command-line dependency is available in PATH.
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
+end
+
+# Validate that a JSON object is flat (no nested objects, but allows arrays of primitives)
+def validate_flat_json(obj, path = "")
+  case obj
+  when Hash
+    obj.each do |key, value|
+      current_path = path.empty? ? key : "#{path}.#{key}"
+      if value.is_a?(Hash)
+        abort "Metadata must be flat JSON. Found nested object at: #{current_path}"
+      elsif value.is_a?(Array)
+        # Allow arrays, but validate that they only contain primitive values
+        validate_array_primitives(value, current_path)
+      end
+    end
+  when Array
+    abort "Metadata must be a flat JSON object, not an array"
+  else
+    abort "Metadata must be a JSON object"
+  end
+end
+
+# Validate that an array contains only primitive values (no nested objects or arrays)
+def validate_array_primitives(array, path)
+  array.each_with_index do |item, index|
+    item_path = "#{path}[#{index}]"
+    if item.is_a?(Hash) || item.is_a?(Array)
+      abort "Metadata arrays must contain only primitive values. Found nested structure at: #{item_path}"
+    end
+  end
+end
+
+NAMESPACE_URL = "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+
+# Generate a UUIDv5 based on a namespace and name
+def uuid_v5(namespace_uuid_str, name)
+  ns = [namespace_uuid_str.delete("-")].pack("H*")
+  hash = Digest::SHA1.digest(ns + name)
+
+  # Construct UUID fields
+  bytes = hash[0,16].bytes
+
+  # Set version (5)
+  bytes[6] = (bytes[6] & 0x0F) | (5 << 4)
+
+  # Set variant (RFC 4122)
+  bytes[8] = (bytes[8] & 0x3F) | 0x80
+
+  # Format as canonical 8-4-4-4-12
+  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x" % bytes
+end
+
+# Generate a stable ID for the vector based on key content
+def generate_vector_id(metadata, vector_id_key, text_content)
+  # Try to use the value of the specified text key for ID generation
+  if metadata[vector_id_key]
+    content_for_id = metadata[vector_id_key]
+  else
+    # Fall back to the actual text content
+    content_for_id = text_content
+  end
+
+  uuid_v5(NAMESPACE_URL, content_for_id)
+end
+
+# Generate embedding using llm CLI
+def generate_embedding(text, model)
+  cmd = "llm embed -c #{Shellwords.escape(text)}"
+
+  # If no model specified, try to use a reasonable default
+  if model.nil? || model.empty?
+    # Try text-embedding-3-small first, then text-embedding-ada-002 as fallback
+    model = "text-embedding-3-small"
+    cmd += " -m #{Shellwords.escape(model)}"
+  else
+    cmd += " -m #{Shellwords.escape(model)}"
+  end
+
+  cmd += " -f json"
+
+  embedding_json = run_cmd(cmd)
+  JSON.parse(embedding_json)
+rescue JSON::ParserError => e
+  abort "Failed to parse embedding JSON: #{e.message}"
+end
+
+# Check if a vector already exists and if it's up-to-date based on timestamp
+def vector_up_to_date?(qdrant_url, collection_name, vector_id, updated_at_key, new_updated_at)
+  uri = URI("#{qdrant_url}/collections/#{collection_name}/points/#{vector_id}")
+
+  response = Net::HTTP.get_response(uri)
+
+  # Vector doesn't exist, needs to be created
+  return false if response.code == "404"
+
+  # For other errors, assume vector doesn't exist and proceed with upsert
+  return false unless response.code == "200"
+
+  # Parse the response to get the stored vector data
+  begin
+    vector_data = JSON.parse(response.body)
+    stored_payload = vector_data.dig("result", "payload")
+
+    # If no payload or no updated_at field, consider it outdated
+    return false unless stored_payload && stored_payload[updated_at_key]
+
+    stored_updated_at = stored_payload[updated_at_key]
+
+    # Compare timestamps - if stored is greater than or equal to new, it's up-to-date
+    stored_updated_at >= new_updated_at
+  rescue => e
+    # If we can't parse timestamps or there's any error, assume it needs updating
+    false
+  end
+rescue => e
+  # If there's any network error, assume vector doesn't exist and proceed
+  false
+end
+
+# Create Qdrant collection if it doesn't exist
+def ensure_collection_exists(qdrant_url, collection_name, vector_size)
+  uri = URI("#{qdrant_url}/collections/#{collection_name}")
+
+  # First, check if collection exists
+  response = Net::HTTP.get_response(uri)
+  return if response.code == "200"
+
+  # Collection doesn't exist, create it
+  create_uri = URI("#{qdrant_url}/collections/#{collection_name}")
+  http = Net::HTTP.new(create_uri.host, create_uri.port)
+
+  create_request = Net::HTTP::Put.new(create_uri)
+  create_request["Content-Type"] = "application/json"
+  create_request.body = {
+    vectors: {
+      distance: "Cosine",
+      size: vector_size
+    }
+  }.to_json
+
+  create_response = http.request(create_request)
+  unless create_response.code.to_i.between?(200, 299)
+    abort "Failed to create Qdrant collection '#{collection_name}': #{create_response.code} #{create_response.body}"
+  end
+end
+
+# Upsert vector and metadata to Qdrant
+def upsert_to_qdrant(qdrant_url, collection_name, vector_id, embedding, metadata)
+  uri = URI("#{qdrant_url}/collections/#{collection_name}/points")
+  http = Net::HTTP.new(uri.host, uri.port)
+
+  request = Net::HTTP::Put.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = {
+    points: [{
+      id: vector_id,
+      vector: embedding,
+      payload: metadata
+    }]
+  }.to_json
+
+  response = http.request(request)
+  unless response.code.to_i.between?(200, 299)
+    abort "Failed to upsert to Qdrant collection '#{collection_name}': #{response.code} #{response.body}"
+  end
+
+  response
+end
+
+# === Main Script ===
+
+# Check dependencies
+check_dependency("llm")
+check_dependency("curl")
+
+# Parse command-line options
+options = {}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} --collection COLLECTION --metadata JSON [options] < text_file"
+  opts.on("--collection COLLECTION", "Qdrant collection name (required)") { |v| options[:collection] = v }
+  opts.on("--metadata JSON", "Flat JSON metadata object with optional arrays of primitives (required)") { |v| options[:metadata] = v }
+  opts.on("--vector-id-key KEY", "Key in metadata that contains the main text for ID generation (default: use stdin content)") { |v| options[:vector_id_key] = v }
+  opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
+  opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
+  opts.on("--skip-if-up-to-date KEY", "Skip upserting if vector exists and timestamp in KEY is up-to-date") { |v| options[:skip_if_up_to_date] = v }
+  opts.on("-h", "--help", "Show this help message") { puts opts; exit }
+end
+
+begin
+  opt_parser.parse!
+rescue OptionParser::InvalidOption => e
+  abort "#{e.message}\n\n#{opt_parser}"
+end
+
+# Validate required arguments
+if options[:collection].nil? || options[:collection].strip.empty?
+  abort "Error: --collection is required\n\n#{opt_parser}"
+end
+
+if options[:metadata].nil? || options[:metadata].strip.empty?
+  abort "Error: --metadata is required\n\n#{opt_parser}"
+end
+
+# Set defaults
+options[:qdrant_url] ||= "http://localhost:6333"
+options[:vector_id_key] ||= "url"
+
+# Parse and validate metadata JSON
+begin
+  metadata = JSON.parse(options[:metadata])
+rescue JSON::ParserError => e
+  abort "Error: Invalid JSON in --metadata: #{e.message}"
+end
+
+validate_flat_json(metadata)
+
+# Read text from stdin
+if STDIN.tty?
+  abort "Error: No text provided via stdin. Please pipe text to this script."
+end
+
+text_content = STDIN.read.strip
+if text_content.empty?
+  abort "Error: Empty text content provided via stdin."
+end
+
+# Generate stable vector ID
+vector_id = generate_vector_id(metadata, options[:vector_id_key], text_content)
+
+# Check if vector already exists and is up-to-date (if skip-if-up-to-date option is enabled)
+if options[:skip_if_up_to_date]
+  updated_at_key = options[:skip_if_up_to_date]
+
+  unless metadata[updated_at_key]
+    abort "Error: Metadata must contain the key '#{updated_at_key}' when using --skip-if-up-to-date"
+  end
+
+  puts "Checking if vector exists and is up-to-date..."
+  if vector_up_to_date?(options[:qdrant_url], options[:collection], vector_id, updated_at_key, metadata[updated_at_key])
+    puts "Vector with ID #{vector_id} is up-to-date in collection '#{options[:collection]}'. Skipping upsert."
+    puts "Collection: #{options[:collection]}"
+    puts "Vector ID: #{vector_id}"
+    puts "Metadata keys: #{metadata.keys.join(', ')}"
+    puts "Stored timestamp: checking against #{updated_at_key} = #{metadata[updated_at_key]}"
+    exit 0
+  end
+end
+
+# Generate embedding
+puts "Generating embedding..."
+embedding = generate_embedding(text_content, options[:model])
+
+# Ensure collection exists
+puts "Ensuring Qdrant collection '#{options[:collection]}' exists..."
+ensure_collection_exists(options[:qdrant_url], options[:collection], embedding.length)
+
+# Upsert to Qdrant
+puts "Upserting vector to Qdrant..."
+response = upsert_to_qdrant(options[:qdrant_url], options[:collection], vector_id, embedding, metadata)
+
+puts "Successfully upserted vector with ID: #{vector_id}"
+puts "Collection: #{options[:collection]}"
+puts "Vector dimensions: #{embedding.length}"
+puts "Metadata keys: #{metadata.keys.join(', ')}"
