@@ -150,7 +150,7 @@ opt_parser = OptionParser.new do |opts|
   opts.on("--collection COLLECTION", "Qdrant collection name (required)") { |v| options[:collection] = v }
   opts.on("--metadata JSON", "Flat JSON metadata object (required)") { |v| options[:metadata] = v }
   opts.on("--text-key KEY", "Key in metadata that contains the main text for ID generation (default: use stdin content)") { |v| options[:text_key] = v }
-  opts.on("--model MODEL", "Embedding model to use (default: let llm CLI decide)") { |v| options[:model] = v }
+  opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
   opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
   opts.on("-h", "--help", "Show this help message") { puts opts; exit }
 end
