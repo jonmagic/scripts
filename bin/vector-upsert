@@ -4,12 +4,13 @@
 #
 # Usage:
 #   echo "text to embed" | vector-upsert --collection COLLECTION \
-#     --metadata '{"url": "...", "key": "value"}' \
+#     --metadata '{"url": "...", "topics": ["topic1", "topic2"], "key": "value"}' \
 #     --vector-id-key html_url \
 #     [options]
 #
 # This script takes arbitrary text via stdin, generates embeddings using the llm CLI, and upserts the resulting
-# vector along with flat JSON metadata into a specified Qdrant collection. The collection will be created if it doesn't exist.
+# vector along with flat JSON metadata into a specified Qdrant collection. Metadata can include arrays of primitive
+# values (strings, numbers, booleans, null) but cannot contain nested objects. The collection will be created if it doesn't exist.
 #
 # Requirements:
 # - Ruby
@@ -37,20 +38,33 @@ def check_dependency(cmd)
   system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
 end
 
-# Validate that a JSON object is flat (no nested objects or arrays)
+# Validate that a JSON object is flat (no nested objects, but allows arrays of primitives)
 def validate_flat_json(obj, path = "")
   case obj
   when Hash
     obj.each do |key, value|
       current_path = path.empty? ? key : "#{path}.#{key}"
-      if value.is_a?(Hash) || value.is_a?(Array)
-        abort "Metadata must be flat JSON. Found nested structure at: #{current_path}"
+      if value.is_a?(Hash)
+        abort "Metadata must be flat JSON. Found nested object at: #{current_path}"
+      elsif value.is_a?(Array)
+        # Allow arrays, but validate that they only contain primitive values
+        validate_array_primitives(value, current_path)
       end
     end
   when Array
     abort "Metadata must be a flat JSON object, not an array"
   else
     abort "Metadata must be a JSON object"
+  end
+end
+
+# Validate that an array contains only primitive values (no nested objects or arrays)
+def validate_array_primitives(array, path)
+  array.each_with_index do |item, index|
+    item_path = "#{path}[#{index}]"
+    if item.is_a?(Hash) || item.is_a?(Array)
+      abort "Metadata arrays must contain only primitive values. Found nested structure at: #{item_path}"
+    end
   end
 end
 
@@ -170,7 +184,7 @@ options = {}
 opt_parser = OptionParser.new do |opts|
   opts.banner = "Usage: #{$0} --collection COLLECTION --metadata JSON [options] < text_file"
   opts.on("--collection COLLECTION", "Qdrant collection name (required)") { |v| options[:collection] = v }
-  opts.on("--metadata JSON", "Flat JSON metadata object (required)") { |v| options[:metadata] = v }
+  opts.on("--metadata JSON", "Flat JSON metadata object with optional arrays of primitives (required)") { |v| options[:metadata] = v }
   opts.on("--vector-id-key KEY", "Key in metadata that contains the main text for ID generation (default: use stdin content)") { |v| options[:vector_id_key] = v }
   opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
   opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }

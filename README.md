@@ -349,14 +349,14 @@ echo "text to embed" | /path/to/vector-upsert \
 ```
 
 - `--collection <name>`: **(Required)** Qdrant collection name where the vector will be stored
-- `--metadata <json>`: **(Required)** Flat JSON metadata object (no nested objects or arrays)
+- `--metadata <json>`: **(Required)** Flat JSON metadata object with optional arrays of primitive values (no nested objects)
 - `--vector-id-key <key>`: (Optional) Key in metadata that contains the main text for ID generation (default: use stdin content)
 - `--model <model>`: (Optional) Embedding model to use (default: text-embedding-3-small)
 - `--qdrant-url <url>`: (Optional) Qdrant server URL (default: http://localhost:6333)
 
 **Key Features:**
 
-- **Flat JSON validation**: Metadata must be a flat JSON object; the script will abort if nested structures are detected
+- **Flat JSON validation**: Metadata must be a flat JSON object with optional arrays of primitive values (strings, numbers, booleans, null); the script will abort if nested objects or arrays containing nested structures are detected
 - **Stable vector IDs**: Generates deterministic SHA-256 hashes for consistent vector identification
 - **Auto-collection creation**: Creates Qdrant collections automatically if they don't exist
 - **Error handling**: Clear error messages for embedding failures, Qdrant connectivity issues, and validation errors
@@ -369,6 +369,14 @@ Embed a simple text with metadata:
 echo "This is a summary of a GitHub issue" | /path/to/vector-upsert \
   --collection github-issues \
   --metadata '{"url": "https://github.com/owner/repo/issues/123", "title": "Bug report", "author": "username"}'
+```
+
+Embed with array metadata (topics, labels, etc.):
+
+```sh
+echo "Summary of feature discussion" | /path/to/vector-upsert \
+  --collection github-conversations \
+  --metadata '{"url": "https://github.com/owner/repo/issues/456", "topics": ["performance", "caching", "database"], "labels": ["enhancement", "priority-high"]}'
 ```
 
 Use a specific embedding model and Qdrant server:
@@ -394,7 +402,7 @@ echo "Summary text" | /path/to/vector-upsert \
 
 The script will abort with clear error messages for:
 - Missing required arguments (`--collection`, `--metadata`)
-- Invalid or nested JSON in `--metadata`
+- Invalid JSON or nested objects/arrays in `--metadata` (arrays of primitives are allowed)
 - Empty text input via stdin
 - Embedding generation failures (invalid model, API issues)
 - Qdrant connectivity or API errors
