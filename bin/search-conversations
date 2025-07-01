@@ -24,6 +24,7 @@
 require "json"
 require "open3"
 require "optparse"
+require "shellwords"
 
 # Public: Runs a shell command and returns stdout. Aborts if the command fails.
 #
@@ -74,8 +75,8 @@ def search_conversations(query, type, cursor = nil)
   search_type = type.upcase
   after_clause = cursor ? ", after: \"#{cursor}\"" : ""
   
-  # Escape quotes in the query string for GraphQL
-  escaped_query = query.gsub('"', '\\"')
+  # Escape quotes in the query string for GraphQL and shell
+  escaped_query = query.gsub("'", "''").gsub('"', '\\"')
   
   graphql_query = <<~GRAPHQL
     query {
