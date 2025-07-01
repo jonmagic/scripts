@@ -3,7 +3,10 @@
 # vector-upsert: Generic tool for embedding text and upserting vectors with metadata into Qdrant collections
 #
 # Usage:
-#   echo "text to embed" | vector-upsert --collection COLLECTION --metadata '{"url": "...", "key": "value"}' --text-key summary [options]
+#   echo "text to embed" | vector-upsert --collection COLLECTION \
+#     --metadata '{"url": "...", "key": "value"}' \
+#     --vector-id-key html_url \
+#     [options]
 #
 # This script takes arbitrary text via stdin, generates embeddings using the llm CLI, and upserts the resulting
 # vector along with flat JSON metadata into a specified Qdrant collection. The collection will be created if it doesn't exist.
@@ -51,24 +54,43 @@ def validate_flat_json(obj, path = "")
   end
 end
 
+NAMESPACE_URL = "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+
+# Generate a UUIDv5 based on a namespace and name
+def uuid_v5(namespace_uuid_str, name)
+  ns = [namespace_uuid_str.delete("-")].pack("H*")
+  hash = Digest::SHA1.digest(ns + name)
+
+  # Construct UUID fields
+  bytes = hash[0,16].bytes
+
+  # Set version (5)
+  bytes[6] = (bytes[6] & 0x0F) | (5 << 4)
+
+  # Set variant (RFC 4122)
+  bytes[8] = (bytes[8] & 0x3F) | 0x80
+
+  # Format as canonical 8-4-4-4-12
+  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x" % bytes
+end
+
 # Generate a stable ID for the vector based on key content
-def generate_vector_id(metadata, text_key, text_content)
+def generate_vector_id(metadata, vector_id_key, text_content)
   # Try to use the value of the specified text key for ID generation
-  if metadata[text_key]
-    content_for_id = metadata[text_key]
+  if metadata[vector_id_key]
+    content_for_id = metadata[vector_id_key]
   else
     # Fall back to the actual text content
     content_for_id = text_content
   end
-  
-  # Use SHA-256 to generate a stable, reproducible ID
-  Digest::SHA256.hexdigest(content_for_id.to_s)
+
+  uuid_v5(NAMESPACE_URL, content_for_id)
 end
 
 # Generate embedding using llm CLI
 def generate_embedding(text, model)
   cmd = "llm embed -c #{Shellwords.escape(text)}"
-  
+
   # If no model specified, try to use a reasonable default
   if model.nil? || model.empty?
     # Try text-embedding-3-small first, then text-embedding-ada-002 as fallback
@@ -77,9 +99,9 @@ def generate_embedding(text, model)
   else
     cmd += " -m #{Shellwords.escape(model)}"
   end
-  
+
   cmd += " -f json"
-  
+
   embedding_json = run_cmd(cmd)
   JSON.parse(embedding_json)
 rescue JSON::ParserError => e
@@ -89,15 +111,15 @@ end
 # Create Qdrant collection if it doesn't exist
 def ensure_collection_exists(qdrant_url, collection_name, vector_size)
   uri = URI("#{qdrant_url}/collections/#{collection_name}")
-  
+
   # First, check if collection exists
   response = Net::HTTP.get_response(uri)
   return if response.code == "200"
-  
+
   # Collection doesn't exist, create it
   create_uri = URI("#{qdrant_url}/collections/#{collection_name}")
   http = Net::HTTP.new(create_uri.host, create_uri.port)
-  
+
   create_request = Net::HTTP::Put.new(create_uri)
   create_request["Content-Type"] = "application/json"
   create_request.body = {
@@ -106,7 +128,7 @@ def ensure_collection_exists(qdrant_url, collection_name, vector_size)
       size: vector_size
     }
   }.to_json
-  
+
   create_response = http.request(create_request)
   unless create_response.code.to_i.between?(200, 299)
     abort "Failed to create Qdrant collection '#{collection_name}': #{create_response.code} #{create_response.body}"
@@ -117,7 +139,7 @@ end
 def upsert_to_qdrant(qdrant_url, collection_name, vector_id, embedding, metadata)
   uri = URI("#{qdrant_url}/collections/#{collection_name}/points")
   http = Net::HTTP.new(uri.host, uri.port)
-  
+
   request = Net::HTTP::Put.new(uri)
   request["Content-Type"] = "application/json"
   request.body = {
@@ -127,12 +149,12 @@ def upsert_to_qdrant(qdrant_url, collection_name, vector_id, embedding, metadata
       payload: metadata
     }]
   }.to_json
-  
+
   response = http.request(request)
   unless response.code.to_i.between?(200, 299)
     abort "Failed to upsert to Qdrant collection '#{collection_name}': #{response.code} #{response.body}"
   end
-  
+
   response
 end
 
@@ -149,7 +171,7 @@ opt_parser = OptionParser.new do |opts|
   opts.banner = "Usage: #{$0} --collection COLLECTION --metadata JSON [options] < text_file"
   opts.on("--collection COLLECTION", "Qdrant collection name (required)") { |v| options[:collection] = v }
   opts.on("--metadata JSON", "Flat JSON metadata object (required)") { |v| options[:metadata] = v }
-  opts.on("--text-key KEY", "Key in metadata that contains the main text for ID generation (default: use stdin content)") { |v| options[:text_key] = v }
+  opts.on("--vector-id-key KEY", "Key in metadata that contains the main text for ID generation (default: use stdin content)") { |v| options[:vector_id_key] = v }
   opts.on("--model MODEL", "Embedding model to use (default: text-embedding-3-small)") { |v| options[:model] = v }
   opts.on("--qdrant-url URL", "Qdrant server URL (default: http://localhost:6333)") { |v| options[:qdrant_url] = v }
   opts.on("-h", "--help", "Show this help message") { puts opts; exit }
@@ -172,7 +194,7 @@ end
 
 # Set defaults
 options[:qdrant_url] ||= "http://localhost:6333"
-options[:text_key] ||= nil
+options[:vector_id_key] ||= "url"
 
 # Parse and validate metadata JSON
 begin
@@ -198,7 +220,7 @@ puts "Generating embedding..."
 embedding = generate_embedding(text_content, options[:model])
 
 # Generate stable vector ID
-vector_id = generate_vector_id(metadata, options[:text_key], text_content)
+vector_id = generate_vector_id(metadata, options[:vector_id_key], text_content)
 
 # Ensure collection exists
 puts "Ensuring Qdrant collection '#{options[:collection]}' exists..."

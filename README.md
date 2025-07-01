@@ -245,7 +245,7 @@ Index a GitHub conversation summary in a vector database (Qdrant) for semantic s
 
 - `<github_conversation_url>`: A GitHub issue, pull request, or discussion URL (e.g. `https://github.com/octocat/Hello-World/issues/42`)
 - `--executive-summary-prompt-path <path>`: **(Required)** Path to the prompt file for generating executive summaries
-- `--topics-prompt-path <path>`: **(Required)** Path to the prompt file for extracting topics  
+- `--topics-prompt-path <path>`: **(Required)** Path to the prompt file for extracting topics
 - `--collection <name>`: **(Required)** Qdrant collection name where the vector will be stored
 - `--cache-path <path>`: (Optional) Root directory for caching conversation data and processing results
 - `--updated-at <timestamp>`: (Optional) Only process if the remote conversation is newer than this ISO8601 timestamp
@@ -350,7 +350,7 @@ echo "text to embed" | /path/to/vector-upsert \
 
 - `--collection <name>`: **(Required)** Qdrant collection name where the vector will be stored
 - `--metadata <json>`: **(Required)** Flat JSON metadata object (no nested objects or arrays)
-- `--text-key <key>`: (Optional) Key in metadata that contains the main text for ID generation (default: use stdin content)
+- `--vector-id-key <key>`: (Optional) Key in metadata that contains the main text for ID generation (default: use stdin content)
 - `--model <model>`: (Optional) Embedding model to use (default: text-embedding-3-small)
 - `--qdrant-url <url>`: (Optional) Qdrant server URL (default: http://localhost:6333)
 
@@ -386,8 +386,8 @@ Specify which metadata field to use for ID generation:
 ```sh
 echo "Summary text" | /path/to/vector-upsert \
   --collection summaries \
-  --metadata '{"id": "unique-identifier", "summary": "Summary text", "source": "github"}' \
-  --text-key id
+  --metadata '{"html_url": "unique-identifier", "summary": "Summary text", "source": "github"}' \
+  --vector-id-key html_url
 ```
 
 **Error Conditions:**
