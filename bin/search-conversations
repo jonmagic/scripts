@@ -45,12 +45,12 @@ end
 # Returns an Array of types to search: ["issue"], ["discussion"], or ["issue", "discussion"].
 def detect_conversation_types(query)
   query_lower = query.downcase
-  
+
   # Check for explicit type filters
   has_issue = query_lower.include?("is:issue")
-  has_pr = query_lower.include?("is:pr") 
+  has_pr = query_lower.include?("is:pr")
   has_discussion = query_lower.include?("is:discussion")
-  
+
   if has_issue && !has_pr && !has_discussion
     ["issue"]
   elsif has_pr && !has_issue && !has_discussion
@@ -74,10 +74,10 @@ def search_conversations(query, type, cursor = nil)
   # Build the GraphQL query
   search_type = type.upcase
   after_clause = cursor ? ", after: \"#{cursor}\"" : ""
-  
+
   # Escape quotes in the query string for GraphQL and shell
   escaped_query = query.gsub("'", "''").gsub('"', '\\"')
-  
+
   graphql_query = <<~GRAPHQL
     query {
       search(query: "#{escaped_query}", type: #{search_type}, first: 100#{after_clause}) {
@@ -105,17 +105,17 @@ def search_conversations(query, type, cursor = nil)
       }
     }
   GRAPHQL
-  
+
   # Execute the GraphQL query
   json_response = run_cmd("gh api graphql -f query='#{graphql_query}'")
   data = JSON.parse(json_response)
-  
+
   # Check for errors
   if data["errors"]
     error_messages = data["errors"].map { |e| e["message"] }.join(", ")
     abort "GraphQL query failed: #{error_messages}"
   end
-  
+
   data.dig("data", "search") || { "nodes" => [], "pageInfo" => { "hasNextPage" => false } }
 end
 
@@ -130,13 +130,13 @@ def fetch_all_conversations(query, type, query_has_pr_filter = false)
   conversations = []
   cursor = nil
   max_items = 1000
-  
+
   loop do
     break if conversations.length >= max_items
-    
+
     result = search_conversations(query, type, cursor)
     nodes = result["nodes"] || []
-    
+
     # Filter nodes based on type and original query
     filtered_nodes = nodes.select do |node|
       case type
@@ -154,7 +154,7 @@ def fetch_all_conversations(query, type, query_has_pr_filter = false)
         true
       end
     end
-    
+
     # Convert to our output format
     filtered_nodes.each do |node|
       conversations << {
@@ -162,15 +162,15 @@ def fetch_all_conversations(query, type, query_has_pr_filter = false)
         "url" => node["url"]
       }
     end
-    
+
     # Check pagination
     page_info = result["pageInfo"] || {}
     break unless page_info["hasNextPage"] && page_info["endCursor"]
     break if conversations.length >= max_items
-    
+
     cursor = page_info["endCursor"]
   end
-  
+
   conversations
 end
 
