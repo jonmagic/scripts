@@ -3,7 +3,11 @@
 # index-summary: Orchestrate the indexing of GitHub conversation summaries in Qdrant
 #
 # Usage:
-#   index-summary <github_url> --executive-summary-prompt-path <prompt_path> --topics-prompt-path <prompt_path> --collection <collection> [options]
+#   index-summary <github_url> \
+#     --executive-summary-prompt-path <prompt_path> \
+#     --topics-prompt-path <prompt_path> \
+#     --collection <collection> \
+#     [options]
 #
 # This script orchestrates the complete pipeline for indexing a GitHub conversation summary:
 # 1. Fetches the conversation data using fetch-github-conversation
@@ -15,7 +19,7 @@
 # Requirements:
 # - Ruby
 # - fetch-github-conversation script in PATH
-# - summarize-github-conversation script in PATH  
+# - summarize-github-conversation script in PATH
 # - extract-topics script in PATH
 # - vector-upsert script in PATH
 # - All their respective dependencies (llm CLI, gh CLI, etc.)
@@ -79,9 +83,9 @@ def extract_metadata(data, url, owner, repo, type, number, topics)
   else
     abort "Unrecognized conversation type: #{type}"
   end
-  
+
   abort "No conversation data found" unless main_obj
-  
+
   # Build flat metadata payload
   metadata = {
     "url" => url,
@@ -98,7 +102,7 @@ def extract_metadata(data, url, owner, repo, type, number, topics)
     "indexed_at" => Time.now.utc.iso8601,
     "summary" => ""  # This will be replaced by vector-upsert with the actual summary text
   }
-  
+
   # Add type-specific fields
   case type
   when "issues"
@@ -113,12 +117,12 @@ def extract_metadata(data, url, owner, repo, type, number, topics)
     metadata["category"] = main_obj["category"] ? main_obj["category"]["name"] : ""
     metadata["answered"] = main_obj["answered"] ? "true" : "false"
   end
-  
+
   # Add closed timestamp if available
   if main_obj["closed_at"]
     metadata["closed_at"] = main_obj["closed_at"]
   end
-  
+
   metadata
 end
 
@@ -130,7 +134,7 @@ script_dir = File.expand_path(File.dirname(__FILE__))
 # Check for required scripts
 required_scripts = [
   "#{script_dir}/fetch-github-conversation",
-  "#{script_dir}/summarize-github-conversation", 
+  "#{script_dir}/summarize-github-conversation",
   "#{script_dir}/extract-topics",
   "#{script_dir}/vector-upsert"
 ]
@@ -175,11 +179,10 @@ end
 # Parse input URL
 owner, repo, type, number = parse_input(input)
 
-puts "Indexing GitHub conversation: #{input}"
-puts "Owner: #{owner}, Repo: #{repo}, Type: #{format_type(type)}, Number: #{number}"
+puts "Indexing GitHub conversation executive summary: #{input}"
 
 # Step 1: Fetch conversation data
-puts "\n1. Fetching conversation data..."
+puts "1. Fetching conversation data..."
 fetch_cmd = ["#{script_dir}/fetch-github-conversation"]
 fetch_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
 fetch_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
@@ -219,7 +222,6 @@ puts "5. Indexing summary in Qdrant..."
 vector_cmd = ["#{script_dir}/vector-upsert"]
 vector_cmd << "--collection #{options[:collection]}"
 vector_cmd << "--metadata #{Shellwords.escape(metadata.to_json)}"
-vector_cmd << "--text-key summary"
 vector_cmd << "--model #{options[:model]}" if options[:model]
 vector_cmd << "--qdrant-url #{options[:qdrant_url]}" if options[:qdrant_url]
 
@@ -227,20 +229,21 @@ vector_cmd << "--qdrant-url #{options[:qdrant_url]}" if options[:qdrant_url]
 Open3.popen3(vector_cmd.join(" ")) do |stdin, stdout, stderr, wait_thr|
   stdin.write(summary)
   stdin.close
-  
+
   # Read all output
   output = stdout.read
   error = stderr.read
-  
+
   unless wait_thr.value.success?
     abort "vector-upsert failed:\n#{error}"
   end
-  
+
   puts output
 end
 
-puts "\n✅ Successfully indexed conversation summary!"
+puts "✅ Successfully indexed conversation summary!"
 puts "Collection: #{options[:collection]}"
 puts "URL: #{input}"
 puts "Topics: #{topics.join(', ')}"
 puts "Summary length: #{summary.length} characters"
+puts
