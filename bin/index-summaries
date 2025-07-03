@@ -79,19 +79,36 @@ require "json"
 require "open3"
 require "optparse"
 
-# Public: Runs a shell command and returns stdout. Outputs errors to stderr but doesn't abort.
+# Public: Runs a shell command with real-time stderr output and returns stdout.
+# This allows progress messages to be visible while still capturing the result.
 #
 # cmd - The shell command to run (String).
 #
 # Returns the standard output of the command (String) or nil if command failed.
 def run_cmd_safe(cmd)
-  stdout, stderr, status = Open3.capture3(cmd)
-  unless status.success?
-    $stderr.puts "Command failed: #{cmd}"
-    $stderr.puts stderr
-    return nil
+  # Use popen3 to get real-time output
+  Open3.popen3(cmd) do |stdin, stdout, stderr, wait_thr|
+    stdin.close
+
+    # Read and forward stderr in real-time
+    stderr_thread = Thread.new do
+      stderr.each_line { |line| $stderr.print line }
+    end
+
+    # Read stdout
+    stdout_content = stdout.read
+
+    # Wait for stderr thread to finish
+    stderr_thread.join
+
+    # Wait for process to complete
+    unless wait_thr.value.success?
+      $stderr.puts "Command failed: #{cmd}"
+      return nil
+    end
+
+    stdout_content
   end
-  stdout
 end
 
 # Public: Parses input lines to extract URLs and optional updated_at timestamps.
@@ -230,9 +247,17 @@ if conversations.empty?
 end
 
 # Process each conversation
-conversations.each do |conversation|
+total_count = conversations.length
+$stderr.puts "Processing #{total_count} conversation#{total_count == 1 ? '' : 's'}..."
+$stderr.puts
+
+conversations.each_with_index do |conversation, index|
   url = conversation[:url]
   updated_at = conversation[:updated_at]
+
+  # Show progress
+  progress = "[#{index + 1}/#{total_count}]"
+  $stderr.puts "#{progress} Processing: #{url}"
 
   # Build command for index-summary
   cmd_parts = [index_summary_script] + options_for_index_summary
@@ -248,9 +273,9 @@ conversations.each do |conversation|
   # Run the command and check result
   result = run_cmd_safe(cmd)
   if result
-    # Output success JSON for this URL
-    puts JSON.generate({url: url, status: "indexed"})
+    # noop
   else
-    $stderr.puts "Failed to index: #{url}"
+    $stderr.puts "#{progress} ❌ Failed to index: #{url}"
   end
+  $stderr.puts
 end

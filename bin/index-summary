@@ -189,7 +189,7 @@ owner, repo, type, number = parse_input(input)
 puts "Indexing GitHub conversation executive summary: #{input}"
 
 # Step 1: Fetch conversation data
-puts "1. Fetching conversation data..."
+$stderr.puts "1. Fetching conversation data..."
 fetch_cmd = ["#{script_dir}/fetch-github-conversation"]
 fetch_cmd << "--cache-path #{options[:cache_path]}" if options[:cache_path]
 fetch_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
@@ -199,7 +199,7 @@ conversation_json = run_cmd(fetch_cmd.join(" "))
 conversation_data = JSON.parse(conversation_json)
 
 # Step 2: Generate summary
-puts "2. Generating executive summary..."
+$stderr.puts "2. Generating executive summary..."
 summary_cmd = ["#{script_dir}/summarize-github-conversation"]
 summary_cmd << input
 summary_cmd << "--executive-summary-prompt-path #{options[:executive_summary_prompt_path]}"
@@ -209,7 +209,7 @@ summary_cmd << "--updated-at #{options[:updated_at]}" if options[:updated_at]
 summary = run_cmd(summary_cmd.join(" ")).strip
 
 # Step 3: Extract topics
-puts "3. Extracting topics..."
+$stderr.puts "3. Extracting topics..."
 topics_cmd = ["#{script_dir}/extract-topics"]
 topics_cmd << input
 topics_cmd << "--topics-prompt-path #{options[:topics_prompt_path]}"
@@ -221,11 +221,11 @@ topics_json = run_cmd(topics_cmd.join(" ")).strip
 topics = JSON.parse(topics_json)
 
 # Step 4: Build metadata payload
-puts "4. Building metadata payload..."
+$stderr.puts "4. Building metadata payload..."
 metadata = extract_metadata(conversation_data, input, owner, repo, type, number, topics)
 
 # Step 5: Index in Qdrant via vector-upsert
-puts "5. Indexing summary in Qdrant..."
+$stderr.puts "5. Indexing summary in Qdrant..."
 vector_cmd = ["#{script_dir}/vector-upsert"]
 vector_cmd << "--collection #{options[:collection]}"
 vector_cmd << "--metadata #{Shellwords.escape(metadata.to_json)}"
@@ -249,9 +249,8 @@ Open3.popen3(vector_cmd.join(" ")) do |stdin, stdout, stderr, wait_thr|
   puts output
 end
 
-puts "✅ Successfully indexed conversation summary!"
-puts "Collection: #{options[:collection]}"
-puts "URL: #{input}"
-puts "Topics: #{topics.join(', ')}"
-puts "Summary length: #{summary.length} characters"
-puts
+$stderr.puts "✅ Successfully indexed conversation summary!"
+$stderr.puts "Collection: #{options[:collection]}"
+$stderr.puts "URL: #{input}"
+$stderr.puts "Topics: #{topics.join(', ')}"
+$stderr.puts "Summary length: #{summary.length} characters"
