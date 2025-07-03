@@ -36,6 +36,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Fetch GitHub Conversation](#fetch-github-conversation)
   - [Fetch GitHub Conversations](#fetch-github-conversations)
   - [Index Summary](#index-summary)
+  - [Index Summaries](#index-summaries)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
   - [Prepare Pull Request](#prepare-pull-request)
@@ -56,6 +57,7 @@ alias fgc='/path/to/fetch-github-conversation'
 alias et='/path/to/extract-topics --topics-prompt-path /path/to/topic-extraction.txt'
 alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --skip-if-up-to-date'
+alias bidx='/path/to/index-summaries --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --cache-path ./cache --skip-if-up-to-date'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
 ```
 
@@ -337,6 +339,96 @@ Index with caching, custom model, and timestamp optimization:
 - A running Qdrant server (default: localhost:6333)
 - Valid LLM API credentials configured with the `llm` CLI
 - All prompt files must exist and be readable
+
+### Index Summaries
+
+Bulk index multiple GitHub conversations into Qdrant for semantic search. This script orchestrates bulk indexing by running `index-summary` on each URL from either a file or stdin. It supports both plain text URLs and JSON input with updated_at timestamps for efficient caching.
+
+**Usage:**
+
+```sh
+./path/to/index-summaries [options] <file_path>
+# or
+command | ./path/to/index-summaries [options]
+```
+
+- `<file_path>`: Path to file containing GitHub URLs (plain text, one per line) or JSON data
+- All options are passed through to `index-summary`
+
+**Required Options:**
+
+- `--executive-summary-prompt-path <path>`: Path to the prompt file for generating executive summaries
+- `--topics-prompt-path <path>`: Path to the prompt file for extracting topics  
+- `--collection <name>`: Qdrant collection name where vectors will be stored
+
+**Optional Options:**
+
+- `--cache-path <path>`: Root directory for caching conversation data and processing results
+- `--updated-at <timestamp>`: Only process if remote conversation is newer (overrides JSON timestamps)
+- `--model <model>`: Embedding model to use for vector generation
+- `--qdrant-url <url>`: Qdrant server URL (default: http://localhost:6333)
+- `--max-topics <number>`: Maximum number of topics to extract
+- `--skip-if-up-to-date`: Skip indexing if vector exists and is up-to-date
+
+**Input Formats:**
+
+1. **Plain text URLs**: One URL per line
+2. **JSON from search-github-conversations**: Array of objects with `url` and `updated_at` fields
+
+**Examples:**
+
+Bulk index from a plain text file:
+
+```sh
+./path/to/index-summaries \
+  --executive-summary-prompt-path ./prompts/executive-summary.txt \
+  --topics-prompt-path ./prompts/topics.txt \
+  --collection github-conversations \
+  urls.txt
+```
+
+Bulk index from search results with automatic timestamp optimization:
+
+```sh
+./path/to/search-github-conversations 'repo:octocat/Hello-World created:>2025' | \
+  ./path/to/index-summaries \
+    --executive-summary-prompt-path ./prompts/summary.txt \
+    --topics-prompt-path ./prompts/topics.txt \
+    --collection github-conversations \
+    --cache-path ./cache \
+    --skip-if-up-to-date
+```
+
+**Complete workflow example** (search → bulk index):
+
+```sh
+# Step 1: Search for recent conversations and bulk index them
+./path/to/search-github-conversations 'repo:octocat/Hello-World created:>2025' | \
+  ./path/to/index-summaries \
+    --executive-summary-prompt-path /path/to/summary-prompt.txt \
+    --topics-prompt-path /path/to/topics-prompt.txt \
+    --collection github-conversations \
+    --cache-path ./cache \
+    --skip-if-up-to-date
+```
+
+**Key Benefits:**
+
+- **Bulk processing**: Process multiple conversations in a single command
+- **Automatic timestamp optimization**: When using JSON input, each conversation uses its individual `updated_at` timestamp for optimal caching
+- **Error resilience**: Continues processing even if individual URLs fail, with errors logged to stderr
+- **JSON output**: Streams JSON objects to stdout for successful indexing operations
+- **Pipeline-friendly**: Designed to work seamlessly with `search-github-conversations`
+
+**Output Format:**
+
+For each successfully indexed conversation, outputs a JSON object:
+
+```json
+{"url":"https://github.com/owner/repo/issues/42","status":"indexed"}
+```
+
+The script continues processing even if individual URLs fail and outputs error messages to stderr for any failures.
 
 ### Prepare Commit
 
