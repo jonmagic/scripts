@@ -3,31 +3,41 @@
 # fetch-github-conversations: Fetch and export GitHub issue, pull request, or discussion data for multiple URLs
 #
 # This script uses bin/fetch-github-conversation under the hood to fetch multiple GitHub conversations
-# at once. It accepts a list of URLs either from stdin (piped) or from a file, and streams the
+# at once. It accepts URLs either from stdin (piped) or from a file, and streams the
 # JSON output to stdout.
 #
 # Features:
 # - Uses bin/fetch-github-conversation for each URL
 # - Passes through all CLI arguments (--cache-path, --updated-at, etc.)
 # - Accepts URLs from stdin (piped) or from a file
+# - Supports both plain text URLs and JSON input from search-conversations
+# - Automatically uses updated_at timestamps from JSON input for efficient caching
 # - Streams JSON output to stdout
 # - Continues processing even if individual URLs fail
 #
 # Examples
 #
-#   # From stdin (piped)
+#   # From stdin (piped with plain text URLs)
 #   echo "https://github.com/octocat/Hello-World/issues/42" | fetch-github-conversations
 #
-#   # From file
+#   # From file with plain text URLs
 #   fetch-github-conversations urls.txt
+#
+#   # From search-conversations output (JSON with updated_at timestamps)
+#   search-conversations 'repo:octocat/Hello-World created:>2025' | fetch-github-conversations
 #
 #   # With caching options
 #   fetch-github-conversations --cache-path ./cache --updated-at 2024-05-01T00:00:00Z urls.txt
 #
 # Arguments
 #
-#   file_path - Optional path to file containing URLs, one per line
+#   file_path - Optional path to file containing URLs (plain text) or JSON data
 #               If not provided, reads from stdin
+#
+# Input Formats
+#
+#   Plain text: One URL per line
+#   JSON: Array of objects with "url" and "updated_at" fields (from search-conversations)
 #
 # Options
 #
@@ -44,6 +54,7 @@
 # The script will continue processing even if individual URLs fail, but will
 # output error messages to stderr for any failures.
 
+require "json"
 require "open3"
 require "optparse"
 
@@ -62,6 +73,43 @@ def run_cmd_safe(cmd)
   stdout
 end
 
+# Public: Parses input lines to extract URLs and optional updated_at timestamps.
+#
+# lines - Array of strings containing either plain URLs or JSON data.
+#
+# Returns an Array of Hashes with :url and :updated_at keys.
+def parse_input(lines)
+  input_text = lines.join("\n").strip
+
+  # Try to parse as JSON first
+  begin
+    json_data = JSON.parse(input_text)
+    if json_data.is_a?(Array)
+      return json_data.map do |item|
+        if item.is_a?(Hash) && item["url"]
+          {
+            url: item["url"],
+            updated_at: item["updated_at"]
+          }
+        else
+          $stderr.puts "Warning: Skipping invalid JSON item: #{item.inspect}"
+          nil
+        end
+      end.compact
+    end
+  rescue JSON::ParserError
+    # Not JSON, treat as plain text URLs
+  end
+
+  # Parse as plain text URLs (one per line)
+  lines.map(&:strip).reject(&:empty?).map do |url|
+    {
+      url: url,
+      updated_at: nil
+    }
+  end
+end
+
 # Parse command line arguments, separating options from positional arguments
 options_for_underlying_script = []
 file_path = nil
@@ -71,11 +119,11 @@ file_path = nil
 i = 0
 while i < ARGV.length
   arg = ARGV[i]
-  
+
   if arg.start_with?("--")
     # This is an option
     options_for_underlying_script << arg
-    
+
     # Check if this option expects a value
     if arg.include?("=")
       # Option with value in same argument (--option=value)
@@ -94,7 +142,7 @@ while i < ARGV.length
       exit 1
     end
   end
-  
+
   i += 1
 end
 
@@ -108,7 +156,7 @@ unless File.exist?(fetch_script) && File.executable?(fetch_script)
 end
 
 # Get URLs from either file or stdin
-urls = []
+input_lines = []
 
 if file_path
   # Read URLs from file
@@ -116,9 +164,9 @@ if file_path
     $stderr.puts "Error: File not found: #{file_path}"
     exit 1
   end
-  
+
   begin
-    urls = File.readlines(file_path).map(&:strip).reject(&:empty?)
+    input_lines = File.readlines(file_path)
   rescue => e
     $stderr.puts "Error reading file #{file_path}: #{e.message}"
     exit 1
@@ -131,21 +179,34 @@ else
     $stderr.puts "   or: command | #{$0} [options]"
     exit 1
   end
-  
-  urls = $stdin.readlines.map(&:strip).reject(&:empty?)
+
+  input_lines = $stdin.readlines
 end
 
-if urls.empty?
-  $stderr.puts "Error: No URLs provided"
+# Parse input to extract URLs and optional updated_at timestamps
+conversations = parse_input(input_lines)
+
+if conversations.empty?
+  $stderr.puts "Error: No valid URLs found in input"
   exit 1
 end
 
-# Process each URL
-urls.each do |url|
+# Process each conversation
+conversations.each do |conversation|
+  url = conversation[:url]
+  updated_at = conversation[:updated_at]
+
   # Build command for fetch-github-conversation
-  cmd_parts = [fetch_script] + options_for_underlying_script + [url]
+  cmd_parts = [fetch_script] + options_for_underlying_script
+
+  # Add individual updated_at if available and not already specified in options
+  if updated_at && !options_for_underlying_script.include?("--updated-at")
+    cmd_parts += ["--updated-at", updated_at]
+  end
+
+  cmd_parts << url
   cmd = cmd_parts.map { |part| "'#{part.gsub("'", "'\\''")}'" }.join(" ")
-  
+
   # Run the command and output result
   result = run_cmd_safe(cmd)
   if result

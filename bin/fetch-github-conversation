@@ -154,8 +154,8 @@ def fetch_discussion(owner, repo, number)
   discussion_out.delete("comments")
   # Convert all keys to snake_case for consistency
   {
-    discussion: deep_snake_case(discussion_out),
-    comments: deep_snake_case(comments)
+    "discussion" => deep_snake_case(discussion_out),
+    "comments" => deep_snake_case(comments)
   }
 end
 

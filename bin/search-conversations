@@ -1,0 +1,220 @@
+#!/usr/bin/env ruby
+
+# search-conversations: Search GitHub conversations (issues, pull requests, discussions) using GraphQL API
+#
+# This script takes a GitHub search query string and uses the `gh` CLI GraphQL API to search for
+# issues, pull requests, and discussions matching the query. It returns an array of JSON objects
+# containing `updated_at` and `url` for each conversation.
+#
+# Features:
+# - Accepts a GitHub search query string (e.g., 'repo:foo/bar created:>2025')
+# - Automatically detects conversation types from `is:issue`, `is:pr`, `is:discussion` modifiers
+# - Falls back to searching both issues/PRs and discussions if no type specified
+# - Handles pagination up to 1000 items per type
+# - Returns JSON array sorted by updated_at (descending)
+#
+# Usage:
+#   search-conversations 'repo:octocat/Hello-World is:pr created:>2025'
+#   search-conversations 'repo:octocat/Hello-World created:>2025'
+#
+# Requirements:
+# - Ruby
+# - The `gh` command-line tool (GitHub CLI) with appropriate authentication
+
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+
+# Public: Runs a shell command and returns stdout. Aborts if the command fails.
+#
+# cmd - The shell command to run (String).
+#
+# Returns the standard output of the command (String).
+# Raises SystemExit if the command fails.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout.strip
+end
+
+# Public: Detects conversation types from a search query string.
+#
+# query - The search query string (String).
+#
+# Returns an Array of types to search: ["issue"], ["discussion"], or ["issue", "discussion"].
+def detect_conversation_types(query)
+  query_lower = query.downcase
+
+  # Check for explicit type filters
+  has_issue = query_lower.include?("is:issue")
+  has_pr = query_lower.include?("is:pr")
+  has_discussion = query_lower.include?("is:discussion")
+
+  if has_issue && !has_pr && !has_discussion
+    ["issue"]
+  elsif has_pr && !has_issue && !has_discussion
+    ["issue"] # PRs are searched via ISSUE type, then filtered
+  elsif has_discussion && !has_issue && !has_pr
+    ["discussion"]
+  else
+    # If no type specified or multiple types, search both
+    ["issue", "discussion"]
+  end
+end
+
+# Public: Searches for GitHub conversations using GraphQL.
+#
+# query - The search query string (String).
+# type - The search type ("issue" or "discussion") (String).
+# cursor - Optional cursor for pagination (String or nil).
+#
+# Returns a Hash with "nodes" array and "pageInfo".
+def search_conversations(query, type, cursor = nil)
+  # Build the GraphQL query
+  search_type = type.upcase
+  after_clause = cursor ? ", after: \"#{cursor}\"" : ""
+
+  # Escape quotes in the query string for GraphQL and shell
+  escaped_query = query.gsub("'", "''").gsub('"', '\\"')
+
+  graphql_query = <<~GRAPHQL
+    query {
+      search(query: "#{escaped_query}", type: #{search_type}, first: 100#{after_clause}) {
+        nodes {
+          ... on Issue {
+            __typename
+            url
+            updatedAt
+          }
+          ... on PullRequest {
+            __typename
+            url
+            updatedAt
+          }
+          ... on Discussion {
+            __typename
+            url
+            updatedAt
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  GRAPHQL
+
+  # Execute the GraphQL query
+  json_response = run_cmd("gh api graphql -f query='#{graphql_query}'")
+  data = JSON.parse(json_response)
+
+  # Check for errors
+  if data["errors"]
+    error_messages = data["errors"].map { |e| e["message"] }.join(", ")
+    abort "GraphQL query failed: #{error_messages}"
+  end
+
+  data.dig("data", "search") || { "nodes" => [], "pageInfo" => { "hasNextPage" => false } }
+end
+
+# Public: Fetches all conversations for a given search query and type with pagination.
+#
+# query - The search query string (String).
+# type - The search type ("issue" or "discussion") (String).
+# query_has_pr_filter - Whether the original query contains "is:pr" (Boolean).
+#
+# Returns an Array of conversation objects.
+def fetch_all_conversations(query, type, query_has_pr_filter = false)
+  conversations = []
+  cursor = nil
+  max_items = 1000
+
+  loop do
+    break if conversations.length >= max_items
+
+    result = search_conversations(query, type, cursor)
+    nodes = result["nodes"] || []
+
+    # Filter nodes based on type and original query
+    filtered_nodes = nodes.select do |node|
+      case type
+      when "issue"
+        if query_has_pr_filter
+          # Only include PullRequest nodes if query explicitly asks for PRs
+          node["__typename"] == "PullRequest"
+        else
+          # Include both Issue and PullRequest nodes if no specific filter
+          ["Issue", "PullRequest"].include?(node["__typename"])
+        end
+      when "discussion"
+        node["__typename"] == "Discussion"
+      else
+        true
+      end
+    end
+
+    # Convert to our output format
+    filtered_nodes.each do |node|
+      conversations << {
+        "updated_at" => node["updatedAt"],
+        "url" => node["url"]
+      }
+    end
+
+    # Check pagination
+    page_info = result["pageInfo"] || {}
+    break unless page_info["hasNextPage"] && page_info["endCursor"]
+    break if conversations.length >= max_items
+
+    cursor = page_info["endCursor"]
+  end
+
+  conversations
+end
+
+# Public: Checks if a required command-line dependency is available in PATH.
+#
+# cmd - The String name of the command to check.
+#
+# Returns nothing. Exits if not found.
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
+end
+
+# Main execution
+if ARGV.empty?
+  abort "Usage: #{$0} '<search_query>'\nExample: #{$0} 'repo:octocat/Hello-World is:pr created:>2025'"
+end
+
+# Check dependencies
+check_dependency("gh")
+
+query = ARGV[0]
+if query.nil? || query.strip.empty?
+  abort "Search query cannot be empty"
+end
+
+# Detect what types to search
+types_to_search = detect_conversation_types(query)
+query_has_pr_filter = query.downcase.include?("is:pr")
+
+# Collect all conversations
+all_conversations = []
+
+types_to_search.each do |type|
+  conversations = fetch_all_conversations(query, type, query_has_pr_filter)
+  all_conversations.concat(conversations)
+end
+
+# Remove duplicates by URL (in case of overlapping results)
+unique_conversations = all_conversations.uniq { |c| c["url"] }
+
+# Sort by updated_at descending
+sorted_conversations = unique_conversations.sort do |a, b|
+  b["updated_at"] <=> a["updated_at"]
+end
+
+# Output JSON
+puts JSON.pretty_generate(sorted_conversations)

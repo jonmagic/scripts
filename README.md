@@ -40,6 +40,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Prepare Commit](#prepare-commit)
   - [Prepare Pull Request](#prepare-pull-request)
 - **Plumbing**: Lower-level scripts intended to be used by other scripts or for advanced workflows.
+  - [Search Conversations](#search-conversations)
   - [Select Folder](#select-folder)
   - [Vector Upsert](#vector-upsert)
 
@@ -120,7 +121,7 @@ The script will abort with an error message if the input is not recognized or if
 
 ### Fetch GitHub Conversations
 
-Fetch and export GitHub issue, pull request, or discussion data for multiple URLs at once. This script uses `fetch-github-conversation` under the hood to process multiple GitHub conversations, accepting URLs either from stdin (piped) or from a file. It passes through all CLI options to the underlying script and streams JSON output to stdout.
+Fetch and export GitHub issue, pull request, or discussion data for multiple URLs at once. This script uses `fetch-github-conversation` under the hood to process multiple GitHub conversations, accepting URLs either from stdin (piped) or from a file. It supports both plain text URLs and JSON input from `search-conversations`, automatically using updated_at timestamps for efficient caching. It passes through all CLI options to the underlying script and streams JSON output to stdout.
 
 **Usage:**
 
@@ -130,30 +131,74 @@ Fetch and export GitHub issue, pull request, or discussion data for multiple URL
 command | /path/to/fetch-github-conversations [options]
 ```
 
-- `<file_path>`: Path to file containing GitHub URLs, one per line
+- `<file_path>`: Path to file containing GitHub URLs (plain text, one per line) or JSON data
 - Options are passed through to `fetch-github-conversation`:
   - `--cache-path <cache_root>`: (Optional) Root directory for caching
   - `--updated-at <timestamp>`: (Optional) Only fetch if newer than this ISO8601 timestamp
 
+**Input Formats:**
+
+1. **Plain text URLs**: One URL per line (existing format)
+2. **JSON from search-conversations**: Array of objects with `url` and `updated_at` fields
+
 **Examples:**
 
-Fetch multiple conversations from a file:
+Fetch multiple conversations from a plain text file:
 
 ```sh
 /path/to/fetch-github-conversations urls.txt
 ```
 
-Fetch from stdin with caching:
+Fetch from stdin with plain text URLs:
 
 ```sh
 echo "https://github.com/octocat/Hello-World/issues/42" | /path/to/fetch-github-conversations --cache-path ./cache
 ```
 
-Fetch multiple conversations with timestamp check:
+**Pipeline with search-conversations** (recommended workflow):
+
+```sh
+# Search for conversations and fetch them with automatic timestamp optimization
+/path/to/search-conversations 'repo:octocat/Hello-World created:>2025' | \
+  /path/to/fetch-github-conversations --cache-path ./cache
+```
+
+**Complete workflow example** (search → fetch → summarize → index):
+
+```sh
+# Step 1: Search for recent conversations
+/path/to/search-conversations 'repo:octocat/Hello-World created:>2025' > recent_conversations.json
+
+# Step 2: Fetch full conversation data with caching
+cat recent_conversations.json | /path/to/fetch-github-conversations --cache-path ./cache
+
+# Step 3: Extract URLs and generate summaries
+cat recent_conversations.json | jq -r '.[].url' | while read url; do
+  /path/to/summarize-github-conversation "$url" \
+    --executive-summary-prompt-path /path/to/summary-prompt.txt \
+    --cache-path ./cache
+done
+
+# Step 4: Index summaries for semantic search
+cat recent_conversations.json | jq -r '.[].url' | while read url; do
+  /path/to/index-summary "$url" \
+    --executive-summary-prompt-path /path/to/summary-prompt.txt \
+    --topics-prompt-path /path/to/topics-prompt.txt \
+    --collection github-conversations \
+    --cache-path ./cache \
+    --skip-if-up-to-date
+done
+```
+
+Fetch multiple conversations with global timestamp check:
 
 ```sh
 /path/to/fetch-github-conversations --cache-path ./cache --updated-at 2024-05-01T00:00:00Z urls.txt
 ```
+
+**Key Benefits of JSON Input:**
+
+When using JSON input from `search-conversations`, each conversation is fetched with its individual `updated_at` timestamp, providing optimal caching efficiency. This means conversations that haven't been updated since the last fetch will be served from cache, while only recently updated conversations will make new API calls.
 
 The script continues processing even if individual URLs fail and outputs error messages to stderr for any failures.
 
@@ -326,6 +371,86 @@ This script helps you generate a pull request title and body based on commits be
 - `--llm-model`: (Optional) Specify a specific LLM model to use
 
 ## Plumbing Commands
+
+### Search Conversations
+
+Search GitHub conversations (issues, pull requests, discussions) using a GitHub search query string and the GraphQL API. This script aggregates search results and returns minimal metadata for each conversation, making it ideal for use in pipelines with other tools like `fetch-github-conversation`.
+
+**Usage:**
+
+```sh
+/path/to/search-conversations '<search_query>'
+```
+
+- `<search_query>`: A GitHub search query string using standard GitHub search syntax
+
+**Key Features:**
+
+- **Automatic type detection**: Inspects query for `is:issue`, `is:pr`, `is:discussion` modifiers to determine what to search
+- **Fallback search**: If no type specified, searches both issues/PRs and discussions automatically
+- **Pagination**: Handles pagination up to 1000 items per conversation type
+- **Consistent output**: Returns JSON array with `updated_at` and `url` for each result
+- **Sorted results**: Results are sorted by `updated_at` in descending order (most recent first)
+
+**Examples:**
+
+Search for pull requests only:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World is:pr created:>2025'
+```
+
+Search for all conversation types in a specific date range:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World created:2025-01-01..2025-06-30'
+```
+
+Search for discussions only:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World is:discussion'
+```
+
+Search across multiple repositories:
+
+```sh
+/path/to/search-conversations 'org:octocat is:issue state:open created:>2025'
+```
+
+Search with specific labels or keywords:
+
+```sh
+/path/to/search-conversations 'repo:octocat/Hello-World is:issue label:bug,enhancement in:title,body performance'
+```
+
+**Example Output:**
+
+```json
+[
+  {
+    "updated_at": "2025-06-20T09:42:11Z",
+    "url": "https://github.com/octocat/Hello-World/issues/123"
+  },
+  {
+    "updated_at": "2025-06-18T14:23:05Z",
+    "url": "https://github.com/octocat/Hello-World/pull/456"
+  },
+  {
+    "updated_at": "2025-06-15T10:00:00Z",
+    "url": "https://github.com/octocat/Hello-World/discussions/789"
+  }
+]
+```
+
+**Requirements:**
+- The `gh` CLI must be installed and authenticated
+- Valid GitHub search query syntax
+
+**Error Handling:**
+- Aborts with clear error message for invalid queries
+- Aborts if `gh` CLI is not authenticated
+- Handles GraphQL API errors and rate limits
 
 ### Select Folder
 
