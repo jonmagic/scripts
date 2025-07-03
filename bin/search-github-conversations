@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-# search-conversations: Search GitHub conversations (issues, pull requests, discussions) using GraphQL API
+# search-github-conversations: Search GitHub conversations (issues, pull requests, discussions) using GraphQL API
 #
 # This script takes a GitHub search query string and uses the `gh` CLI GraphQL API to search for
 # issues, pull requests, and discussions matching the query. It returns an array of JSON objects
@@ -14,8 +14,8 @@
 # - Returns JSON array sorted by updated_at (descending)
 #
 # Usage:
-#   search-conversations 'repo:octocat/Hello-World is:pr created:>2025'
-#   search-conversations 'repo:octocat/Hello-World created:>2025'
+#   search-github-conversations 'repo:octocat/Hello-World is:pr created:>2025'
+#   search-github-conversations 'repo:octocat/Hello-World created:>2025'
 #
 # Requirements:
 # - Ruby

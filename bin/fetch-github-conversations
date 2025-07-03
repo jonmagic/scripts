@@ -10,7 +10,7 @@
 # - Uses bin/fetch-github-conversation for each URL
 # - Passes through all CLI arguments (--cache-path, --updated-at, etc.)
 # - Accepts URLs from stdin (piped) or from a file
-# - Supports both plain text URLs and JSON input from search-conversations
+# - Supports both plain text URLs and JSON input from search-github-conversations
 # - Automatically uses updated_at timestamps from JSON input for efficient caching
 # - Streams JSON output to stdout
 # - Continues processing even if individual URLs fail
@@ -23,8 +23,8 @@
 #   # From file with plain text URLs
 #   fetch-github-conversations urls.txt
 #
-#   # From search-conversations output (JSON with updated_at timestamps)
-#   search-conversations 'repo:octocat/Hello-World created:>2025' | fetch-github-conversations
+#   # From search-github-conversations output (JSON with updated_at timestamps)
+#   search-github-conversations 'repo:octocat/Hello-World created:>2025' | fetch-github-conversations
 #
 #   # With caching options
 #   fetch-github-conversations --cache-path ./cache --updated-at 2024-05-01T00:00:00Z urls.txt
@@ -37,7 +37,7 @@
 # Input Formats
 #
 #   Plain text: One URL per line
-#   JSON: Array of objects with "url" and "updated_at" fields (from search-conversations)
+#   JSON: Array of objects with "url" and "updated_at" fields (from search-github-conversations)
 #
 # Options
 #
