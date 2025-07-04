@@ -117,6 +117,30 @@ def check_dependency(cmd)
   system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
 end
 
+# Public: Gets the editor using Git's resolution order.
+#
+# Returns the editor command as a String.
+def get_git_editor
+  # Follow Git's editor resolution order:
+  # 1. GIT_EDITOR environment variable
+  # 2. core.editor config value
+  # 3. VISUAL environment variable
+  # 4. EDITOR environment variable
+  # 5. Fall back to system default
+
+  return ENV["GIT_EDITOR"] if ENV["GIT_EDITOR"] && !ENV["GIT_EDITOR"].strip.empty?
+
+  # Try git config core.editor
+  git_config_editor = `git config --get core.editor 2>/dev/null`.strip
+  return git_config_editor unless git_config_editor.empty?
+
+  return ENV["VISUAL"] if ENV["VISUAL"] && !ENV["VISUAL"].strip.empty?
+  return ENV["EDITOR"] if ENV["EDITOR"] && !ENV["EDITOR"].strip.empty?
+
+  # Fall back to nano as a sensible default
+  "nano"
+end
+
 # Public: Opens a text editor with the given content and returns the edited result.
 #
 # text - The String text to edit.
@@ -134,9 +158,9 @@ def edit_text(text, file_path = nil)
     tmp_path = tmp.path
   end
 
-  # Get editor from environment
-  editor = ENV["EDITOR"] || "nano"
-  
+  # Get editor using Git's resolution order
+  editor = get_git_editor()
+
   # Open editor
   unless system("#{editor} #{tmp_path}")
     abort "Editor command failed: #{editor}"
@@ -181,37 +205,37 @@ class InitialResearchNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context for use in exec
     puts "[InitialResearchNode] Starting initial semantic search..." if shared[:verbose]
-    
+
     question = shared[:question]
     collection = shared[:collection]
     top_k = shared[:top_k]
     script_dir = shared[:script_dir]
-    
+
     # Run semantic search
     search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(question)} --collection #{Shellwords.escape(collection)} --top-k #{top_k} --format json"
     search_output = run_cmd(search_cmd)
-    
+
     search_results = JSON.parse(search_output)
     puts "[InitialResearchNode] Found #{search_results.length} initial results" if shared[:verbose]
-    
+
     search_results
   end
 
   def exec(search_results)
     # Fetch detailed conversation data for each result
     enriched_results = []
-    
+
     search_results.each do |result|
       url = result["url"]
       next unless url
-      
+
       puts "[InitialResearchNode] Fetching details for #{url}..." if @shared[:verbose]
-      
+
       begin
         fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
         conversation_json = run_cmd(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
-        
+
         enriched_results << {
           url: url,
           summary: result["summary"] || "",
@@ -222,7 +246,7 @@ class InitialResearchNode < Pocketflow::Node
         puts "[InitialResearchNode] Warning: Failed to fetch #{url}: #{e.message}" if @shared[:verbose]
       end
     end
-    
+
     enriched_results
   end
 
@@ -231,9 +255,9 @@ class InitialResearchNode < Pocketflow::Node
     shared[:memory][:hits] = exec_res
     shared[:memory][:notes] = []
     shared[:memory][:search_queries] = [shared[:question]]
-    
+
     puts "[InitialResearchNode] Collected #{exec_res.length} enriched conversations" if shared[:verbose]
-    
+
     "default"
   end
 end
@@ -242,26 +266,26 @@ class AskClarifyingNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
     puts "[AskClarifyingNode] Generating clarifying questions..." if shared[:verbose]
-    
+
     # Summarize initial findings
     initial_findings = shared[:memory][:hits].map do |hit|
       "- #{hit[:url]}: #{hit[:summary]}"
     end.join("\n")
-    
+
     # Fill template and call LLM
     prompt = fill_template(ASK_CLARIFY_PROMPT, {
       question: shared[:question],
       initial_findings: initial_findings
     })
-    
+
     llm_response = call_llm(prompt, shared[:llm_model])
-    
+
     llm_response
   end
 
   def exec(clarifying_questions)
     puts "[AskClarifyingNode] Opening editor for clarifying questions..."
-    
+
     # Prepare editor content
     editor_content = <<~CONTENT
 # Clarifying Questions
@@ -276,26 +300,26 @@ Please review and answer the following questions to help focus the research:
 
 Please provide your answers below:
 
-1. 
+1.
 
-2. 
+2.
 
-3. 
+3.
 
-4. 
+4.
 
 CONTENT
 
     # Open editor
     edited_content = edit_text(editor_content, @shared[:editor_file])
-    
+
     edited_content
   end
 
   def post(shared, prep_res, exec_res)
     shared[:clarifications] = exec_res
     puts "[AskClarifyingNode] Clarifications collected" if shared[:verbose]
-    
+
     "default"
   end
 end
@@ -305,65 +329,65 @@ class DeepResearchNode < Pocketflow::Node
     @shared = shared # Store shared context
     depth = shared[:current_depth] || 0
     max_depth = shared[:max_depth]
-    
+
     puts "[DeepResearchNode] Starting deep research iteration #{depth + 1}/#{max_depth}" if shared[:verbose]
-    
+
     # Check if we've reached max depth
     if depth >= max_depth
       puts "[DeepResearchNode] Maximum depth reached" if shared[:verbose]
       return nil
     end
-    
+
     # Prepare context for LLM
     findings_summary = shared[:memory][:notes].join("\n\n")
     previous_queries = shared[:memory][:search_queries].join(", ")
-    
+
     prompt = fill_template(DEEP_RESEARCH_PROMPT, {
       question: shared[:question],
       clarifications: shared[:clarifications] || "",
       findings_summary: findings_summary,
       previous_queries: previous_queries
     })
-    
+
     # Generate refined search query
     refined_query = call_llm(prompt, shared[:llm_model])
-    
+
     puts "[DeepResearchNode] Generated search query: #{refined_query}" if shared[:verbose]
-    
+
     refined_query
   end
 
   def exec(refined_query)
     return [] if refined_query.nil?
-    
+
     collection = @shared[:collection]
     top_k = @shared[:top_k]
     script_dir = @shared[:script_dir]
-    
+
     # Run semantic search with refined query
     search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(refined_query)} --collection #{Shellwords.escape(collection)} --top-k #{top_k} --format json"
     search_output = run_cmd(search_cmd)
     search_results = JSON.parse(search_output)
-    
+
     # Deduplicate URLs we already have
     existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
     new_results = search_results.reject { |result| existing_urls.include?(result["url"]) }
-    
+
     puts "[DeepResearchNode] Found #{new_results.length} new results" if @shared[:verbose]
-    
+
     # Fetch detailed data for new results
     new_enriched = []
     new_results.each do |result|
       url = result["url"]
       next unless url
-      
+
       puts "[DeepResearchNode] Fetching details for #{url}..." if @shared[:verbose]
-      
+
       begin
         fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
         conversation_json = run_cmd(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
-        
+
         new_enriched << {
           url: url,
           summary: result["summary"] || "",
@@ -374,26 +398,26 @@ class DeepResearchNode < Pocketflow::Node
         puts "[DeepResearchNode] Warning: Failed to fetch #{url}: #{e.message}" if @shared[:verbose]
       end
     end
-    
+
     new_enriched
   end
 
   def post(shared, prep_res, exec_res)
     return "final" if prep_res.nil? # Max depth reached
-    
+
     # Add new findings to memory
     shared[:memory][:hits].concat(exec_res)
     shared[:memory][:search_queries] << prep_res
-    
+
     # Add research notes
     if exec_res.any?
       notes = exec_res.map { |hit| "#{hit[:url]}: #{hit[:summary]}" }.join("\n")
       shared[:memory][:notes] << "Research iteration: #{notes}"
     end
-    
+
     # Increment depth
     shared[:current_depth] = (shared[:current_depth] || 0) + 1
-    
+
     # Continue if under max depth, otherwise go to final report
     if shared[:current_depth] < shared[:max_depth] && exec_res.any?
       "default" # Continue deep research loop
@@ -407,25 +431,25 @@ class FinalReportNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
     puts "[FinalReportNode] Generating final report..." if shared[:verbose]
-    
+
     # Compile all findings
     all_findings = shared[:memory][:hits].map do |hit|
       <<~FINDING
       **Source**: #{hit[:url]}
       **Summary**: #{hit[:summary]}
       **Relevance Score**: #{hit[:score]}
-      
+
       **Conversation Details**:
       #{JSON.pretty_generate(hit[:conversation])}
       FINDING
     end.join("\n\n---\n\n")
-    
+
     prompt = fill_template(FINAL_REPORT_PROMPT, {
       question: shared[:question],
       clarifications: shared[:clarifications] || "None provided",
       all_findings: all_findings
     })
-    
+
     prompt
   end
 
@@ -437,7 +461,7 @@ class FinalReportNode < Pocketflow::Node
     puts exec_res
     puts
     puts "[FinalReportNode] Research complete!" if shared[:verbose]
-    
+
     "default"
   end
 end
@@ -456,31 +480,31 @@ options = {
 
 opt_parser = OptionParser.new do |opts|
   opts.banner = "Usage: #{File.basename($0)} \"QUESTION\" --collection COLLECTION [options]"
-  
+
   opts.on("--collection NAME", "Qdrant collection name (required)") do |v|
     options[:collection] = v
   end
-  
+
   opts.on("--top-k N", Integer, "Max results per search (default: 10)") do |v|
     options[:top_k] = v
   end
-  
+
   opts.on("--max-depth N", Integer, "Max deep-research passes (default: 10)") do |v|
     options[:max_depth] = v
   end
-  
+
   opts.on("--editor-file PATH", "Use fixed file instead of Tempfile") do |v|
     options[:editor_file] = v
   end
-  
+
   opts.on("--verbose", "Show debug logs") do
     options[:verbose] = true
   end
-  
+
   opts.on("--llm-model MODEL", "LLM model to use") do |v|
     options[:llm_model] = v
   end
-  
+
   opts.on("-h", "--help", "Show this help message") do
     puts opts
     exit
@@ -507,11 +531,6 @@ end
 
 unless options[:collection]
   abort "Error: --collection is required\n\n#{opt_parser}"
-end
-
-# Check for EDITOR if not using a fixed file
-unless options[:editor_file] || ENV["EDITOR"]
-  abort "Error: EDITOR environment variable must be set"
 end
 
 # Set up shared context
@@ -547,7 +566,7 @@ begin
   puts "Question: #{question}" if shared[:verbose]
   puts "Collection: #{options[:collection]}" if shared[:verbose]
   puts
-  
+
   flow.run(shared)
 rescue Interrupt
   puts "\nResearch interrupted by user"
