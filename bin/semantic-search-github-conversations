@@ -61,15 +61,14 @@ end
 # Returns an Array of Float values representing the embedding vector.
 def generate_embedding(text)
   cmd = "llm embed -m text-embedding-3-small -f json -c #{Shellwords.escape(text)}"
-  
+
   embedding_json = run_cmd(cmd)
-  result = JSON.parse(embedding_json)
-  
-  # Extract embedding array from the response
-  result["embedding"] || abort("No embedding found in llm response")
+  JSON.parse(embedding_json)
 rescue JSON::ParserError => e
   abort "Failed to parse embedding JSON: #{e.message}"
 end
+
+ARRAY_FIELDS = %w[labels topics]
 
 # Public: Parses filter arguments into Qdrant filter structure.
 #
@@ -84,45 +83,75 @@ def build_qdrant_filters(filter_args)
   filter_args.each do |filter_arg|
     key, value = filter_arg.split(":", 2)
     abort "Invalid filter format: #{filter_arg}. Expected key:value" unless value
-    
+
     filters_by_key[key] ||= []
     filters_by_key[key] << value
   end
 
   must_conditions = []
+  must_not_conditions = []
+  should_conditions = []
 
   filters_by_key.each do |key, values|
     if key.end_with?("_after", "_before")
       # Date range filters
       base_key = key.sub(/_after$|_before$/, "")
       date_field = "#{base_key}_epoch"
-      
+
       values.each do |value|
         begin
           epoch_time = Date.parse(value).to_time.to_i
-          
+
           if key.end_with?("_after")
-            must_conditions << { "range" => { date_field => { "gte" => epoch_time } } }
+            must_conditions << { "key" => date_field, "range" => { "gte" => epoch_time } }
           else # _before
-            must_conditions << { "range" => { date_field => { "lte" => epoch_time } } }
+            must_conditions << { "key" => date_field, "range" => { "lte" => epoch_time } }
           end
         rescue Date::Error
           abort "Invalid date format in filter #{key}:#{value}. Expected YYYY-MM-DD"
         end
       end
+    elsif ARRAY_FIELDS.include?(key)
+      # Array field: support text matching for comma-separated values and exclusion (prefix value with '-')
+      values.each do |value|
+        if value.start_with?("-")
+          # For exclusion, use match with negation
+          must_not_conditions << { "key" => key, "match" => { "text" => value[1..-1] } }
+        else
+          # For inclusion, use match with text search
+          must_conditions << { "key" => key, "match" => { "text" => value } }
+        end
+      end
     else
-      # Exact match filters
+      # Scalar field: exact match
       if values.length == 1
-        must_conditions << { "match" => { key => values.first } }
+        must_conditions << { "key" => key, "match" => { "value" => values.first } }
       else
         # Multiple values for same key - OR them together
-        should_conditions = values.map { |value| { "match" => { key => value } } }
-        must_conditions << { "should" => should_conditions }
+        should_conditions += values.map { |value| { "key" => key, "match" => { "value" => value } } }
       end
     end
   end
 
-  { "must" => must_conditions }
+  # If only should_conditions and no must_conditions, use top-level should inside must
+  if must_conditions.empty? && !should_conditions.empty?
+    must_conditions << { "should" => should_conditions, "minimum_should_match" => 1 }
+  end
+
+  # If both must and should, put should inside must
+  if !should_conditions.empty? && !must_conditions.empty?
+    must_conditions << { "should" => should_conditions, "minimum_should_match" => 1 }
+  end
+
+  filter = {}
+  if must_conditions.any?
+    filter["must"] = must_conditions
+  end
+  if must_not_conditions.any?
+    filter["must_not"] = must_not_conditions
+  end
+  puts "Filter conditions: #{filter}"
+  filter
 end
 
 # Public: Executes semantic search against Qdrant.
@@ -139,15 +168,16 @@ end
 def search_qdrant(qdrant_url, collection, query_vector, filter_obj, limit, score_threshold, verbose)
   uri = URI("#{qdrant_url}/collections/#{collection}/points/search")
   http = Net::HTTP.new(uri.host, uri.port)
-  
+
   request_body = {
     vector: query_vector,
-    limit: limit
+    limit: limit,
+    with_payload: true
   }
-  
+
   request_body[:filter] = filter_obj unless filter_obj.empty?
   request_body[:score_threshold] = score_threshold if score_threshold
-  
+
   if verbose
     $stderr.puts "=== Qdrant Request ==="
     $stderr.puts JSON.pretty_generate(request_body)
@@ -159,7 +189,7 @@ def search_qdrant(qdrant_url, collection, query_vector, filter_obj, limit, score
   request.body = request_body.to_json
 
   response = http.request(request)
-  
+
   if verbose
     $stderr.puts "=== Qdrant Response ==="
     $stderr.puts "Status: #{response.code}"
@@ -183,7 +213,7 @@ end
 # Returns an Array of Hashes with id, score, and payload.
 def format_results(search_results)
   points = search_results.dig("result") || []
-  
+
   points.map do |point|
     {
       "id" => point["id"],
@@ -213,35 +243,35 @@ options = {
 
 opt_parser = OptionParser.new do |opts|
   opts.banner = "Usage: #{$0} [options] \"free-text query\""
-  
+
   opts.on("-c", "--collection NAME", "Qdrant collection (default: summaries)") do |v|
     options[:collection] = v
   end
-  
+
   opts.on("-f", "--filter KEY:VALUE", "Filter by metadata (repeatable)") do |v|
     options[:filters] << v
   end
-  
+
   opts.on("-n", "--limit N", Integer, "Max hits to return (default: 10)") do |v|
     options[:limit] = v
   end
-  
+
   opts.on("--score-threshold N", Float, "Min similarity score (0.0-1.0)") do |v|
     options[:score_threshold] = v
   end
-  
+
   opts.on("--url URL", "Qdrant base URL (default: http://localhost:6333)") do |v|
     options[:qdrant_url] = v
   end
-  
+
   opts.on("-v", "--verbose", "Dump request/response JSON") do
     options[:verbose] = true
   end
-  
+
   opts.on("--format FORMAT", ["yaml", "json"], "Output format: yaml (default) or json") do |v|
     options[:format] = v
   end
-  
+
   opts.on("-h", "--help", "Show this help message") do
     puts opts
     exit
