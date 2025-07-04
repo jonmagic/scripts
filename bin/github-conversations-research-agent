@@ -67,14 +67,25 @@ You are an expert researcher analyzing GitHub conversations. Based on the origin
 ## Previous Search Queries
 {{previous_queries}}
 
-Based on this context, generate a short, focused search query (1-2 sentences) that would help find additional relevant GitHub conversations. Focus on:
+Based on this context, generate a simple English search query that would help find additional relevant GitHub conversations. The query should be:
 
+- A natural language sentence or phrase (no special syntax, filters, or technical operators)
+- 1-2 sentences maximum
+- Written as if asking a question or describing what you're looking for
+- Focused on filling gaps in current understanding, finding related issues, discovering implementation details, or uncovering related problems
+
+Examples of good queries:
+- "How to implement rate limiting in API endpoints"
+- "Database migration performance issues with large tables"
+- "User authentication failing after recent updates"
+
+Focus on:
 - Filling gaps in current understanding
 - Finding related issues or discussions
 - Discovering implementation details or decisions
 - Uncovering related problems or solutions
 
-Return only the search query text, nothing else.
+Return only the search query text as a simple English sentence, nothing else.
 PROMPT
 
 FINAL_REPORT_PROMPT = <<~PROMPT
@@ -206,12 +217,45 @@ def call_llm(prompt, model = nil)
   run_cmd(cmd)
 end
 
+# Public: Extracts conversation metadata from GitHub conversation data.
+#
+# conversation_data - The parsed JSON from fetch-github-conversation.
+#
+# Returns a Hash with conversation metadata and logging information.
+def extract_conversation_metadata(conversation_data)
+  # Determine type and extract conversation metadata
+  conversation_type = if conversation_data["issue"]
+    "issue"
+  elsif conversation_data["pr"]
+    "pull request"
+  elsif conversation_data["discussion"]
+    "discussion"
+  else
+    "unknown"
+  end
+
+  # Get the actual conversation object based on type
+  conversation_obj = conversation_data["issue"] || conversation_data["pr"] || conversation_data["discussion"] || {}
+
+  # Extract metadata for logging and return
+  {
+    type: conversation_type,
+    title: conversation_obj["title"] || "Unknown title",
+    state: conversation_obj["state"] || "unknown",
+    comments_count: conversation_data["comments"]&.length || 0
+  }
+end
+
 # === Pocketflow Nodes ===
 
 class InitialResearchNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context for use in exec
-    puts "[InitialResearchNode] Starting initial semantic search..." if shared[:verbose]
+    puts "\n=== INITIAL RESEARCH PHASE ==="
+    puts "[InitialResearchNode] Starting initial semantic search..."
+    puts "[InitialResearchNode] Question: #{shared[:question]}"
+    puts "[InitialResearchNode] Collection: #{shared[:collection]}"
+    puts "[InitialResearchNode] Max results: #{shared[:top_k]}"
 
     question = shared[:question]
     collection = shared[:collection]
@@ -220,40 +264,58 @@ class InitialResearchNode < Pocketflow::Node
 
     # Run semantic search
     search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(question)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
-    search_output = run_cmd(search_cmd)
+    puts "[InitialResearchNode] Running search command: #{search_cmd}"
 
+    search_output = run_cmd(search_cmd)
     search_results = JSON.parse(search_output)
-    puts "[InitialResearchNode] Found #{search_results.length} initial results" if shared[:verbose]
+
+    puts "[InitialResearchNode] Found #{search_results.length} initial results:"
+    search_results.each_with_index do |result, i|
+      puts "  #{i + 1}. URL: #{result.dig('payload', 'url')}"
+      puts "     Score: #{result['score']}"
+      puts "     Summary: #{result.dig('payload', 'summary')&.slice(0, 100)}..."
+      puts
+    end
 
     search_results
   end
 
   def exec(search_results)
+    puts "[InitialResearchNode] Fetching detailed conversation data..."
+
     # Fetch detailed conversation data for each result
     enriched_results = []
 
-    search_results.each do |result|
-      url = result["url"]
+    search_results.each_with_index do |result, i|
+      url = result.dig("payload", "url")
       next unless url
 
-      puts "[InitialResearchNode] Fetching details for #{url}..." if @shared[:verbose]
+      puts "[InitialResearchNode] (#{i + 1}/#{search_results.length}) Fetching details for #{url}..."
 
       begin
         fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
         conversation_json = run_cmd(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
+        metadata = extract_conversation_metadata(conversation_data)
+
+        puts "  ✓ Success: #{metadata[:title]}"
+        puts "    Type: #{metadata[:type]}"
+        puts "    State: #{metadata[:state]}"
+        puts "    Comments: #{metadata[:comments_count]}"
+
         enriched_results << {
           url: url,
-          summary: result["summary"] || "",
+          summary: result.dig("payload", "summary") || "",
           score: result["score"],
           conversation: conversation_data
         }
       rescue => e
-        puts "[InitialResearchNode] Warning: Failed to fetch #{url}: #{e.message}" if @shared[:verbose]
+        puts "  ✗ Failed to fetch #{url}: #{e.message}"
       end
     end
 
+    puts "[InitialResearchNode] Successfully enriched #{enriched_results.length}/#{search_results.length} conversations"
     enriched_results
   end
 
@@ -263,7 +325,8 @@ class InitialResearchNode < Pocketflow::Node
     shared[:memory][:notes] = []
     shared[:memory][:search_queries] = [shared[:question]]
 
-    puts "[InitialResearchNode] Collected #{exec_res.length} enriched conversations" if shared[:verbose]
+    puts "[InitialResearchNode] ✓ Collected #{exec_res.length} enriched conversations in memory"
+    puts "[InitialResearchNode] Moving to clarifying questions phase..."
 
     "default"
   end
@@ -272,12 +335,17 @@ end
 class AskClarifyingNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
-    puts "[AskClarifyingNode] Generating clarifying questions..." if shared[:verbose]
+    puts "\n=== CLARIFYING QUESTIONS PHASE ==="
+    puts "[AskClarifyingNode] Generating clarifying questions based on initial findings..."
 
     # Summarize initial findings
     initial_findings = shared[:memory][:hits].map do |hit|
       "- #{hit[:url]}: #{hit[:summary]}"
     end.join("\n")
+
+    puts "[AskClarifyingNode] Initial findings summary:"
+    puts initial_findings
+    puts
 
     # Fill template and call LLM
     prompt = fill_template(ASK_CLARIFY_PROMPT, {
@@ -285,13 +353,19 @@ class AskClarifyingNode < Pocketflow::Node
       initial_findings: initial_findings
     })
 
+    puts "[AskClarifyingNode] Calling LLM to generate clarifying questions..."
     llm_response = call_llm(prompt, shared[:llm_model])
+
+    puts "[AskClarifyingNode] Generated clarifying questions:"
+    puts "=" * 60
+    puts llm_response
+    puts "=" * 60
 
     llm_response
   end
 
   def exec(clarifying_questions)
-    puts "[AskClarifyingNode] Opening editor for clarifying questions..."
+    puts "[AskClarifyingNode] Opening editor for user to answer clarifying questions..."
 
     # Prepare editor content
     editor_content = <<~CONTENT
@@ -303,12 +377,18 @@ CONTENT
     # Open editor
     edited_content = edit_text(editor_content, @shared[:editor_file])
 
+    puts "[AskClarifyingNode] User provided clarifications:"
+    puts "=" * 60
+    puts edited_content
+    puts "=" * 60
+
     edited_content
   end
 
   def post(shared, prep_res, exec_res)
     shared[:clarifications] = exec_res
-    puts "[AskClarifyingNode] Clarifications collected" if shared[:verbose]
+    puts "[AskClarifyingNode] ✓ Clarifications collected and stored in memory"
+    puts "[AskClarifyingNode] Moving to deep research phase..."
 
     "default"
   end
@@ -320,17 +400,23 @@ class DeepResearchNode < Pocketflow::Node
     depth = shared[:current_depth] || 0
     max_depth = shared[:max_depth]
 
-    puts "[DeepResearchNode] Starting deep research iteration #{depth + 1}/#{max_depth}" if shared[:verbose]
+    puts "\n=== DEEP RESEARCH PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
+    puts "[DeepResearchNode] Starting deep research iteration #{depth + 1}/#{max_depth}"
 
     # Check if we've reached max depth
     if depth >= max_depth
-      puts "[DeepResearchNode] Maximum depth reached" if shared[:verbose]
+      puts "[DeepResearchNode] Maximum depth reached, moving to final report"
       return nil
     end
 
     # Prepare context for LLM
     findings_summary = shared[:memory][:notes].join("\n\n")
     previous_queries = shared[:memory][:search_queries].join(", ")
+
+    puts "[DeepResearchNode] Current research context:"
+    puts "  Previous queries: #{previous_queries}"
+    puts "  Total conversations found so far: #{shared[:memory][:hits].length}"
+    puts "  Research notes accumulated: #{shared[:memory][:notes].length}"
 
     prompt = fill_template(DEEP_RESEARCH_PROMPT, {
       question: shared[:question],
@@ -339,10 +425,12 @@ class DeepResearchNode < Pocketflow::Node
       previous_queries: previous_queries
     })
 
+    puts "[DeepResearchNode] Calling LLM to generate refined search query..."
     # Generate refined search query
     refined_query = call_llm(prompt, shared[:llm_model])
 
-    puts "[DeepResearchNode] Generated search query: #{refined_query}" if shared[:verbose]
+    puts "[DeepResearchNode] Generated refined search query:"
+    puts "  \"#{refined_query}\""
 
     refined_query
   end
@@ -354,41 +442,68 @@ class DeepResearchNode < Pocketflow::Node
     top_k = @shared[:top_k]
     script_dir = @shared[:script_dir]
 
+    puts "[DeepResearchNode] Running semantic search with refined query..."
+
     # Run semantic search with refined query
     search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(refined_query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+    puts "[DeepResearchNode] Search command: #{search_cmd}"
+
     search_output = run_cmd(search_cmd)
     search_results = JSON.parse(search_output)
 
+    puts "[DeepResearchNode] Raw search results: #{search_results.length} conversations found"
+
     # Deduplicate URLs we already have
     existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
-    new_results = search_results.reject { |result| existing_urls.include?(result["url"]) }
+    new_results = search_results.reject { |result| existing_urls.include?(result.dig("payload", "url")) }
 
-    puts "[DeepResearchNode] Found #{new_results.length} new results" if @shared[:verbose]
+    puts "[DeepResearchNode] After deduplication: #{new_results.length} new conversations"
+
+    if new_results.empty?
+      puts "[DeepResearchNode] No new results found - all were duplicates"
+      return []
+    end
+
+    puts "[DeepResearchNode] New results found:"
+    new_results.each_with_index do |result, i|
+      puts "  #{i + 1}. URL: #{result.dig('payload', 'url')}"
+      puts "     Score: #{result['score']}"
+      puts "     Summary: #{result.dig('payload', 'summary')&.slice(0, 100)}..."
+      puts
+    end
 
     # Fetch detailed data for new results
     new_enriched = []
-    new_results.each do |result|
-      url = result["url"]
+    new_results.each_with_index do |result, i|
+      url = result.dig("payload", "url")
       next unless url
 
-      puts "[DeepResearchNode] Fetching details for #{url}..." if @shared[:verbose]
+      puts "[DeepResearchNode] (#{i + 1}/#{new_results.length}) Fetching details for #{url}..."
 
       begin
         fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
         conversation_json = run_cmd(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
+        metadata = extract_conversation_metadata(conversation_data)
+
+        puts "  ✓ Success: #{metadata[:title]}"
+        puts "    Type: #{metadata[:type]}"
+        puts "    State: #{metadata[:state]}"
+        puts "    Comments: #{metadata[:comments_count]}"
+
         new_enriched << {
           url: url,
-          summary: result["summary"] || "",
+          summary: result.dig("payload", "summary") || "",
           score: result["score"],
           conversation: conversation_data
         }
       rescue => e
-        puts "[DeepResearchNode] Warning: Failed to fetch #{url}: #{e.message}" if @shared[:verbose]
+        puts "  ✗ Failed to fetch #{url}: #{e.message}"
       end
     end
 
+    puts "[DeepResearchNode] Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
     new_enriched
   end
 
@@ -403,15 +518,25 @@ class DeepResearchNode < Pocketflow::Node
     if exec_res.any?
       notes = exec_res.map { |hit| "#{hit[:url]}: #{hit[:summary]}" }.join("\n")
       shared[:memory][:notes] << "Research iteration: #{notes}"
+      puts "[DeepResearchNode] Added #{exec_res.length} new conversations to memory"
+    else
+      puts "[DeepResearchNode] No new conversations added this iteration"
     end
 
     # Increment depth
     shared[:current_depth] = (shared[:current_depth] || 0) + 1
 
+    puts "[DeepResearchNode] Current memory state:"
+    puts "  Total conversations: #{shared[:memory][:hits].length}"
+    puts "  Total search queries: #{shared[:memory][:search_queries].length}"
+    puts "  Current depth: #{shared[:current_depth]}/#{shared[:max_depth]}"
+
     # Continue if under max depth, otherwise go to final report
     if shared[:current_depth] < shared[:max_depth] && exec_res.any?
+      puts "[DeepResearchNode] Continuing to next deep research iteration..."
       "default" # Continue deep research loop
     else
+      puts "[DeepResearchNode] Deep research complete, moving to final report..."
       "final"
     end
   end
@@ -420,7 +545,18 @@ end
 class FinalReportNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
-    puts "[FinalReportNode] Generating final report..." if shared[:verbose]
+    puts "\n=== FINAL REPORT PHASE ==="
+    puts "[FinalReportNode] Generating final report from all gathered data..."
+
+    puts "[FinalReportNode] Research summary:"
+    puts "  Total conversations analyzed: #{shared[:memory][:hits].length}"
+    puts "  Search queries used: #{shared[:memory][:search_queries].length}"
+    puts "  Deep research iterations: #{shared[:current_depth] || 0}"
+
+    puts "[FinalReportNode] All conversation sources:"
+    shared[:memory][:hits].each_with_index do |hit, i|
+      puts "  #{i + 1}. #{hit[:url]} (score: #{hit[:score]})"
+    end
 
     # Compile all findings
     all_findings = shared[:memory][:hits].map do |hit|
@@ -440,6 +576,7 @@ class FinalReportNode < Pocketflow::Node
       all_findings: all_findings
     })
 
+    puts "[FinalReportNode] Calling LLM to generate final report..."
     prompt
   end
 
@@ -448,9 +585,11 @@ class FinalReportNode < Pocketflow::Node
   end
 
   def post(shared, prep_res, exec_res)
+    puts "\n=== FINAL REPORT ==="
     puts exec_res
     puts
-    puts "[FinalReportNode] Research complete!" if shared[:verbose]
+    puts "[FinalReportNode] ✓ Research complete!"
+    puts "[FinalReportNode] Total conversations analyzed: #{shared[:memory][:hits].length}"
 
     "default"
   end
@@ -552,9 +691,12 @@ deep_node.on("final", final_node)
 flow = Pocketflow::Flow.new(initial_node)
 
 begin
-  puts "Starting GitHub Conversations Research Agent..." if shared[:verbose]
-  puts "Question: #{question}" if shared[:verbose]
-  puts "Collection: #{options[:collection]}" if shared[:verbose]
+  puts "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
+  puts "Question: #{question}"
+  puts "Collection: #{options[:collection]}"
+  puts "Max results per search: #{options[:limit]}"
+  puts "Max deep research iterations: #{options[:max_depth]}"
+  puts "LLM model: #{options[:llm_model] || 'default'}"
   puts
 
   flow.run(shared)
