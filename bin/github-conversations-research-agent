@@ -10,6 +10,14 @@
 #
 # Usage: github-conversations-research-agent "QUESTION" --collection COLLECTION [options]
 #
+# Options:
+#   --collection NAME        Qdrant collection name (required)
+#   -n, --limit N           Max results per search (default: 10)
+#   --max-depth N           Max deep-research passes (default: 10)
+#   --editor-file PATH      Use fixed file instead of Tempfile
+#   --verbose               Show debug logs
+#   --llm-model MODEL       LLM model to use
+#
 # The script uses the existing bin/semantic-search-github-conversations and
 # bin/fetch-github-conversation scripts to gather context, and integrates
 # with the llm CLI for AI-powered analysis.
@@ -212,7 +220,7 @@ class InitialResearchNode < Pocketflow::Node
     script_dir = shared[:script_dir]
 
     # Run semantic search
-    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(question)} --collection #{Shellwords.escape(collection)} --top-k #{top_k} --format json"
+    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(question)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
     search_output = run_cmd(search_cmd)
 
     search_results = JSON.parse(search_output)
@@ -365,7 +373,7 @@ class DeepResearchNode < Pocketflow::Node
     script_dir = @shared[:script_dir]
 
     # Run semantic search with refined query
-    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(refined_query)} --collection #{Shellwords.escape(collection)} --top-k #{top_k} --format json"
+    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(refined_query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
     search_output = run_cmd(search_cmd)
     search_results = JSON.parse(search_output)
 
@@ -471,7 +479,7 @@ end
 # Parse command-line options
 options = {
   collection: nil,
-  top_k: 10,
+  limit: 10,
   max_depth: 10,
   editor_file: nil,
   verbose: false,
@@ -485,8 +493,8 @@ opt_parser = OptionParser.new do |opts|
     options[:collection] = v
   end
 
-  opts.on("--top-k N", Integer, "Max results per search (default: 10)") do |v|
-    options[:top_k] = v
+  opts.on("-n", "--limit N", Integer, "Max results per search (default: 10)") do |v|
+    options[:limit] = v
   end
 
   opts.on("--max-depth N", Integer, "Max deep-research passes (default: 10)") do |v|
@@ -538,7 +546,7 @@ script_dir = File.expand_path(File.dirname(__FILE__))
 shared = {
   question: question,
   collection: options[:collection],
-  top_k: options[:top_k],
+  top_k: options[:limit],
   max_depth: options[:max_depth],
   editor_file: options[:editor_file],
   verbose: options[:verbose],

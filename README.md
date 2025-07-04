@@ -218,7 +218,7 @@ AI workflow that answers a question by semantically searching your GitHub conver
 
 - `"QUESTION"`: **(Required)** The research question you want answered (positional argument)
 - `--collection COLLECTION`: **(Required)** Qdrant collection name containing indexed GitHub conversations
-- `--top-k N`: Max results per search (default: 10)
+- `-n, --limit N`: Max results per search (default: 10)
 - `--max-depth N`: Max deep-research passes (default: 10)
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
 - `--verbose`: Show debug logs and progress information
@@ -249,7 +249,7 @@ Basic research with verbose output:
 Focused research with custom parameters:
 
 ```sh
-/path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --top-k 5 --max-depth 2
+/path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --limit 5 --max-depth 2
 ```
 
 Research using a fixed editor file:
@@ -441,7 +441,7 @@ command | ./path/to/index-summaries [options]
 **Required Options:**
 
 - `--executive-summary-prompt-path <path>`: Path to the prompt file for generating executive summaries
-- `--topics-prompt-path <path>`: Path to the prompt file for extracting topics  
+- `--topics-prompt-path <path>`: Path to the prompt file for extracting topics
 - `--collection <name>`: Qdrant collection name where vectors will be stored
 
 **Optional Options:**
@@ -748,7 +748,7 @@ Multiple `--filter` flags with the same key are OR-combined, while different key
 ```bash
 # Exact matches
 --filter repo:rails/rails
---filter owner:github  
+--filter owner:github
 --filter type:issue
 --filter state:open
 --filter number:123
@@ -765,7 +765,7 @@ Multiple `--filter` flags with the same key are OR-combined, while different key
 --filter title:security
 --filter author:octocat
 
-# Topic matching  
+# Topic matching
 --filter topics:security
 --filter topics:bug
 ```
@@ -823,7 +823,7 @@ JSON output (`--format json`) returns the same structure as a JSON array, compat
 
 **Error Handling:**
 - Exits 1 with usage message if no query provided
-- Exits 1 with error message for embedding failures or Qdrant connectivity issues  
+- Exits 1 with error message for embedding failures or Qdrant connectivity issues
 - Uses verbose mode to troubleshoot request/response JSON
 
 ## Contributing
