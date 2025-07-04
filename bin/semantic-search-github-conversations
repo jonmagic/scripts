@@ -1,0 +1,312 @@
+#!/usr/bin/env ruby
+
+# semantic-search-github-conversations: Semantic search against Qdrant-stored conversation summaries
+#
+# This script executes semantic search against conversation summaries stored in Qdrant.
+# It embeds the user's query via `llm embed` and calls Qdrant's `/points/search` endpoint
+# to retrieve the best-matching points with support for rich payload-based filtering.
+#
+# Usage:
+#   semantic-search-github-conversations [options] "free-text query"
+#
+# Options:
+#   -c, --collection NAME       Qdrant collection       (default: summaries)
+#   -f, --filter KEY:VALUE      Filter by metadata       (repeatable)
+#   -n, --limit N              Max hits to return       (default: 10)
+#       --score-threshold N     Min similarity score     (0.0-1.0)
+#       --url URL               Qdrant base URL          (default: http://localhost:6333)
+#   -v, --verbose               Dump request/response JSON
+#   -h, --help                  Show help
+#
+# Requirements:
+# - Ruby >= 3.2
+# - llm CLI in PATH with embedding model support
+# - Qdrant server running and accessible
+
+require "json"
+require "net/http"
+require "uri"
+require "open3"
+require "optparse"
+require "date"
+require "shellwords"
+
+# Public: Runs a shell command and returns stdout. Aborts if the command fails.
+#
+# cmd - The shell command to run (String).
+#
+# Returns the standard output of the command (String).
+# Raises SystemExit if the command fails.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout.strip
+end
+
+# Public: Checks if a required command-line dependency is available in PATH.
+#
+# cmd - The String name of the command to check.
+#
+# Returns nothing. Exits if not found.
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
+end
+
+# Public: Generates embedding for query text using llm CLI.
+#
+# text - The String text to embed.
+#
+# Returns an Array of Float values representing the embedding vector.
+def generate_embedding(text)
+  cmd = "llm embed -m text-embedding-3-small -f json -c #{Shellwords.escape(text)}"
+  
+  embedding_json = run_cmd(cmd)
+  result = JSON.parse(embedding_json)
+  
+  # Extract embedding array from the response
+  result["embedding"] || abort("No embedding found in llm response")
+rescue JSON::ParserError => e
+  abort "Failed to parse embedding JSON: #{e.message}"
+end
+
+# Public: Parses filter arguments into Qdrant filter structure.
+#
+# filter_args - Array of Strings in "key:value" format.
+#
+# Returns a Hash representing the Qdrant filter structure.
+def build_qdrant_filters(filter_args)
+  return {} if filter_args.empty?
+
+  # Group filters by key
+  filters_by_key = {}
+  filter_args.each do |filter_arg|
+    key, value = filter_arg.split(":", 2)
+    abort "Invalid filter format: #{filter_arg}. Expected key:value" unless value
+    
+    filters_by_key[key] ||= []
+    filters_by_key[key] << value
+  end
+
+  must_conditions = []
+
+  filters_by_key.each do |key, values|
+    if key.end_with?("_after", "_before")
+      # Date range filters
+      base_key = key.sub(/_after$|_before$/, "")
+      date_field = "#{base_key}_epoch"
+      
+      values.each do |value|
+        begin
+          epoch_time = Date.parse(value).to_time.to_i
+          
+          if key.end_with?("_after")
+            must_conditions << { "range" => { date_field => { "gte" => epoch_time } } }
+          else # _before
+            must_conditions << { "range" => { date_field => { "lte" => epoch_time } } }
+          end
+        rescue Date::Error
+          abort "Invalid date format in filter #{key}:#{value}. Expected YYYY-MM-DD"
+        end
+      end
+    else
+      # Exact match filters
+      if values.length == 1
+        must_conditions << { "match" => { key => values.first } }
+      else
+        # Multiple values for same key - OR them together
+        should_conditions = values.map { |value| { "match" => { key => value } } }
+        must_conditions << { "should" => should_conditions }
+      end
+    end
+  end
+
+  { "must" => must_conditions }
+end
+
+# Public: Executes semantic search against Qdrant.
+#
+# qdrant_url     - The String base URL for Qdrant.
+# collection     - The String collection name.
+# query_vector   - The Array of Float values for the query embedding.
+# filter_obj     - The Hash representing Qdrant filters.
+# limit          - The Integer maximum number of results.
+# score_threshold - The Float minimum similarity score (optional).
+# verbose        - Boolean flag for verbose output.
+#
+# Returns a Hash with search results.
+def search_qdrant(qdrant_url, collection, query_vector, filter_obj, limit, score_threshold, verbose)
+  uri = URI("#{qdrant_url}/collections/#{collection}/points/search")
+  http = Net::HTTP.new(uri.host, uri.port)
+  
+  request_body = {
+    vector: query_vector,
+    limit: limit
+  }
+  
+  request_body[:filter] = filter_obj unless filter_obj.empty?
+  request_body[:score_threshold] = score_threshold if score_threshold
+  
+  if verbose
+    $stderr.puts "=== Qdrant Request ==="
+    $stderr.puts JSON.pretty_generate(request_body)
+    $stderr.puts
+  end
+
+  request = Net::HTTP::Post.new(uri)
+  request["Content-Type"] = "application/json"
+  request.body = request_body.to_json
+
+  response = http.request(request)
+  
+  if verbose
+    $stderr.puts "=== Qdrant Response ==="
+    $stderr.puts "Status: #{response.code}"
+    $stderr.puts "Body: #{response.body}"
+    $stderr.puts
+  end
+
+  unless response.code.to_i.between?(200, 299)
+    abort "Qdrant search failed: #{response.code} #{response.body}"
+  end
+
+  JSON.parse(response.body)
+rescue JSON::ParserError => e
+  abort "Failed to parse Qdrant response: #{e.message}"
+end
+
+# Public: Formats search results for output.
+#
+# search_results - The Hash response from Qdrant search.
+#
+# Returns an Array of Hashes with url, updated_at, and search metadata.
+def format_results(search_results)
+  points = search_results.dig("result") || []
+  
+  points.map do |point|
+    payload = point["payload"] || {}
+    {
+      "url" => payload["url"],
+      "updated_at" => payload["updated_at"],
+      "score" => point["score"]
+    }.compact
+  end
+end
+
+# Public: Prints formatted search results to stdout.
+#
+# results - Array of result Hashes.
+#
+# Returns nothing.
+def print_results(results)
+  results.each_with_index do |result, index|
+    score = result["score"] ? sprintf("%.3f", result["score"]) : "N/A"
+    url = result["url"] || "Unknown URL"
+    
+    # Extract repo from URL if possible
+    repo = url.match(%r{github\.com/([^/]+/[^/]+)})&.captures&.first || "Unknown"
+    
+    puts "#{index + 1}. [#{repo}] #{url} (#{score})"
+    
+    # TODO: Add summary snippet and labels when available in payload
+  end
+end
+
+# === Main Script ===
+
+# Check dependencies
+check_dependency("llm")
+
+# Parse command-line options
+options = {
+  collection: "summaries",
+  filters: [],
+  limit: 10,
+  score_threshold: nil,
+  qdrant_url: "http://localhost:6333",
+  verbose: false
+}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} [options] \"free-text query\""
+  
+  opts.on("-c", "--collection NAME", "Qdrant collection (default: summaries)") do |v|
+    options[:collection] = v
+  end
+  
+  opts.on("-f", "--filter KEY:VALUE", "Filter by metadata (repeatable)") do |v|
+    options[:filters] << v
+  end
+  
+  opts.on("-n", "--limit N", Integer, "Max hits to return (default: 10)") do |v|
+    options[:limit] = v
+  end
+  
+  opts.on("--score-threshold N", Float, "Min similarity score (0.0-1.0)") do |v|
+    options[:score_threshold] = v
+  end
+  
+  opts.on("--url URL", "Qdrant base URL (default: http://localhost:6333)") do |v|
+    options[:qdrant_url] = v
+  end
+  
+  opts.on("-v", "--verbose", "Dump request/response JSON") do
+    options[:verbose] = true
+  end
+  
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end
+
+begin
+  opt_parser.parse!
+rescue OptionParser::InvalidOption => e
+  abort "#{e.message}\n\n#{opt_parser}"
+end
+
+# Validate query argument
+if ARGV.empty?
+  puts opt_parser
+  exit 1
+end
+
+query_text = ARGV.join(" ")
+
+if query_text.strip.empty?
+  abort "Error: Empty query provided"
+end
+
+# Generate embedding for query
+$stderr.puts "Generating embedding for query..." if options[:verbose]
+query_vector = generate_embedding(query_text)
+
+# Build Qdrant filters
+filter_obj = build_qdrant_filters(options[:filters])
+
+# Execute search
+$stderr.puts "Searching Qdrant collection '#{options[:collection]}'..." if options[:verbose]
+search_results = search_qdrant(
+  options[:qdrant_url],
+  options[:collection],
+  query_vector,
+  filter_obj,
+  options[:limit],
+  options[:score_threshold],
+  options[:verbose]
+)
+
+# Format and output results
+results = format_results(search_results)
+
+if options[:verbose]
+  $stderr.puts "Found #{results.length} results"
+  $stderr.puts
+end
+
+if results.empty?
+  $stderr.puts "No results found"
+  exit 0
+end
+
+print_results(results)
