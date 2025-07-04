@@ -142,7 +142,7 @@ end
 #
 # Returns a Hash with "discussion" and "comments" keys.
 def fetch_discussion(owner, repo, number)
-  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } createdAt url updatedAt comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt replies(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt } } } } } } } }'")
+  json = run_cmd("gh api graphql -f query='query { repository(owner: \"#{owner}\", name: \"#{repo}\") { discussion(number: #{number}) { id number title body author { login } category { name } createdAt url updatedAt comments(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt replies(first: 100) { nodes { id author { login } body replyTo { id } createdAt url updatedAt } } } } } } } }'")
   data = JSON.parse(json)
   discussion = data.dig("data", "repository", "discussion")
 
@@ -358,6 +358,11 @@ def extract_filtered_conversation(data, type)
         "created_at" => rc["created_at"]
       }.compact
     end
+  end
+
+  # Add category for discussions
+  if type == "discussions"
+    result[conversation_key]["category"] = conversation.dig("category", "name")
   end
 
   result

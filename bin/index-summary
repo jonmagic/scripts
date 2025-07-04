@@ -77,7 +77,7 @@ def format_type(type)
 end
 
 # Extract key metadata from conversation data for indexing
-def extract_metadata(data, url, owner, repo, type, number, topics)
+def extract_metadata(data, url, owner, repo, type, number, topics, summary)
   # Determine the main conversation object based on type
   main_obj = case type
   when "issues"
@@ -100,27 +100,27 @@ def extract_metadata(data, url, owner, repo, type, number, topics)
     "type" => format_type(type),
     "number" => number.to_i,
     "title" => main_obj["title"] || "",
-    "author" => main_obj["user"] ? main_obj["user"]["login"] : "",
-    "state" => main_obj["state"] || "",
+    "author" => main_obj["author"] || "",
     "created_at" => main_obj["created_at"] || "",
     "updated_at" => main_obj["updated_at"] || "",
     "topics" => topics.join(","), # Flatten topics array to comma-separated string
     "indexed_at" => Time.now.utc.iso8601,
-    "summary" => ""  # This will be replaced by vector-upsert with the actual summary text
+    "summary" => summary,
+    "labels" => (main_obj["labels"] || []).join(",")
   }
 
   # Add type-specific fields
   case type
   when "issues"
-    metadata["labels"] = (main_obj["labels"] || []).map { |l| l["name"] }.join(",")
-    metadata["milestone"] = main_obj["milestone"] ? main_obj["milestone"]["title"] : ""
+    metadata["state"] = main_obj["state"] || ""
   when "pull"
-    metadata["merged"] = main_obj["merged"] ? "true" : "false"
+    metadata["state"] = main_obj["state"] || ""
+    metadata["merged"] = main_obj["merged_at"] ? "true" : "false"
     metadata["merged_at"] = main_obj["merged_at"] || ""
-    metadata["base_branch"] = main_obj["base"] ? main_obj["base"]["ref"] : ""
-    metadata["head_branch"] = main_obj["head"] ? main_obj["head"]["ref"] : ""
+    metadata["base_branch"] = main_obj["base_branch"] || ""
+    metadata["head_branch"] = main_obj["head_branch"] || ""
   when "discussions"
-    metadata["category"] = main_obj["category"] ? main_obj["category"]["name"] : ""
+    metadata["category"] = main_obj["category"]
     metadata["answered"] = main_obj["answered"] ? "true" : "false"
   end
 
@@ -222,7 +222,7 @@ topics = JSON.parse(topics_json)
 
 # Step 4: Build metadata payload
 $stderr.puts "4. Building metadata payload..."
-metadata = extract_metadata(conversation_data, input, owner, repo, type, number, topics)
+metadata = extract_metadata(conversation_data, input, owner, repo, type, number, topics, summary)
 
 # Step 5: Index in Qdrant via vector-upsert
 $stderr.puts "5. Indexing summary in Qdrant..."
