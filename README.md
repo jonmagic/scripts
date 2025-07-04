@@ -637,6 +637,113 @@ The script will abort with clear error messages for:
 - Qdrant connectivity or API errors
 - Missing dependencies (`llm`, `curl`)
 
+### Semantic Search GitHub Conversations
+
+Executes semantic search against conversation summaries stored in Qdrant. This plumbing command embeds a user query using the `llm` CLI and searches for the most similar conversations using vector similarity with support for metadata filtering.
+
+**Usage:**
+
+```sh
+/path/to/semantic-search-github-conversations [options] "free-text query"
+```
+
+**Options:**
+
+- `-c, --collection NAME`: Qdrant collection name (default: summaries)
+- `-f, --filter KEY:VALUE`: Filter by metadata (repeatable for multiple filters)
+- `-n, --limit N`: Maximum number of results to return (default: 10)
+- `--score-threshold N`: Minimum similarity score threshold (0.0-1.0)
+- `--url URL`: Qdrant base URL (default: http://localhost:6333)
+- `-v, --verbose`: Dump request/response JSON for debugging
+- `--json`: Output results as JSON array instead of formatted text
+- `-h, --help`: Show help message
+
+**Filter Syntax:**
+
+Multiple `--filter` flags with the same key are OR-combined, while different keys are AND-combined:
+
+```bash
+# Exact matches
+--filter repo:rails/rails
+--filter owner:github  
+--filter type:issue
+--filter state:open
+--filter number:123
+
+# Date ranges (YYYY-MM-DD format)
+--filter created_after:2025-01-01
+--filter created_before:2025-06-30
+--filter updated_after:2025-01-01
+--filter updated_before:2025-06-30
+--filter indexed_after:2025-01-01
+--filter indexed_before:2025-06-30
+
+# Substring matches
+--filter title:security
+--filter author:octocat
+
+# Topic matching  
+--filter topics:security
+--filter topics:bug
+```
+
+**Examples:**
+
+Basic semantic search:
+
+```sh
+/path/to/semantic-search-github-conversations "authentication vulnerability"
+```
+
+Search with repository and topic filters:
+
+```sh
+/path/to/semantic-search-github-conversations -n 5 \
+  --filter repo:rails/rails \
+  --filter topics:security \
+  --filter topics:bug \
+  --filter created_after:2025-01-01 \
+  --filter created_before:2025-06-30 \
+  "credential leak mitigation"
+```
+
+Output as JSON for pipeline processing:
+
+```sh
+/path/to/semantic-search-github-conversations --json \
+  --filter repo:octocat/Hello-World \
+  "performance optimization" | jq '.[].url'
+```
+
+Debug Qdrant requests and responses:
+
+```sh
+/path/to/semantic-search-github-conversations --verbose \
+  --collection github-summaries \
+  --url http://localhost:6333 \
+  "database performance issues"
+```
+
+**Output Format:**
+
+Default formatted output shows:
+- Repository name and URL with similarity score
+- Conversation title  
+- Summary snippet (truncated to 160 characters)
+- Labels and topics as comma-separated lists
+
+JSON output (`--json`) returns an array with `url`, `updated_at`, `score`, and metadata fields compatible with other pipeline scripts.
+
+**Requirements:**
+- `llm` CLI with embedding model support
+- Running Qdrant server with indexed conversation summaries
+- Conversations must be indexed using `index-summary` or `index-summaries`
+
+**Error Handling:**
+- Exits 1 with usage message if no query provided
+- Exits 1 with error message for embedding failures or Qdrant connectivity issues  
+- Uses verbose mode to troubleshoot request/response JSON
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on contributing to this project.

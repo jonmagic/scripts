@@ -187,7 +187,11 @@ def format_results(search_results)
     {
       "url" => payload["url"],
       "updated_at" => payload["updated_at"],
-      "score" => point["score"]
+      "score" => point["score"],
+      "title" => payload["title"],
+      "summary" => payload["summary"],
+      "labels" => payload["labels"],
+      "topics" => payload["topics"]
     }.compact
   end
 end
@@ -207,7 +211,36 @@ def print_results(results)
     
     puts "#{index + 1}. [#{repo}] #{url} (#{score})"
     
-    # TODO: Add summary snippet and labels when available in payload
+    # Show title if available
+    if result["title"] && !result["title"].empty?
+      puts "   Title: #{result["title"]}"
+    end
+    
+    # Show summary snippet (first 160 chars)
+    if result["summary"] && !result["summary"].empty?
+      summary_snippet = result["summary"].length > 160 ? 
+        "#{result["summary"][0..156]}..." : 
+        result["summary"]
+      puts "   Summary: #{summary_snippet}"
+    end
+    
+    # Show labels if available
+    if result["labels"] && !result["labels"].empty?
+      labels = result["labels"].split(",").map(&:strip).reject(&:empty?)
+      unless labels.empty?
+        puts "   Labels: #{labels.join(", ")}"
+      end
+    end
+    
+    # Show topics if available
+    if result["topics"] && !result["topics"].empty?
+      topics = result["topics"].split(",").map(&:strip).reject(&:empty?)
+      unless topics.empty?
+        puts "   Topics: #{topics.join(", ")}"
+      end
+    end
+    
+    puts # Empty line between results
   end
 end
 
@@ -223,7 +256,8 @@ options = {
   limit: 10,
   score_threshold: nil,
   qdrant_url: "http://localhost:6333",
-  verbose: false
+  verbose: false,
+  json: false
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -251,6 +285,10 @@ opt_parser = OptionParser.new do |opts|
   
   opts.on("-v", "--verbose", "Dump request/response JSON") do
     options[:verbose] = true
+  end
+  
+  opts.on("--json", "Output results as JSON array") do
+    options[:json] = true
   end
   
   opts.on("-h", "--help", "Show this help message") do
@@ -305,8 +343,16 @@ if options[:verbose]
 end
 
 if results.empty?
-  $stderr.puts "No results found"
+  if options[:json]
+    puts "[]"
+  else
+    $stderr.puts "No results found"
+  end
   exit 0
 end
 
-print_results(results)
+if options[:json]
+  puts JSON.pretty_generate(results)
+else
+  print_results(results)
+end
