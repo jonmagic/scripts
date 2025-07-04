@@ -96,16 +96,18 @@ def build_qdrant_filters(filter_args)
     if key.end_with?("_after", "_before")
       # Date range filters
       base_key = key.sub(/_after$|_before$/, "")
-      date_field = "#{base_key}_epoch"
+      date_field = "#{base_key}_at"
 
       values.each do |value|
         begin
-          epoch_time = Date.parse(value).to_time.to_i
+          # Parse the date and convert to ISO 8601 format for string comparison
+          parsed_date = Date.parse(value)
+          iso_date = parsed_date.to_time.utc.iso8601
 
           if key.end_with?("_after")
-            must_conditions << { "key" => date_field, "range" => { "gte" => epoch_time } }
+            must_conditions << { "key" => date_field, "range" => { "gte" => iso_date } }
           else # _before
-            must_conditions << { "key" => date_field, "range" => { "lte" => epoch_time } }
+            must_conditions << { "key" => date_field, "range" => { "lte" => iso_date } }
           end
         rescue Date::Error
           abort "Invalid date format in filter #{key}:#{value}. Expected YYYY-MM-DD"
