@@ -35,6 +35,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Extract Topics](#extract-topics)
   - [Fetch GitHub Conversation](#fetch-github-conversation)
   - [Fetch GitHub Conversations](#fetch-github-conversations)
+  - [GitHub Conversations Research Agent](#github-conversations-research-agent)
   - [Index Summary](#index-summary)
   - [Index Summaries](#index-summaries)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
@@ -59,6 +60,7 @@ alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --skip-if-up-to-date'
 alias bidx='/path/to/index-summaries --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --cache-path ./cache --skip-if-up-to-date'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
+alias research='/path/to/github-conversations-research-agent --collection github-conversations --verbose'
 ```
 
 All of the referenced prompts can be found here: https://github.com/jonmagic/prompts
@@ -203,6 +205,87 @@ Fetch multiple conversations with global timestamp check:
 When using JSON input from `search-github-conversations`, each conversation is fetched with its individual `updated_at` timestamp, providing optimal caching efficiency. This means conversations that haven't been updated since the last fetch will be served from cache, while only recently updated conversations will make new API calls.
 
 The script continues processing even if individual URLs fail and outputs error messages to stderr for any failures.
+
+### GitHub Conversations Research Agent
+
+AI workflow that answers a question by semantically searching your GitHub conversations. It generates clarifying questions in your editor, repeats research up to a set depth, and outputs a final Markdown report citing all sources. This script implements a multi-turn research agent that combines semantic search, LLM-powered analysis, and interactive clarification to provide comprehensive answers about GitHub conversations.
+
+**Usage:**
+
+```sh
+/path/to/github-conversations-research-agent "QUESTION" --collection COLLECTION [options]
+```
+
+- `"QUESTION"`: **(Required)** The research question you want answered (positional argument)
+- `--collection COLLECTION`: **(Required)** Qdrant collection name containing indexed GitHub conversations
+- `--top-k N`: Max results per search (default: 10)
+- `--max-depth N`: Max deep-research passes (default: 10)
+- `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
+- `--verbose`: Show debug logs and progress information
+- `--llm-model MODEL`: LLM model to use (defaults to $LLM_MODEL environment variable)
+
+**Prerequisites:**
+
+- `llm` CLI installed and configured
+- Qdrant server running with indexed GitHub conversation summaries
+- `EDITOR` environment variable set (e.g., `export EDITOR=nano`)
+- `bin/semantic-search-github-conversations` and `bin/fetch-github-conversation` available
+
+**Workflow:**
+
+1. **Initial Research**: Performs semantic search against your collection to find relevant conversations
+2. **Clarifying Questions**: Generates up to 4 clarifying questions and opens them in your editor
+3. **Deep Research**: Based on your answers, performs iterative searches up to `--max-depth` times
+4. **Final Report**: Generates a comprehensive Markdown report citing all GitHub conversations used
+
+**Examples:**
+
+Basic research with verbose output:
+
+```sh
+/path/to/github-conversations-research-agent "Why did issue #456 go stale?" --collection github-conversations --verbose
+```
+
+Focused research with custom parameters:
+
+```sh
+/path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --top-k 5 --max-depth 2
+```
+
+Research using a fixed editor file:
+
+```sh
+/path/to/github-conversations-research-agent "How do we handle authentication in the API?" --collection github-conversations --editor-file /tmp/research-questions.md
+```
+
+**Sample Output:**
+
+The script produces a structured Markdown report like:
+
+```markdown
+# Executive Summary
+
+Based on the analysis of 12 GitHub conversations, issue #456 went stale due to...
+
+# Key Findings
+
+- Primary blocker: Missing consensus on implementation approach
+- Contributing factors: Resource allocation conflicts, unclear requirements
+- Related issues: #234, #567 experienced similar patterns
+
+# Detailed Analysis
+
+## Implementation Challenges
+...
+
+# Sources
+
+- https://github.com/owner/repo/issues/456
+- https://github.com/owner/repo/pull/789
+- https://github.com/owner/repo/discussions/234
+```
+
+The semantic search is performed by `bin/semantic-search-github-conversations` rather than direct API calls to Qdrant, ensuring consistency with other tools in this repository.
 
 ### Summarize GitHub Conversation
 

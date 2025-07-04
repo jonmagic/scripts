@@ -1,0 +1,559 @@
+#!/usr/bin/env ruby
+
+# bin/github-conversations-research-agent: Multi-turn research agent for GitHub conversations
+#
+# This script implements a research workflow that:
+# 1. Takes a natural language question and performs initial semantic search
+# 2. Generates clarifying questions and opens them in $EDITOR
+# 3. Performs iterative deep research based on clarifications
+# 4. Produces a final well-formatted Markdown report citing all sources
+#
+# Usage: github-conversations-research-agent "QUESTION" --collection COLLECTION [options]
+#
+# The script uses the existing bin/semantic-search-github-conversations and
+# bin/fetch-github-conversation scripts to gather context, and integrates
+# with the llm CLI for AI-powered analysis.
+
+require "json"
+require "open3"
+require "optparse"
+require "tempfile"
+require "shellwords"
+
+# Load vendored Pocketflow library
+require_relative "../lib/pocketflow"
+
+# === Embedded Prompt Templates ===
+
+ASK_CLARIFY_PROMPT = <<~PROMPT
+You are an expert analyst reviewing a research question and initial findings from GitHub conversations.
+
+## Research Question
+{{question}}
+
+## Initial Findings Summary
+{{initial_findings}}
+
+Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the issue and provide more targeted research. Focus on:
+
+1. Missing context or background information
+2. Specific technical details that need clarification
+3. Stakeholder perspectives or decision criteria
+4. Timeline or process-related questions
+
+Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number.
+
+PROMPT
+
+DEEP_RESEARCH_PROMPT = <<~PROMPT
+You are an expert researcher analyzing GitHub conversations. Based on the original question, clarifications provided, and findings so far, determine what additional information to search for.
+
+## Original Question
+{{question}}
+
+## User's Clarifications
+{{clarifications}}
+
+## Research Findings So Far
+{{findings_summary}}
+
+## Previous Search Queries
+{{previous_queries}}
+
+Based on this context, generate a short, focused search query (1-2 sentences) that would help find additional relevant GitHub conversations. Focus on:
+
+- Filling gaps in current understanding
+- Finding related issues or discussions
+- Discovering implementation details or decisions
+- Uncovering related problems or solutions
+
+Return only the search query text, nothing else.
+PROMPT
+
+FINAL_REPORT_PROMPT = <<~PROMPT
+You are an expert analyst preparing a comprehensive research report. Using all the gathered information, create a well-structured Markdown report that answers the original research question.
+
+## Original Question
+{{question}}
+
+## User's Clarifications
+{{clarifications}}
+
+## All Research Findings
+{{all_findings}}
+
+Create a comprehensive Markdown report that:
+
+1. **Executive Summary**: Brief answer to the original question
+2. **Key Findings**: Main insights discovered during research
+3. **Detailed Analysis**: In-depth analysis with supporting evidence
+4. **Sources**: List all GitHub conversation URLs used as sources
+
+Structure the report with clear headings and cite specific GitHub conversations using their full URLs. Make sure every major claim is supported by evidence from the GitHub conversations.
+
+Format as clean Markdown with proper headings, bullet points, and citations.
+PROMPT
+
+# === Helper Methods ===
+
+# Public: Runs a shell command and returns stdout. Aborts if the command fails.
+#
+# cmd - The shell command to run (String).
+#
+# Returns the standard output of the command (String).
+# Raises SystemExit if the command fails.
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout.strip
+end
+
+# Public: Checks if a required command-line dependency is available in PATH.
+#
+# cmd - The String name of the command to check.
+#
+# Returns nothing. Exits if not found.
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
+end
+
+# Public: Opens a text editor with the given content and returns the edited result.
+#
+# text - The String text to edit.
+# file_path - Optional String path to use instead of a temporary file.
+#
+# Returns the edited text as a String.
+def edit_text(text, file_path = nil)
+  if file_path
+    File.write(file_path, text)
+    tmp_path = file_path
+  else
+    tmp = Tempfile.create(["research_edit", ".md"])
+    tmp.puts text
+    tmp.flush
+    tmp_path = tmp.path
+  end
+
+  # Get editor from environment
+  editor = ENV["EDITOR"] || "nano"
+  
+  # Open editor
+  unless system("#{editor} #{tmp_path}")
+    abort "Editor command failed: #{editor}"
+  end
+
+  # Read the edited content
+  File.read(tmp_path)
+ensure
+  tmp&.close unless file_path
+end
+
+# Public: Fills in template variables in a prompt string.
+#
+# template - The String template with {{variable}} placeholders.
+# variables - Hash of variable names to values.
+#
+# Returns the filled template as a String.
+def fill_template(template, variables)
+  result = template.dup
+  variables.each do |key, value|
+    result.gsub!("{{#{key}}}", value.to_s)
+  end
+  result
+end
+
+# Public: Calls the LLM CLI for chat completion.
+#
+# prompt - The String prompt to send.
+# model - Optional String model name.
+#
+# Returns the LLM response as a String.
+def call_llm(prompt, model = nil)
+  check_dependency("llm") # Check only when needed
+  model_flag = model ? "-m #{Shellwords.escape(model)}" : ""
+  cmd = "llm #{model_flag} <<< #{Shellwords.escape(prompt)}"
+  run_cmd(cmd)
+end
+
+# === Pocketflow Nodes ===
+
+class InitialResearchNode < Pocketflow::Node
+  def prep(shared)
+    @shared = shared # Store shared context for use in exec
+    puts "[InitialResearchNode] Starting initial semantic search..." if shared[:verbose]
+    
+    question = shared[:question]
+    collection = shared[:collection]
+    top_k = shared[:top_k]
+    script_dir = shared[:script_dir]
+    
+    # Run semantic search
+    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(question)} --collection #{Shellwords.escape(collection)} --top-k #{top_k} --format json"
+    search_output = run_cmd(search_cmd)
+    
+    search_results = JSON.parse(search_output)
+    puts "[InitialResearchNode] Found #{search_results.length} initial results" if shared[:verbose]
+    
+    search_results
+  end
+
+  def exec(search_results)
+    # Fetch detailed conversation data for each result
+    enriched_results = []
+    
+    search_results.each do |result|
+      url = result["url"]
+      next unless url
+      
+      puts "[InitialResearchNode] Fetching details for #{url}..." if @shared[:verbose]
+      
+      begin
+        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
+        conversation_json = run_cmd(fetch_cmd)
+        conversation_data = JSON.parse(conversation_json)
+        
+        enriched_results << {
+          url: url,
+          summary: result["summary"] || "",
+          score: result["score"],
+          conversation: conversation_data
+        }
+      rescue => e
+        puts "[InitialResearchNode] Warning: Failed to fetch #{url}: #{e.message}" if @shared[:verbose]
+      end
+    end
+    
+    enriched_results
+  end
+
+  def post(shared, prep_res, exec_res)
+    shared[:memory] ||= {}
+    shared[:memory][:hits] = exec_res
+    shared[:memory][:notes] = []
+    shared[:memory][:search_queries] = [shared[:question]]
+    
+    puts "[InitialResearchNode] Collected #{exec_res.length} enriched conversations" if shared[:verbose]
+    
+    "default"
+  end
+end
+
+class AskClarifyingNode < Pocketflow::Node
+  def prep(shared)
+    @shared = shared # Store shared context
+    puts "[AskClarifyingNode] Generating clarifying questions..." if shared[:verbose]
+    
+    # Summarize initial findings
+    initial_findings = shared[:memory][:hits].map do |hit|
+      "- #{hit[:url]}: #{hit[:summary]}"
+    end.join("\n")
+    
+    # Fill template and call LLM
+    prompt = fill_template(ASK_CLARIFY_PROMPT, {
+      question: shared[:question],
+      initial_findings: initial_findings
+    })
+    
+    llm_response = call_llm(prompt, shared[:llm_model])
+    
+    llm_response
+  end
+
+  def exec(clarifying_questions)
+    puts "[AskClarifyingNode] Opening editor for clarifying questions..."
+    
+    # Prepare editor content
+    editor_content = <<~CONTENT
+# Clarifying Questions
+
+Please review and answer the following questions to help focus the research:
+
+#{clarifying_questions}
+
+---
+
+# Your Answers
+
+Please provide your answers below:
+
+1. 
+
+2. 
+
+3. 
+
+4. 
+
+CONTENT
+
+    # Open editor
+    edited_content = edit_text(editor_content, @shared[:editor_file])
+    
+    edited_content
+  end
+
+  def post(shared, prep_res, exec_res)
+    shared[:clarifications] = exec_res
+    puts "[AskClarifyingNode] Clarifications collected" if shared[:verbose]
+    
+    "default"
+  end
+end
+
+class DeepResearchNode < Pocketflow::Node
+  def prep(shared)
+    @shared = shared # Store shared context
+    depth = shared[:current_depth] || 0
+    max_depth = shared[:max_depth]
+    
+    puts "[DeepResearchNode] Starting deep research iteration #{depth + 1}/#{max_depth}" if shared[:verbose]
+    
+    # Check if we've reached max depth
+    if depth >= max_depth
+      puts "[DeepResearchNode] Maximum depth reached" if shared[:verbose]
+      return nil
+    end
+    
+    # Prepare context for LLM
+    findings_summary = shared[:memory][:notes].join("\n\n")
+    previous_queries = shared[:memory][:search_queries].join(", ")
+    
+    prompt = fill_template(DEEP_RESEARCH_PROMPT, {
+      question: shared[:question],
+      clarifications: shared[:clarifications] || "",
+      findings_summary: findings_summary,
+      previous_queries: previous_queries
+    })
+    
+    # Generate refined search query
+    refined_query = call_llm(prompt, shared[:llm_model])
+    
+    puts "[DeepResearchNode] Generated search query: #{refined_query}" if shared[:verbose]
+    
+    refined_query
+  end
+
+  def exec(refined_query)
+    return [] if refined_query.nil?
+    
+    collection = @shared[:collection]
+    top_k = @shared[:top_k]
+    script_dir = @shared[:script_dir]
+    
+    # Run semantic search with refined query
+    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(refined_query)} --collection #{Shellwords.escape(collection)} --top-k #{top_k} --format json"
+    search_output = run_cmd(search_cmd)
+    search_results = JSON.parse(search_output)
+    
+    # Deduplicate URLs we already have
+    existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
+    new_results = search_results.reject { |result| existing_urls.include?(result["url"]) }
+    
+    puts "[DeepResearchNode] Found #{new_results.length} new results" if @shared[:verbose]
+    
+    # Fetch detailed data for new results
+    new_enriched = []
+    new_results.each do |result|
+      url = result["url"]
+      next unless url
+      
+      puts "[DeepResearchNode] Fetching details for #{url}..." if @shared[:verbose]
+      
+      begin
+        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
+        conversation_json = run_cmd(fetch_cmd)
+        conversation_data = JSON.parse(conversation_json)
+        
+        new_enriched << {
+          url: url,
+          summary: result["summary"] || "",
+          score: result["score"],
+          conversation: conversation_data
+        }
+      rescue => e
+        puts "[DeepResearchNode] Warning: Failed to fetch #{url}: #{e.message}" if @shared[:verbose]
+      end
+    end
+    
+    new_enriched
+  end
+
+  def post(shared, prep_res, exec_res)
+    return "final" if prep_res.nil? # Max depth reached
+    
+    # Add new findings to memory
+    shared[:memory][:hits].concat(exec_res)
+    shared[:memory][:search_queries] << prep_res
+    
+    # Add research notes
+    if exec_res.any?
+      notes = exec_res.map { |hit| "#{hit[:url]}: #{hit[:summary]}" }.join("\n")
+      shared[:memory][:notes] << "Research iteration: #{notes}"
+    end
+    
+    # Increment depth
+    shared[:current_depth] = (shared[:current_depth] || 0) + 1
+    
+    # Continue if under max depth, otherwise go to final report
+    if shared[:current_depth] < shared[:max_depth] && exec_res.any?
+      "default" # Continue deep research loop
+    else
+      "final"
+    end
+  end
+end
+
+class FinalReportNode < Pocketflow::Node
+  def prep(shared)
+    @shared = shared # Store shared context
+    puts "[FinalReportNode] Generating final report..." if shared[:verbose]
+    
+    # Compile all findings
+    all_findings = shared[:memory][:hits].map do |hit|
+      <<~FINDING
+      **Source**: #{hit[:url]}
+      **Summary**: #{hit[:summary]}
+      **Relevance Score**: #{hit[:score]}
+      
+      **Conversation Details**:
+      #{JSON.pretty_generate(hit[:conversation])}
+      FINDING
+    end.join("\n\n---\n\n")
+    
+    prompt = fill_template(FINAL_REPORT_PROMPT, {
+      question: shared[:question],
+      clarifications: shared[:clarifications] || "None provided",
+      all_findings: all_findings
+    })
+    
+    prompt
+  end
+
+  def exec(prompt)
+    call_llm(prompt, @shared[:llm_model])
+  end
+
+  def post(shared, prep_res, exec_res)
+    puts exec_res
+    puts
+    puts "[FinalReportNode] Research complete!" if shared[:verbose]
+    
+    "default"
+  end
+end
+
+# === Main Script ===
+
+# Parse command-line options
+options = {
+  collection: nil,
+  top_k: 10,
+  max_depth: 10,
+  editor_file: nil,
+  verbose: false,
+  llm_model: ENV["LLM_MODEL"]
+}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{File.basename($0)} \"QUESTION\" --collection COLLECTION [options]"
+  
+  opts.on("--collection NAME", "Qdrant collection name (required)") do |v|
+    options[:collection] = v
+  end
+  
+  opts.on("--top-k N", Integer, "Max results per search (default: 10)") do |v|
+    options[:top_k] = v
+  end
+  
+  opts.on("--max-depth N", Integer, "Max deep-research passes (default: 10)") do |v|
+    options[:max_depth] = v
+  end
+  
+  opts.on("--editor-file PATH", "Use fixed file instead of Tempfile") do |v|
+    options[:editor_file] = v
+  end
+  
+  opts.on("--verbose", "Show debug logs") do
+    options[:verbose] = true
+  end
+  
+  opts.on("--llm-model MODEL", "LLM model to use") do |v|
+    options[:llm_model] = v
+  end
+  
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end
+
+begin
+  opt_parser.parse!
+rescue OptionParser::InvalidOption => e
+  abort "#{e.message}\n\n#{opt_parser}"
+end
+
+# Validate required arguments
+if ARGV.empty?
+  puts opt_parser
+  exit 1
+end
+
+question = ARGV.join(" ")
+
+if question.strip.empty?
+  abort "Error: Empty question provided"
+end
+
+unless options[:collection]
+  abort "Error: --collection is required\n\n#{opt_parser}"
+end
+
+# Check for EDITOR if not using a fixed file
+unless options[:editor_file] || ENV["EDITOR"]
+  abort "Error: EDITOR environment variable must be set"
+end
+
+# Set up shared context
+script_dir = File.expand_path(File.dirname(__FILE__))
+shared = {
+  question: question,
+  collection: options[:collection],
+  top_k: options[:top_k],
+  max_depth: options[:max_depth],
+  editor_file: options[:editor_file],
+  verbose: options[:verbose],
+  llm_model: options[:llm_model],
+  script_dir: script_dir
+}
+
+# Build the workflow
+initial_node = InitialResearchNode.new
+clarify_node = AskClarifyingNode.new
+deep_node = DeepResearchNode.new
+final_node = FinalReportNode.new
+
+# Link the nodes
+initial_node.next(clarify_node)
+clarify_node.next(deep_node)
+deep_node.next(deep_node) # Loop back to itself
+deep_node.on("final", final_node)
+
+# Create and run the flow
+flow = Pocketflow::Flow.new(initial_node)
+
+begin
+  puts "Starting GitHub Conversations Research Agent..." if shared[:verbose]
+  puts "Question: #{question}" if shared[:verbose]
+  puts "Collection: #{options[:collection]}" if shared[:verbose]
+  puts
+  
+  flow.run(shared)
+rescue Interrupt
+  puts "\nResearch interrupted by user"
+  exit 1
+rescue => e
+  puts "Error: #{e.message}"
+  puts e.backtrace if shared[:verbose]
+  exit 1
+end
