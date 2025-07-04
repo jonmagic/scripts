@@ -15,6 +15,7 @@
 #   -n, --limit N              Max hits to return       (default: 10)
 #       --score-threshold N     Min similarity score     (0.0-1.0)
 #       --url URL               Qdrant base URL          (default: http://localhost:6333)
+#       --format FORMAT         Output format            (yaml|json, default: yaml)
 #   -v, --verbose               Dump request/response JSON
 #   -h, --help                  Show help
 #
@@ -30,6 +31,7 @@ require "open3"
 require "optparse"
 require "date"
 require "shellwords"
+require "yaml"
 
 # Public: Runs a shell command and returns stdout. Aborts if the command fails.
 #
@@ -178,71 +180,20 @@ end
 #
 # search_results - The Hash response from Qdrant search.
 #
-# Returns an Array of Hashes with url, updated_at, and search metadata.
+# Returns an Array of Hashes with id, score, and payload.
 def format_results(search_results)
   points = search_results.dig("result") || []
   
   points.map do |point|
-    payload = point["payload"] || {}
     {
-      "url" => payload["url"],
-      "updated_at" => payload["updated_at"],
+      "id" => point["id"],
       "score" => point["score"],
-      "title" => payload["title"],
-      "summary" => payload["summary"],
-      "labels" => payload["labels"],
-      "topics" => payload["topics"]
-    }.compact
+      "payload" => point["payload"] || {}
+    }
   end
 end
 
-# Public: Prints formatted search results to stdout.
-#
-# results - Array of result Hashes.
-#
-# Returns nothing.
-def print_results(results)
-  results.each_with_index do |result, index|
-    score = result["score"] ? sprintf("%.3f", result["score"]) : "N/A"
-    url = result["url"] || "Unknown URL"
-    
-    # Extract repo from URL if possible
-    repo = url.match(%r{github\.com/([^/]+/[^/]+)})&.captures&.first || "Unknown"
-    
-    puts "#{index + 1}. [#{repo}] #{url} (#{score})"
-    
-    # Show title if available
-    if result["title"] && !result["title"].empty?
-      puts "   Title: #{result["title"]}"
-    end
-    
-    # Show summary snippet (first 160 chars)
-    if result["summary"] && !result["summary"].empty?
-      summary_snippet = result["summary"].length > 160 ? 
-        "#{result["summary"][0..156]}..." : 
-        result["summary"]
-      puts "   Summary: #{summary_snippet}"
-    end
-    
-    # Show labels if available
-    if result["labels"] && !result["labels"].empty?
-      labels = result["labels"].split(",").map(&:strip).reject(&:empty?)
-      unless labels.empty?
-        puts "   Labels: #{labels.join(", ")}"
-      end
-    end
-    
-    # Show topics if available
-    if result["topics"] && !result["topics"].empty?
-      topics = result["topics"].split(",").map(&:strip).reject(&:empty?)
-      unless topics.empty?
-        puts "   Topics: #{topics.join(", ")}"
-      end
-    end
-    
-    puts # Empty line between results
-  end
-end
+
 
 # === Main Script ===
 
@@ -257,7 +208,7 @@ options = {
   score_threshold: nil,
   qdrant_url: "http://localhost:6333",
   verbose: false,
-  json: false
+  format: "yaml"
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -287,8 +238,8 @@ opt_parser = OptionParser.new do |opts|
     options[:verbose] = true
   end
   
-  opts.on("--json", "Output results as JSON array") do
-    options[:json] = true
+  opts.on("--format FORMAT", ["yaml", "json"], "Output format: yaml (default) or json") do |v|
+    options[:format] = v
   end
   
   opts.on("-h", "--help", "Show this help message") do
@@ -343,16 +294,16 @@ if options[:verbose]
 end
 
 if results.empty?
-  if options[:json]
+  if options[:format] == "json"
     puts "[]"
   else
-    $stderr.puts "No results found"
+    puts "--- []"  # Empty YAML array
   end
   exit 0
 end
 
-if options[:json]
+if options[:format] == "json"
   puts JSON.pretty_generate(results)
 else
-  print_results(results)
+  puts results.to_yaml
 end

@@ -654,8 +654,8 @@ Executes semantic search against conversation summaries stored in Qdrant. This p
 - `-n, --limit N`: Maximum number of results to return (default: 10)
 - `--score-threshold N`: Minimum similarity score threshold (0.0-1.0)
 - `--url URL`: Qdrant base URL (default: http://localhost:6333)
+- `--format FORMAT`: Output format - yaml (default) or json
 - `-v, --verbose`: Dump request/response JSON for debugging
-- `--json`: Output results as JSON array instead of formatted text
 - `-h, --help`: Show help message
 
 **Filter Syntax:**
@@ -710,9 +710,9 @@ Search with repository and topic filters:
 Output as JSON for pipeline processing:
 
 ```sh
-/path/to/semantic-search-github-conversations --json \
+/path/to/semantic-search-github-conversations --format json \
   --filter repo:octocat/Hello-World \
-  "performance optimization" | jq '.[].url'
+  "performance optimization" | jq '.[].payload.url'
 ```
 
 Debug Qdrant requests and responses:
@@ -726,13 +726,12 @@ Debug Qdrant requests and responses:
 
 **Output Format:**
 
-Default formatted output shows:
-- Repository name and URL with similarity score
-- Conversation title  
-- Summary snippet (truncated to 160 characters)
-- Labels and topics as comma-separated lists
+Default YAML output shows structured data with:
+- `id`: Unique point identifier from Qdrant
+- `score`: Similarity score (0.0-1.0)
+- `payload`: Complete metadata including URL, title, summary, labels, topics, etc.
 
-JSON output (`--json`) returns an array with `url`, `updated_at`, `score`, and metadata fields compatible with other pipeline scripts.
+JSON output (`--format json`) returns the same structure as a JSON array, compatible with other pipeline scripts and tools like `jq`.
 
 **Requirements:**
 - `llm` CLI with embedding model support
