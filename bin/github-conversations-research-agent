@@ -49,8 +49,7 @@ Based on the question and initial findings, generate up to 4 clarifying question
 3. Stakeholder perspectives or decision criteria
 4. Timeline or process-related questions
 
-Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number.
-
+Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number. The instructions should ask for inline answers to these questions.
 PROMPT
 
 DEEP_RESEARCH_PROMPT = <<~PROMPT
@@ -296,26 +295,9 @@ class AskClarifyingNode < Pocketflow::Node
 
     # Prepare editor content
     editor_content = <<~CONTENT
-# Clarifying Questions
-
-Please review and answer the following questions to help focus the research:
+Please review the following questions and provide inline answers to help focus the research:
 
 #{clarifying_questions}
-
----
-
-# Your Answers
-
-Please provide your answers below:
-
-1.
-
-2.
-
-3.
-
-4.
-
 CONTENT
 
     # Open editor
