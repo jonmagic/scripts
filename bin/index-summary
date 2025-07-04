@@ -48,7 +48,7 @@ def check_dependency(cmd)
   system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
 end
 
-# Parse a GitHub conversation URL or <owner>/<repo>/<type>/<number>.
+# Parse a GitHub conversation URL or <owner>/<repo_name>/<type>/<number>.
 def parse_input(input)
   if input =~ %r{^https://github.com/}
     m = input.match(%r{github.com/([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)})
@@ -58,7 +58,7 @@ def parse_input(input)
     m = input.match(%r{^([^/]+)/([^/]+)/(issues|pull|discussions)/([0-9]+)$})
     [m[1], m[2], m[3], m[4]]
   else
-    abort "Input must be a GitHub URL or <owner>/<repo>/<type>/<number>"
+    abort "Input must be a GitHub URL or <owner>/<repo_name>/<type>/<number>"
   end
 end
 
@@ -77,7 +77,7 @@ def format_type(type)
 end
 
 # Extract key metadata from conversation data for indexing
-def extract_metadata(data, url, owner, repo, type, number, topics, summary)
+def extract_metadata(data, url, owner, repo_name, type, number, topics, summary)
   # Determine the main conversation object based on type
   main_obj = case type
   when "issues"
@@ -96,7 +96,7 @@ def extract_metadata(data, url, owner, repo, type, number, topics, summary)
   metadata = {
     "url" => url,
     "owner" => owner,
-    "repo" => repo,
+    "repo" => "#{owner}/#{repo_name}",
     "type" => format_type(type),
     "number" => number.to_i,
     "title" => main_obj["title"] || "",
@@ -184,7 +184,7 @@ required_options.each do |opt|
 end
 
 # Parse input URL
-owner, repo, type, number = parse_input(input)
+owner, repo_name, type, number = parse_input(input)
 
 puts "Indexing GitHub conversation executive summary: #{input}"
 
@@ -222,7 +222,7 @@ topics = JSON.parse(topics_json)
 
 # Step 4: Build metadata payload
 $stderr.puts "4. Building metadata payload..."
-metadata = extract_metadata(conversation_data, input, owner, repo, type, number, topics, summary)
+metadata = extract_metadata(conversation_data, input, owner, repo_name, type, number, topics, summary)
 
 # Step 5: Index in Qdrant via vector-upsert
 $stderr.puts "5. Indexing summary in Qdrant..."
