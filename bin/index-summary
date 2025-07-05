@@ -33,6 +33,7 @@
 require "json"
 require "open3"
 require "optparse"
+require "set"
 require "shellwords"
 require "time"
 
@@ -76,6 +77,53 @@ def format_type(type)
   end
 end
 
+# Extract unique participants from conversation data
+def extract_participants(data)
+  participants = Set.new
+
+  # Get the main conversation data based on the structure
+  main_data = data["issue"] || data["pr"] || data["discussion"]
+
+  # Add the main author
+  participants.add(main_data["author"]) if main_data && main_data["author"]
+
+  # Add assignees (disabled for now, uncomment if needed)
+  # if main_data && main_data["assignees"]
+  #   main_data["assignees"].each { |assignee| participants.add(assignee) }
+  # end
+
+  # Add comment authors
+  if data["comments"]
+    data["comments"].each do |comment|
+      participants.add(comment["author"]) if comment["author"]
+
+      # Add reply authors (for discussions)
+      if comment["replies"] && comment["replies"].is_a?(Array)
+        comment["replies"].each do |reply|
+          participants.add(reply["author"]) if reply["author"]
+        end
+      end
+    end
+  end
+
+  # Add review authors (for PRs)
+  if data["reviews"]
+    data["reviews"].each do |review|
+      participants.add(review["author"]) if review["author"]
+    end
+  end
+
+  # Add review comment authors (for PRs)
+  if data["review_comments"]
+    data["review_comments"].each do |comment|
+      participants.add(comment["author"]) if comment["author"]
+    end
+  end
+
+  # Filter out bot accounts and return as sorted array
+  participants.reject { |p| p.nil? || p.empty? || p.include?("[bot]") }.sort
+end
+
 # Extract key metadata from conversation data for indexing
 def extract_metadata(data, url, owner, repo_name, type, number, topics, summary)
   # Determine the main conversation object based on type
@@ -92,6 +140,9 @@ def extract_metadata(data, url, owner, repo_name, type, number, topics, summary)
 
   abort "No conversation data found" unless main_obj
 
+  # Extract participants from comments and conversation
+  participants = extract_participants(data)
+
   # Build flat metadata payload
   metadata = {
     "url" => url,
@@ -106,7 +157,8 @@ def extract_metadata(data, url, owner, repo_name, type, number, topics, summary)
     "topics" => topics.join(","), # Flatten topics array to comma-separated string
     "indexed_at" => Time.now.utc.iso8601,
     "summary" => summary,
-    "labels" => (main_obj["labels"] || []).join(",")
+    "labels" => (main_obj["labels"] || []).join(","),
+    "participants" => participants.join(",")
   }
 
   # Add type-specific fields
@@ -222,6 +274,7 @@ topics = JSON.parse(topics_json)
 
 # Step 4: Build metadata payload
 $stderr.puts "4. Building metadata payload..."
+participants = extract_participants(conversation_data)
 metadata = extract_metadata(conversation_data, input, owner, repo_name, type, number, topics, summary)
 
 # Step 5: Index in Qdrant via vector-upsert
@@ -253,4 +306,5 @@ $stderr.puts "✅ Successfully indexed conversation summary!"
 $stderr.puts "Collection: #{options[:collection]}"
 $stderr.puts "URL: #{input}"
 $stderr.puts "Topics: #{topics.join(', ')}"
+$stderr.puts "Participants: #{participants.join(', ')}"
 $stderr.puts "Summary length: #{summary.length} characters"

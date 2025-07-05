@@ -68,7 +68,7 @@ rescue JSON::ParserError => e
   abort "Failed to parse embedding JSON: #{e.message}"
 end
 
-ARRAY_FIELDS = %w[labels topics]
+ARRAY_FIELDS = %w[labels topics participants]
 
 # Public: Parses filter arguments into Qdrant filter structure.
 #
