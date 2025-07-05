@@ -285,6 +285,13 @@ Based on the analysis of 12 GitHub conversations, issue #456 went stale due to..
 - https://github.com/owner/repo/discussions/234
 ```
 
+**Logging:**
+
+The script uses structured logging with two levels:
+
+- **Default (INFO level)**: Shows high-level progress and milestones. Typically ≤20 lines for a 2-iteration query.
+- **Verbose mode (`--verbose`)**: Enables DEBUG level logging with detailed search results, conversation metadata, and command execution details. Expect ≥100 lines of output.
+
 The semantic search is performed by `bin/semantic-search-github-conversations` rather than direct API calls to Qdrant, ensuring consistency with other tools in this repository.
 
 ### Summarize GitHub Conversation
