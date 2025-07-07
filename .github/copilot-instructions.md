@@ -2,94 +2,124 @@
 
 ## Repository Overview
 
-Personal productivity scripts for managing markdown-based notes, GitHub workflows, and LLM-assisted content generation. All scripts are designed to integrate with external tools (fzf, llm CLI, GitHub CLI) to create seamless note-taking and archival workflows.
+Personal productivity scripts for managing markdown-based notes, GitHub workflows, and AI-powered content generation. The codebase implements a complete semantic search pipeline for GitHub conversations, combining vector databases, LLM integration, and interactive research workflows.
 
-## Core Commands
+## Core Architecture Patterns
 
-### Setup & Dependencies
-- `bin/bootstrap` - Install required dependencies (homebrew, fzf, llm, gh)
+### Data Pipeline Architecture
+The system follows a three-stage pipeline: **fetch → process → index**
+1. **Fetch**: `fetch-github-conversation` retrieves GitHub issues/PRs/discussions via GraphQL API
+2. **Process**: `summarize-github-conversation` + `extract-topics` generate AI summaries and topic extraction
+3. **Index**: `vector-upsert` embeds summaries into Qdrant vector database for semantic search
 
-### Main Scripts (Porcelain)
-- `bin/create-weekly-note --template-path TEMPLATE --target-dir DIR` - Generate weekly notes from templates
-- `bin/archive-meeting --transcripts-dir DIR --target-dir DIR --executive-summary-prompt-path FILE --detailed-notes-prompt-path FILE` - Archive meetings with AI summaries
-- `bin/fetch-github-conversation URL [--cache-path DIR] [--updated-at ISO8601]` - Fetch GitHub issues/PRs/discussions as JSON
-- `bin/summarize-github-conversation URL --executive-summary-prompt-path FILE [--cache-path DIR]` - Generate AI summaries of GitHub conversations
-- `bin/prepare-commit --commit-message-prompt-path FILE [--llm-model MODEL]` - Generate semantic commit messages
-- `bin/prepare-pull-request --base-branch BRANCH --pr-body-prompt-path FILE [--llm-model MODEL]` - Generate PR titles and descriptions
+### Multi-Modal Workflow Engine
+Uses `lib/pocketflow.rb` for orchestrating complex workflows with retry logic and state management:
+- **Node lifecycle**: `prep() → exec() → post()` with automatic error handling
+- **Flow orchestration**: Chains nodes with conditional routing (`node.on("action", next_node)`)
+- **Research Agent**: `github-conversations-research-agent` implements multi-turn AI research with clarifying questions
 
-### Utility Scripts (Plumbing)
-- `bin/select-folder --target-dir DIR` - Interactive folder selection with fzf
-
-### Testing
-No formal test suite. Scripts are tested manually and used daily in production workflows.
-
-## Architecture
-
-### Languages & Tools
-- **Ruby**: Primary scripting language for complex data processing
-- **Bash**: Simple setup and dependency management scripts
-- **External Dependencies**: fzf (fuzzy finder), llm CLI (LLM interface), gh (GitHub CLI)
-
-### Data Flow
-- Scripts operate on markdown files in structured directory hierarchies
-- GitHub data is fetched via API and cached as JSON
-- LLM integration through external `llm` CLI tool with prompt files
-- All outputs are markdown or JSON for easy integration
-
-### File Organization
+### Caching & Data Persistence
+Structured caching hierarchy optimizes expensive operations:
 ```
-bin/           # Executable scripts (all chmod +x)
-data/          # Cached data (gitignored)
-  conversations/  # GitHub conversation cache
-  summaries/      # AI-generated summaries
+data/
+  conversations/github/{owner}/{repo}/{type}/{number}.json  # Raw API responses
+  summaries/github/{owner}/{repo}/{type}/{number}.json     # AI summaries
+  topics/github/{owner}/{repo}/{type}/{number}.json        # Extracted topics
+  qdrant/                                                  # Vector database storage
 ```
 
-## Code Style & Patterns
+## Essential Integration Patterns
 
-### File Formatting
-- Always insert a final newline at the end of files
-- Trim final newlines to ensure only one newline at file end
+### LLM Integration via External CLI
+- **Never import LLM libraries directly** - always use `llm` CLI via `Open3.capture3`
+- **Prompt templating**: Use `{{variable}}` syntax with `fill_template()` helper
+- **Model specification**: Support `--llm-model` flag with ENV["LLM_MODEL"] fallback
+- **Embedding generation**: Standard pattern: `llm embed -m text-embedding-3-small -f json -c "text"`
+
+### Vector Database (Qdrant) Patterns
+- **Flat JSON metadata only**: Nested objects are explicitly forbidden; arrays of primitives allowed
+- **Stable vector IDs**: Use UUIDv5 generation based on content for deterministic IDs
+- **Auto-collection creation**: Scripts auto-create collections with cosine distance
+- **Timestamp optimization**: `--skip-if-up-to-date` checks remote timestamps before processing
+
+### GitHub API Integration
+- **GraphQL via `gh` CLI**: Never use REST when GraphQL available (`search-github-conversations`)
+- **Conversation normalization**: Convert all issues/PRs/discussions to common JSON schema
+- **URL parsing**: Support both full URLs and `owner/repo/type/number` shorthand
+- **Rate limit handling**: Built into `gh` CLI, scripts assume authentication is pre-configured
+
+## Critical Workflow Commands
+
+### Research & Discovery
+```bash
+# Standard research pipeline (most important workflow)
+bin/search-github-conversations 'repo:owner/repo created:>2025' | \
+  bin/index-summaries --executive-summary-prompt-path prompts/summary.txt \
+                      --topics-prompt-path prompts/topics.txt \
+                      --collection github-conversations --cache-path data
+
+# Multi-turn AI research with clarifying questions
+bin/github-conversations-research-agent "question" --collection github-conversations
+```
+
+### Bulk Processing Patterns
+- **Pipeline-friendly**: Most scripts accept stdin/stdout for chaining
+- **Batch operations**: `index-summaries`, `fetch-github-conversations` handle bulk processing
+- **Error resilience**: Continue processing even if individual items fail
+- **Progress tracking**: Use `log.txt` to track completed work and enable resumption
+
+## Development Conventions
+
+### Script Structure (Ruby)
+```ruby
+#!/usr/bin/env ruby
+
+# Required imports for most scripts
+require "json"
+require "open3"
+require "optparse"
+require "shellwords"
+
+# Standard helpers (copy these patterns)
+def run_cmd(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout.strip
+end
+
+def check_dependency(cmd)
+  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
+end
+```
+
+### Error Handling Patterns
+- **Fail fast**: Use `abort "message"` for user-facing errors
+- **Dependency validation**: Always check external commands before use
+- **JSON validation**: Parse and validate all JSON inputs/outputs
+- **Graceful degradation**: Cache misses should not break workflows
+
+### CLI Argument Patterns
+- **OptionParser standard**: Use consistent `--flag VALUE` patterns
+- **Required vs optional**: Mark required args in usage, provide sensible defaults
+- **Prompt file paths**: Always require explicit prompt file paths (no embedded prompts)
+- **Cache path consistency**: Use `--cache-path` for all caching operations
+
+### Integration Dependencies
+Core external tools (check via `bin/bootstrap`):
+- `fzf` - Fuzzy finder for interactive selection
+- `llm` - LLM CLI for embeddings and chat completion
+- `gh` - GitHub CLI for API access
+- `qdrant` - Vector database (usually localhost:6333)
+
+### Data Modeling Patterns
+- **Flat metadata**: Vector payloads must be flat JSON (no nested objects)
+- **ISO 8601 timestamps**: Consistent date formatting for comparisons
+- **Topic arrays**: Topics stored as string arrays for filtering
+- **URL as primary key**: GitHub URLs serve as unique identifiers across all scripts
+
+## File Formatting
+- Always insert a final newline whenever you create a new file
+- Trim final newlines to ensure only one newline at the end of files
 - Trim trailing whitespace from all lines
-
-### Ruby Scripts
-- Use `#!/usr/bin/env ruby` shebang
-- OptionParser for CLI argument handling
-- Open3.capture3 for shell command execution
-- JSON.pretty_generate for output formatting
-- Descriptive method names with docstring comments
-- Snake_case for variables and methods
-
-### Error Handling
-- Use `abort "message"` for fatal errors with user-friendly messages
-- Check for required dependencies and files before proceeding
-- Validate CLI arguments and provide usage messages
-
-### Shell Integration
-- Use Open3 for safe shell command execution
-- Always check command exit status before proceeding
-- Pipe data through stdin when possible (e.g., fzf integration)
-
-### Data Processing
-- Convert camelCase API responses to snake_case
-- Filter and normalize GitHub API responses for consistency
-- Cache expensive API calls with timestamp-based invalidation
-
-## Development Guidelines
-
-### Adding New Scripts
-- Place executable scripts in `bin/` directory
-- Use descriptive filenames without extensions
-- Include usage documentation in script comments
-- Add dependency checks where needed
-- Update README.md with new command documentation
-
-### External Integrations
-- Always check for tool availability before use
-- Provide clear error messages for missing dependencies
-- Use standard CLI patterns for consistency
-- Cache expensive operations when possible
-
-### Markdown Processing
-- Maintain wikilink compatibility for note cross-references
-- Use ISO 8601 date formats consistently
-- Structure files for semantic search and AI processing
+- Use snake_case for variables and methods in Ruby
+- Use descriptive method names with docstring comments
