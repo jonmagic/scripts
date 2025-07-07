@@ -47,74 +47,83 @@ You are an expert analyst reviewing a research question and initial findings fro
 ## Initial Findings Summary
 {{initial_findings}}
 
-Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the issue and provide more targeted research. Focus on:
+Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the issue and provide more targeted research. When creating your questions, focus on uncovering:
 
-1. Missing context or background information
-2. Specific technical details that need clarification
-3. Stakeholder perspectives or decision criteria
-4. Timeline or process-related questions
+1. Objectives: What is the ultimate goal or outcome the requester wants?
+2. Scope: What boundaries or constraints should the research stay within?
+3. Data & Format: What data sources, formats, or tools are expected or preferred?
+4. Success Criteria: What does a “good” answer look like to the requester?
 
 Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number. The instructions should ask for inline answers to these questions.
 PROMPT
 
 DEEP_RESEARCH_PROMPT = <<~PROMPT
-You are an expert researcher analyzing GitHub conversations. Based on the original question, clarifications provided, and findings so far, determine what additional information to search for.
+You are an expert researcher mining GitHub conversations for actionable evidence.
 
 ## Original Question
 {{question}}
 
-## User's Clarifications
+## User Clarifications
 {{clarifications}}
 
-## Research Findings So Far
+## Findings So Far
 {{findings_summary}}
 
-## Previous Search Queries
+## Prior Search Queries
 {{previous_queries}}
 
-Based on this context, generate a simple English search query that would help find additional relevant GitHub conversations. The query should be:
+**Goal**
+Identify the most significant information gaps and craft one new natural-language search query (≤ 2 sentences, no operators) that will surface GitHub conversations to close them.
+Gaps may include — but are not limited to — missing implementation details, unclear project status (Implemented · In Progress · Proposed · Abandoned · Unknown), decisions, trade-offs, or alternative solutions.
 
-- A natural language sentence or phrase (no special syntax, filters, or technical operators)
-- 1-2 sentences maximum
-- Written as if asking a question or describing what you're looking for
-- Focused on filling gaps in current understanding, finding related issues, discovering implementation details, or uncovering related problems
+When project “doneness” is uncertain, bias your query toward finding evidence that proves or disproves implementation (e.g. merged PRs, release notes, deployment comments). Otherwise, target whatever gap is highest-impact.
 
-Examples of good queries:
-- "How to implement rate limiting in API endpoints"
-- "Database migration performance issues with large tables"
-- "User authentication failing after recent updates"
+Return **only** the search query text.
 
-Focus on:
-- Filling gaps in current understanding
-- Finding related issues or discussions
-- Discovering implementation details or decisions
-- Uncovering related problems or solutions
-
-Return only the search query text as a simple English sentence, nothing else.
+*Examples*
+- “Confirmation that client-side rate limiting is merged and live”
+- “Alternative approaches to large-table migration performance”
+- “Discussion showing why the authentication redesign was abandoned”
 PROMPT
 
 FINAL_REPORT_PROMPT = <<~PROMPT
-You are an expert analyst preparing a comprehensive research report. Using all the gathered information, create a well-structured Markdown report that answers the original research question.
+You are an expert analyst preparing a comprehensive Markdown report.
 
 ## Original Question
 {{question}}
 
-## User's Clarifications
+## User Clarifications
 {{clarifications}}
 
-## All Research Findings
+## Research Corpus
 {{all_findings}}
 
-Create a comprehensive Markdown report that:
+Produce a well-structured Markdown report with these sections:
 
-1. **Executive Summary**: Brief answer to the original question
-2. **Key Findings**: Main insights discovered during research
-3. **Detailed Analysis**: In-depth analysis with supporting evidence
-4. **Sources**: List all GitHub conversation URLs used as sources
+### 1. Executive Summary
+Brief answer (≤ 5 sentences).
 
-Structure the report with clear headings and cite specific GitHub conversations using their full URLs. Make sure every major claim is supported by evidence from the GitHub conversations.
+### 2. Key Findings
+Bullet list of the main insights. For each item include:
+- **Topic** (one line)
+- **Implementation Status** in parentheses — *Implemented · In Progress · Proposed · Abandoned · Unknown*
+- One-sentence takeaway
+- GitHub URL
 
-Format as clean Markdown with proper headings, bullet points, and citations.
+### 3. Detailed Analysis
+Expanded discussion grouped by logical themes (performance, security, etc.).
+For any feature or project, explicitly state its **Implementation Status** and quote a short evidence snippet (commit SHA, “Merged” event, comment, etc.) supporting that status.
+
+### 4. Sources
+Plain list of every GitHub conversation URL cited.
+
+**Style guide**
+
+* Use proper Markdown headings (`##`, `###`) and omit horizontal rules (`---`).
+* Every factual claim must be backed by an inline citation (full URL).
+* If status cannot be confirmed, mark it **Unknown** and note what evidence is missing.
+
+Return only the Markdown document—no extra commentary.
 PROMPT
 
 # === Helper Methods ===
