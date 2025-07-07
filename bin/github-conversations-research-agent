@@ -372,8 +372,7 @@ class AskClarifyingNode < Pocketflow::Node
     })
 
     LOG.debug "Calling LLM to generate clarifying questions..."
-    # Use fast model for clarifying questions - this is light reasoning to generate questions based on initial findings
-    llm_response = call_llm(prompt, shared[:models][:fast])
+    llm_response = call_llm(prompt, shared[:llm_model])
 
     LOG.info "Generated clarifying questions for user review"
     LOG.debug do
@@ -447,8 +446,8 @@ class DeepResearchNode < Pocketflow::Node
     })
 
     LOG.debug "Calling LLM to generate refined search query..."
-    # Use fast model for search query generation - this is light reasoning to refine search based on context
-    refined_query = call_llm(prompt, shared[:models][:fast])
+    # Generate refined search query
+    refined_query = call_llm(prompt, shared[:llm_model])
 
     LOG.info "Generated refined search query: \"#{refined_query}\""
 
@@ -605,8 +604,7 @@ class FinalReportNode < Pocketflow::Node
   end
 
   def exec(prompt)
-    # Use accurate model for final report - this requires complex analysis and synthesis of all gathered data
-    call_llm(prompt, @shared[:models][:accurate])
+    call_llm(prompt, @shared[:llm_model])
   end
 
   def post(shared, prep_res, exec_res)
@@ -627,9 +625,7 @@ options = {
   max_depth: 10,
   editor_file: nil,
   verbose: false,
-  llm_model: ENV["LLM_MODEL"],
-  fast_model: ENV["FAST_LLM_MODEL"],
-  accurate_model: ENV["LLM_MODEL"]
+  llm_model: ENV["LLM_MODEL"]
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -655,15 +651,7 @@ opt_parser = OptionParser.new do |opts|
     options[:verbose] = true
   end
 
-  opts.on("--fast-model MODEL", "Fast LLM model for light reasoning (default: ENV['FAST_LLM_MODEL'] or llm default)") do |v|
-    options[:fast_model] = v
-  end
-
-  opts.on("--accurate-model MODEL", "Accurate LLM model for complex analysis (default: ENV['LLM_MODEL'] or llm default)") do |v|
-    options[:accurate_model] = v
-  end
-
-  opts.on("--llm-model MODEL", "LLM model to use (deprecated, use --fast-model and --accurate-model)") do |v|
+  opts.on("--llm-model MODEL", "LLM model to use") do |v|
     options[:llm_model] = v
   end
 
@@ -699,14 +687,6 @@ end
 
 # Set up shared context
 script_dir = File.expand_path(File.dirname(__FILE__))
-
-# Handle backward compatibility for --llm-model
-if options[:llm_model] && (!options[:fast_model] && !options[:accurate_model])
-  # If only --llm-model is specified, use it for both models
-  options[:fast_model] ||= options[:llm_model]
-  options[:accurate_model] ||= options[:llm_model]
-end
-
 shared = {
   question: question,
   collection: options[:collection],
@@ -714,11 +694,7 @@ shared = {
   max_depth: options[:max_depth],
   editor_file: options[:editor_file],
   verbose: options[:verbose],
-  llm_model: options[:llm_model], # Keep for backward compatibility
-  models: {
-    fast: options[:fast_model],
-    accurate: options[:accurate_model]
-  },
+  llm_model: options[:llm_model],
   script_dir: script_dir
 }
 
@@ -743,8 +719,7 @@ begin
   LOG.info "Collection: #{options[:collection]}"
   LOG.info "Max results per search: #{options[:limit]}"
   LOG.info "Max deep research iterations: #{options[:max_depth]}"
-  LOG.info "Fast model: #{shared[:models][:fast] || 'default'}"
-  LOG.info "Accurate model: #{shared[:models][:accurate] || 'default'}"
+  LOG.info "LLM model: #{options[:llm_model] || 'default'}"
 
   flow.run(shared)
 rescue Interrupt
