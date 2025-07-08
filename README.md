@@ -60,7 +60,7 @@ alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --skip-if-up-to-date'
 alias bidx='/path/to/index-summaries --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --cache-path ./cache --skip-if-up-to-date'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
-alias research='/path/to/github-conversations-research-agent --collection github-conversations --fast-model o1 --accurate-model gpt-4.1 --verbose'
+alias research='/path/to/github-conversations-research-agent --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3 --verbose'
 ```
 
 All of the referenced prompts can be found here: https://github.com/jonmagic/prompts
@@ -223,8 +223,7 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
 - `--verbose`: Show debug logs and progress information
 - `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: $FAST_LLM_MODEL environment variable or llm default)
-- `--accurate-model MODEL`: Accurate LLM model for complex analysis like final report generation (default: $LLM_MODEL environment variable or llm default)
-- `--llm-model MODEL`: *(Deprecated)* LLM model to use for all tasks (use --fast-model and --accurate-model instead)
+- `--reasoning-model MODEL`: Reasoning LLM model for complex analysis like final report generation (default: $LLM_MODEL environment variable or llm default)
 
 **Prerequisites:**
 
@@ -260,10 +259,10 @@ Research using a fixed editor file:
 /path/to/github-conversations-research-agent "How do we handle authentication in the API?" --collection github-conversations --editor-file /tmp/research-questions.md
 ```
 
-Dual-model research with o1 for fast reasoning and GPT-4 for complex analysis:
+Dual-model research with gpt-4.1 for fast reasoning and o3 for complex analysis:
 
 ```sh
-./path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model o1 --accurate-model gpt-4.1
+./path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3
 ```
 
 **Sample Output:**
