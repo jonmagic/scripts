@@ -60,7 +60,7 @@ alias es='llm -f /path/to/github-conversation-executive-summary.md'
 alias idx='/path/to/index-summary --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --skip-if-up-to-date'
 alias bidx='/path/to/index-summaries --executive-summary-prompt-path /path/to/github-conversation-executive-summary.md --topics-prompt-path /path/to/topic-extraction.txt --collection github-conversations --cache-path ./cache --skip-if-up-to-date'
 alias ppr='/path/to/prepare-pull-request --base-branch main --pr-body-prompt-path /path/to/pull-request-body.md'
-alias research='/path/to/github-conversations-research-agent --collection github-conversations --verbose'
+alias research='/path/to/github-conversations-research-agent --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3 --verbose'
 ```
 
 All of the referenced prompts can be found here: https://github.com/jonmagic/prompts
@@ -222,7 +222,8 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `--max-depth N`: Max deep-research passes (default: 10)
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
 - `--verbose`: Show debug logs and progress information
-- `--llm-model MODEL`: LLM model to use (defaults to $LLM_MODEL environment variable)
+- `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: $FAST_LLM_MODEL environment variable or llm default)
+- `--reasoning-model MODEL`: Reasoning LLM model for complex analysis like final report generation (default: $LLM_MODEL environment variable or llm default)
 
 **Prerequisites:**
 
@@ -256,6 +257,12 @@ Research using a fixed editor file:
 
 ```sh
 /path/to/github-conversations-research-agent "How do we handle authentication in the API?" --collection github-conversations --editor-file /tmp/research-questions.md
+```
+
+Dual-model research with gpt-4.1 for fast reasoning and o3 for complex analysis:
+
+```sh
+./path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3
 ```
 
 **Sample Output:**
