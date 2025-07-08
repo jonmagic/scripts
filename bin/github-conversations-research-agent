@@ -16,8 +16,7 @@
 #   --max-depth N           Max deep-research passes (default: 10)
 #   --editor-file PATH      Use fixed file instead of Tempfile
 #   --verbose               Show debug logs
-#   --fast-model MODEL      Fast LLM model for light reasoning
-#   --reasoning-model MODEL Reasoning LLM model for complex analysis
+#   --llm-model MODEL       LLM model to use
 #
 # The script uses the existing bin/semantic-search-github-conversations and
 # bin/fetch-github-conversation scripts to gather context, and integrates
@@ -373,8 +372,7 @@ class AskClarifyingNode < Pocketflow::Node
     })
 
     LOG.debug "Calling LLM to generate clarifying questions..."
-    # Use fast model for clarifying questions - this is light reasoning to generate questions based on initial findings
-    llm_response = call_llm(prompt, shared[:models][:fast])
+    llm_response = call_llm(prompt, shared[:llm_model])
 
     LOG.info "Generated clarifying questions for user review"
     LOG.debug do
@@ -448,8 +446,8 @@ class DeepResearchNode < Pocketflow::Node
     })
 
     LOG.debug "Calling LLM to generate refined search query..."
-    # Use fast model for search query generation - this is light reasoning to refine search based on context
-    refined_query = call_llm(prompt, shared[:models][:fast])
+    # Generate refined search query
+    refined_query = call_llm(prompt, shared[:llm_model])
 
     LOG.info "Generated refined search query: \"#{refined_query}\""
 
@@ -606,8 +604,7 @@ class FinalReportNode < Pocketflow::Node
   end
 
   def exec(prompt)
-    # Use reasoning model for final report - this requires complex analysis and synthesis of all gathered data
-    call_llm(prompt, @shared[:models][:reasoning])
+    call_llm(prompt, @shared[:llm_model])
   end
 
   def post(shared, prep_res, exec_res)
@@ -628,8 +625,7 @@ options = {
   max_depth: 10,
   editor_file: nil,
   verbose: false,
-  fast_model: ENV["FAST_LLM_MODEL"],
-  reasoning_model: ENV["LLM_MODEL"]
+  llm_model: ENV["LLM_MODEL"]
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -655,12 +651,8 @@ opt_parser = OptionParser.new do |opts|
     options[:verbose] = true
   end
 
-  opts.on("--fast-model MODEL", "Fast LLM model for light reasoning (default: ENV['FAST_LLM_MODEL'] or llm default)") do |v|
-    options[:fast_model] = v
-  end
-
-  opts.on("--reasoning-model MODEL", "Reasoning LLM model for complex analysis (default: ENV['LLM_MODEL'] or llm default)") do |v|
-    options[:reasoning_model] = v
+  opts.on("--llm-model MODEL", "LLM model to use") do |v|
+    options[:llm_model] = v
   end
 
   opts.on("-h", "--help", "Show this help message") do
@@ -695,7 +687,6 @@ end
 
 # Set up shared context
 script_dir = File.expand_path(File.dirname(__FILE__))
-
 shared = {
   question: question,
   collection: options[:collection],
@@ -703,10 +694,7 @@ shared = {
   max_depth: options[:max_depth],
   editor_file: options[:editor_file],
   verbose: options[:verbose],
-  models: {
-    fast: options[:fast_model],
-    reasoning: options[:reasoning_model]
-  },
+  llm_model: options[:llm_model],
   script_dir: script_dir
 }
 
@@ -731,8 +719,7 @@ begin
   LOG.info "Collection: #{options[:collection]}"
   LOG.info "Max results per search: #{options[:limit]}"
   LOG.info "Max deep research iterations: #{options[:max_depth]}"
-  LOG.info "Fast model: #{shared[:models][:fast] || 'default'}"
-  LOG.info "Reasoning model: #{shared[:models][:reasoning] || 'default'}"
+  LOG.info "LLM model: #{options[:llm_model] || 'default'}"
 
   flow.run(shared)
 rescue Interrupt
