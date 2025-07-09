@@ -340,6 +340,35 @@ def parse_semantic_search_response(llm_response)
   end
 end
 
+# Public: Extracts qualifiers from user query and builds semantic search query.
+#
+# user_query - String containing the user's query with potential qualifiers.
+#
+# Returns a Hash with:
+#   - :semantic_query - String with qualifiers stripped for embedding
+#   - :repo_filter - String with repo qualifier (e.g., "owner/name") or nil
+#   - :author_filter - String with author qualifier or nil
+def build_semantic_query(user_query)
+  # Extract repo: and author: qualifiers
+  repo_match = user_query.match(/\brepo:(\S+)/)
+  author_match = user_query.match(/\bauthor:(\S+)/)
+  
+  # Strip qualifiers from the query for semantic search
+  semantic_query = user_query.dup
+  semantic_query.gsub!(/\brepo:\S+/, '')
+  semantic_query.gsub!(/\bauthor:\S+/, '')
+  semantic_query.strip!
+  
+  # Clean up extra whitespace
+  semantic_query.gsub!(/\s+/, ' ')
+  
+  {
+    semantic_query: semantic_query,
+    repo_filter: repo_match ? repo_match[1] : nil,
+    author_filter: author_match ? author_match[1] : nil
+  }
+end
+
 # Public: Builds semantic search command with filters and ordering.
 #
 # search_plan - Hash containing query and optional filters.
@@ -361,6 +390,16 @@ def build_semantic_search_command(search_plan, script_dir, collection, top_k)
   end
   if search_plan[:created_before]
     cmd += " --filter created_before:#{Shellwords.escape(search_plan[:created_before])}"
+  end
+
+  # Add repo filter if present
+  if search_plan[:repo_filter]
+    cmd += " --filter repo:#{Shellwords.escape(search_plan[:repo_filter])}"
+  end
+
+  # Add author filter if present  
+  if search_plan[:author_filter]
+    cmd += " --filter author:#{Shellwords.escape(search_plan[:author_filter])}"
   end
 
   # Add ordering if present
@@ -387,8 +426,17 @@ class InitialResearchNode < Pocketflow::Node
     top_k = shared[:top_k]
     script_dir = shared[:script_dir]
 
-    # Run semantic search
-    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(question)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+    # Extract qualifiers from the initial question for semantic search
+    semantic_query_info = build_semantic_query(question)
+    LOG.debug "Extracted semantic query: '#{semantic_query_info[:semantic_query]}'"
+    LOG.debug "Extracted repo filter: #{semantic_query_info[:repo_filter]}" if semantic_query_info[:repo_filter]
+    LOG.debug "Extracted author filter: #{semantic_query_info[:author_filter]}" if semantic_query_info[:author_filter]
+
+    # Build search plan with extracted qualifiers
+    search_plan = semantic_query_info.merge({ query: question })
+    
+    # Run semantic search with qualifier extraction
+    search_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
     LOG.debug "Running search command: #{search_cmd}"
 
     search_output = run_cmd(search_cmd)
@@ -846,7 +894,17 @@ class RetrieverNode < Pocketflow::Node
     else
       query = search_plan[:query]
       LOG.info "Running semantic search with query..."
-      search_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
+      
+      # Extract qualifiers from the query for semantic search
+      semantic_query_info = build_semantic_query(query)
+      LOG.debug "Extracted semantic query: '#{semantic_query_info[:semantic_query]}'"
+      LOG.debug "Extracted repo filter: #{semantic_query_info[:repo_filter]}" if semantic_query_info[:repo_filter]
+      LOG.debug "Extracted author filter: #{semantic_query_info[:author_filter]}" if semantic_query_info[:author_filter]
+      
+      # Build updated search plan with extracted qualifiers
+      updated_search_plan = search_plan.merge(semantic_query_info)
+      
+      search_cmd = build_semantic_search_command(updated_search_plan, script_dir, collection, top_k)
       LOG.debug "Search command: #{search_cmd}"
 
       search_output = run_cmd(search_cmd)
