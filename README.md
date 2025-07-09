@@ -45,6 +45,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [Search GitHub Conversations](#search-github-conversations)
   - [Select Folder](#select-folder)
   - [Vector Upsert](#vector-upsert)
+  - [Semantic Search GitHub Conversations](#semantic-search-github-conversations)
 
 ### Aliases
 
@@ -221,9 +222,12 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `-n, --limit N`: Max results per search (default: 10)
 - `--max-depth N`: Max deep-research passes (default: 10)
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
+- `--clarifying-qa PATH`: Path to file with clarifying Q&A to bypass interactive step
+- `--search-mode MODE`: Override search mode (semantic, keyword, or hybrid - default: hybrid)
+- `--cache-path PATH`: Root path for caching fetched data
 - `--verbose`: Show debug logs and progress information
-- `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: $FAST_LLM_MODEL environment variable or llm default)
-- `--reasoning-model MODEL`: Reasoning LLM model for complex analysis like final report generation (default: $LLM_MODEL environment variable or llm default)
+- `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: ENV['FAST_LLM_MODEL'] or llm default)
+- `--reasoning-model MODEL`: Reasoning LLM model for complex analysis like final report generation (default: ENV['LLM_MODEL'] or llm default)
 
 **Prerequisites:**
 
@@ -231,6 +235,14 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - Qdrant server running with indexed GitHub conversation summaries
 - `EDITOR` environment variable set (e.g., `export EDITOR=nano`)
 - `bin/semantic-search-github-conversations` and `bin/fetch-github-conversation` available
+
+**Search Modes:**
+
+- **hybrid** (default): Automatically selects search strategy based on query analysis
+  - Uses keyword search for queries with GitHub operators (repo:, author:, label:, is:, created:, updated:)
+  - Uses semantic search for natural language queries
+- **semantic**: Forces semantic search using vector similarity against indexed conversation summaries
+- **keyword**: Forces keyword search using GitHub's search API via `bin/search-github-conversations`
 
 **Workflow:**
 
@@ -259,10 +271,28 @@ Research using a fixed editor file:
 /path/to/github-conversations-research-agent "How do we handle authentication in the API?" --collection github-conversations --editor-file /tmp/research-questions.md
 ```
 
+Research with pre-written clarifying questions (bypassing interactive step):
+
+```sh
+/path/to/github-conversations-research-agent "What are the security implications of the new API?" --collection github-conversations --clarifying-qa /path/to/research-clarifications.md
+```
+
 Dual-model research with gpt-4.1 for fast reasoning and o3 for complex analysis:
 
 ```sh
 ./path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3
+```
+
+Force keyword search for repository-specific queries:
+
+```sh
+./path/to/github-conversations-research-agent "repo:owner/repo is:issue label:bug" --collection github-conversations --search-mode keyword
+```
+
+Force semantic search even with GitHub operators:
+
+```sh
+./path/to/github-conversations-research-agent "repo:owner/repo authentication issues" --collection github-conversations --search-mode semantic
 ```
 
 **Sample Output:**
@@ -750,6 +780,7 @@ Executes semantic search against conversation summaries stored in Qdrant. This p
 - `-f, --filter KEY:VALUE`: Filter by metadata (repeatable for multiple filters)
 - `-n, --limit N`: Maximum number of results to return (default: 10)
 - `--score-threshold N`: Minimum similarity score threshold (0.0-1.0)
+- `--order-by FIELD_DIR`: Order by field and direction (e.g., 'created_at desc')
 - `--url URL`: Qdrant base URL (default: http://localhost:6333)
 - `--format FORMAT`: Output format - yaml (default) or json
 - `-v, --verbose`: Dump request/response JSON for debugging
@@ -802,6 +833,15 @@ Search with repository and topic filters:
   --filter created_after:2025-01-01 \
   --filter created_before:2025-06-30 \
   "credential leak mitigation"
+```
+
+Search with custom ordering (most recent first):
+
+```sh
+/path/to/semantic-search-github-conversations \
+  --order-by "created_at desc" \
+  --filter repo:octocat/Hello-World \
+  "performance optimization"
 ```
 
 Output as JSON for pipeline processing:
