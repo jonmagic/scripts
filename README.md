@@ -861,6 +861,31 @@ Debug Qdrant requests and responses:
   "database performance issues"
 ```
 
+**Combined Filter + Text Query (GitHub Conversations Research Agent):**
+
+The research agent automatically extracts qualifiers from queries and combines them with semantic search:
+
+```sh
+./path/to/github-conversations-research-agent "repo:octocat/Hello-World caching bug" --collection github-conversations --verbose
+```
+
+This will:
+1. Extract `repo:octocat/Hello-World` qualifier and convert it to `--filter repo:octocat/Hello-World`
+2. Strip the qualifier from the query, leaving `caching bug` for semantic embedding
+3. Combine both in the underlying `semantic-search-github-conversations` call
+
+Similarly for author qualifiers:
+
+```sh
+./path/to/github-conversations-research-agent "author:octocat authentication vulnerability" --collection github-conversations
+```
+
+Multiple qualifiers are supported:
+
+```sh
+./path/to/github-conversations-research-agent "repo:rails/rails author:dhh performance optimization" --collection github-conversations
+```
+
 **Output Format:**
 
 Default YAML output shows structured data with:
