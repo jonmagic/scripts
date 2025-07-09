@@ -14,6 +14,7 @@
 #   -f, --filter KEY:VALUE      Filter by metadata       (repeatable)
 #   -n, --limit N              Max hits to return       (default: 10)
 #       --score-threshold N     Min similarity score     (0.0-1.0)
+#       --order-by FIELD DIR    Order by field and direction (e.g., "created_at desc")
 #       --url URL               Qdrant base URL          (default: http://localhost:6333)
 #       --format FORMAT         Output format            (yaml|json, default: yaml)
 #   -v, --verbose               Dump request/response JSON
@@ -164,10 +165,11 @@ end
 # filter_obj     - The Hash representing Qdrant filters.
 # limit          - The Integer maximum number of results.
 # score_threshold - The Float minimum similarity score (optional).
+# order_by       - The Hash with order configuration (optional).
 # verbose        - Boolean flag for verbose output.
 #
 # Returns a Hash with search results.
-def search_qdrant(qdrant_url, collection, query_vector, filter_obj, limit, score_threshold, verbose)
+def search_qdrant(qdrant_url, collection, query_vector, filter_obj, limit, score_threshold, order_by, verbose)
   uri = URI("#{qdrant_url}/collections/#{collection}/points/search")
   http = Net::HTTP.new(uri.host, uri.port)
 
@@ -179,6 +181,14 @@ def search_qdrant(qdrant_url, collection, query_vector, filter_obj, limit, score
 
   request_body[:filter] = filter_obj unless filter_obj.empty?
   request_body[:score_threshold] = score_threshold if score_threshold
+
+  # Add ordering if specified
+  if order_by && order_by[:key] && order_by[:direction]
+    request_body[:order_by] = {
+      key: order_by[:key],
+      direction: order_by[:direction]
+    }
+  end
 
   if verbose
     $stderr.puts "=== Qdrant Request ==="
@@ -238,6 +248,7 @@ options = {
   filters: [],
   limit: 10,
   score_threshold: nil,
+  order_by: nil,
   qdrant_url: "http://localhost:6333",
   verbose: false,
   format: "yaml"
@@ -260,6 +271,15 @@ opt_parser = OptionParser.new do |opts|
 
   opts.on("--score-threshold N", Float, "Min similarity score (0.0-1.0)") do |v|
     options[:score_threshold] = v
+  end
+
+  opts.on("--order-by FIELD_DIR", "Order by field and direction (e.g., 'created_at desc')") do |v|
+    parts = v.split(" ", 2)
+    if parts.length == 2 && %w[asc desc].include?(parts[1])
+      options[:order_by] = { key: parts[0], direction: parts[1] }
+    else
+      abort "Invalid order-by format: #{v}. Expected 'field asc|desc'"
+    end
   end
 
   opts.on("--url URL", "Qdrant base URL (default: http://localhost:6333)") do |v|
@@ -314,6 +334,7 @@ search_results = search_qdrant(
   filter_obj,
   options[:limit],
   options[:score_threshold],
+  options[:order_by],
   options[:verbose]
 )
 

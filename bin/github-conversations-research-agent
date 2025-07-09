@@ -363,10 +363,10 @@ def build_semantic_search_command(search_plan, script_dir, collection, top_k)
     cmd += " --filter created_before:#{Shellwords.escape(search_plan[:created_before])}"
   end
 
-  # Note: order_by is not yet supported by semantic-search-github-conversations
-  # TODO: Add order_by support to the underlying script
+  # Add ordering if present
   if search_plan[:order_by]
-    LOG.warn "Order by requested but not yet supported by semantic-search-github-conversations: #{search_plan[:order_by]}"
+    order_by_str = "#{search_plan[:order_by][:key]} #{search_plan[:order_by][:direction]}"
+    cmd += " --order-by #{Shellwords.escape(order_by_str)}"
   end
 
   cmd
