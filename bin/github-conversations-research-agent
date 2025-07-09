@@ -19,6 +19,8 @@
 #   --verbose               Show debug logs
 #   --fast-model MODEL      Fast LLM model for light reasoning
 #   --reasoning-model MODEL Reasoning LLM model for complex analysis
+#   --search-mode MODE      Override search mode (semantic, keyword, or hybrid - default: hybrid)
+#   --cache-path PATH       Root path for caching fetched data
 #
 # The script uses the existing bin/semantic-search-github-conversations and
 # bin/fetch-github-conversation scripts to gather context, and integrates
@@ -317,7 +319,12 @@ class InitialResearchNode < Pocketflow::Node
       LOG.debug "Fetching details for result #{i + 1}/#{search_results.length}: #{url}"
 
       begin
-        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
+        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation"
+        if @shared[:cache_path]
+          fetch_cmd += " --cache-path #{Shellwords.escape(@shared[:cache_path])}"
+        end
+        fetch_cmd += " #{Shellwords.escape(url)}"
+
         conversation_json = run_cmd(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
@@ -497,7 +504,7 @@ class PlannerNode < Pocketflow::Node
 
     # Check if search mode is overridden
     search_mode = @shared[:search_mode]
-    
+
     if search_mode == "semantic"
       tool = :semantic
       LOG.info "Forced semantic search mode via --search-mode flag"
@@ -521,13 +528,13 @@ class PlannerNode < Pocketflow::Node
 
     # Extract potential qualifiers from the query
     qualifiers = {}
-    
+
     # Extract repo qualifier if present
     if current_query.match(/\brepo:(\S+)/i)
       qualifiers[:repo] = $1
       LOG.debug "Extracted repo qualifier: #{qualifiers[:repo]}"
     end
-    
+
     # Extract author qualifier if present
     if current_query.match(/\bauthor:(\S+)/i)
       qualifiers[:author] = $1
@@ -567,7 +574,7 @@ class RetrieverNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
     search_plan = shared[:next_search]
-    
+
     if search_plan.nil?
       LOG.error "No search plan found from PlannerNode"
       return nil
@@ -654,7 +661,12 @@ class RetrieverNode < Pocketflow::Node
       LOG.debug "Fetching details for new result #{i + 1}/#{new_results.length}: #{url}"
 
       begin
-        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation #{Shellwords.escape(url)}"
+        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation"
+        if @shared[:cache_path]
+          fetch_cmd += " --cache-path #{Shellwords.escape(@shared[:cache_path])}"
+        end
+        fetch_cmd += " #{Shellwords.escape(url)}"
+
         conversation_json = run_cmd(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
@@ -785,7 +797,8 @@ options = {
   verbose: false,
   fast_model: ENV["FAST_LLM_MODEL"],
   reasoning_model: ENV["LLM_MODEL"],
-  search_mode: "hybrid"
+  search_mode: "hybrid",
+  cache_path: nil
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -825,6 +838,10 @@ opt_parser = OptionParser.new do |opts|
 
   opts.on("--search-mode MODE", ["semantic", "keyword", "hybrid"], "Override search mode (semantic, keyword, or hybrid - default: hybrid)") do |v|
     options[:search_mode] = v
+  end
+
+  opts.on("--cache-path PATH", "Root path for caching fetched data") do |v|
+    options[:cache_path] = v
   end
 
   opts.on("-h", "--help", "Show this help message") do
@@ -869,6 +886,7 @@ shared = {
   clarifying_qa: options[:clarifying_qa],
   verbose: options[:verbose],
   search_mode: options[:search_mode],
+  cache_path: options[:cache_path],
   models: {
     fast: options[:fast_model],
     reasoning: options[:reasoning_model]
