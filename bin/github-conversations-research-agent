@@ -413,21 +413,31 @@ CONTENT
 
   def post(shared, prep_res, exec_res)
     shared[:clarifications] = exec_res
-    LOG.info "✓ Clarifications collected, proceeding to deep research"
-    LOG.debug "Moving to deep research phase..."
+    LOG.info "✓ Clarifications collected, proceeding to planning phase"
+    LOG.debug "Moving to planning phase..."
 
     "default"
   end
 end
 
-class DeepResearchNode < Pocketflow::Node
+# PlannerNode: Decides whether to use semantic search or keyword search based on query heuristics.
+#
+# This node implements tool-choice heuristics to determine the most appropriate search strategy:
+# - Keyword search: When query contains GitHub search operators (repo:, author:, label:, is:, created:, updated:)
+# - Semantic search: For natural language queries without specific operators
+#
+# Future extensions may include:
+# - LLM-based tool selection for complex queries
+# - Hybrid search combining both approaches
+# - Dynamic threshold adjustment based on result quality
+class PlannerNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
     depth = shared[:current_depth] || 0
     max_depth = shared[:max_depth]
 
-    LOG.info "=== DEEP RESEARCH PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
-    LOG.info "Starting deep research iteration #{depth + 1}/#{max_depth}"
+    LOG.info "=== PLANNING PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
+    LOG.info "Determining search strategy based on query analysis..."
 
     # Check if we've reached max depth
     if depth >= max_depth
@@ -435,7 +445,7 @@ class DeepResearchNode < Pocketflow::Node
       return nil
     end
 
-    # Prepare context for LLM
+    # Generate refined query using the same logic as DeepResearchNode
     findings_summary = shared[:memory][:notes].join("\n\n")
     previous_queries = shared[:memory][:search_queries].join(", ")
 
@@ -462,17 +472,104 @@ class DeepResearchNode < Pocketflow::Node
     refined_query
   end
 
-  def exec(refined_query)
-    return [] if refined_query.nil?
+  def exec(current_query)
+    return nil if current_query.nil?
 
+    # Store the current query for use by RetrieverNode
+    @shared[:current_query] = current_query
+
+    # Apply tool-choice heuristics
+    # Regex pattern matches GitHub search operators: repo:, author:, label:, is:, created:, updated:
+    keyword_pattern = /\b(repo|author|label|is|created|updated):/i
+
+    if keyword_pattern.match?(current_query)
+      tool = :keyword
+      LOG.info "Selected keyword search based on GitHub operators in query"
+      LOG.debug "Detected operators: #{current_query.scan(keyword_pattern).flatten.join(', ')}"
+    else
+      tool = :semantic
+      LOG.info "Selected semantic search for natural language query"
+    end
+
+    # Extract potential qualifiers from the query
+    qualifiers = {}
+    
+    # Extract repo qualifier if present
+    if current_query.match(/\brepo:(\S+)/i)
+      qualifiers[:repo] = $1
+      LOG.debug "Extracted repo qualifier: #{qualifiers[:repo]}"
+    end
+    
+    # Extract author qualifier if present
+    if current_query.match(/\bauthor:(\S+)/i)
+      qualifiers[:author] = $1
+      LOG.debug "Extracted author qualifier: #{qualifiers[:author]}"
+    end
+
+    search_plan = {
+      tool: tool,
+      query: current_query,
+      qualifiers: qualifiers
+    }
+
+    LOG.debug "Search plan: #{search_plan}"
+
+    search_plan
+  end
+
+  def post(shared, prep_res, exec_res)
+    return "final" if prep_res.nil? # Max depth reached
+
+    # Store the search plan for RetrieverNode
+    shared[:next_search] = exec_res
+
+    LOG.info "✓ Planning complete, proceeding to retrieval"
+    LOG.debug "Moving to retrieval phase..."
+
+    "default"
+  end
+end
+
+# RetrieverNode: Executes the actual search based on PlannerNode's decisions.
+#
+# This node retrieves conversations using the search strategy determined by PlannerNode.
+# Currently hard-coded to semantic search to maintain compatibility during transition.
+# TODO: Implement keyword search support in next iteration.
+class RetrieverNode < Pocketflow::Node
+  def prep(shared)
+    @shared = shared # Store shared context
+    search_plan = shared[:next_search]
+    
+    if search_plan.nil?
+      LOG.error "No search plan found from PlannerNode"
+      return nil
+    end
+
+    LOG.info "=== RETRIEVAL PHASE ==="
+    LOG.info "Executing #{search_plan[:tool]} search with query: \"#{search_plan[:query]}\""
+
+    search_plan
+  end
+
+  def exec(search_plan)
+    return [] if search_plan.nil?
+
+    query = search_plan[:query]
+    tool = search_plan[:tool]
     collection = @shared[:collection]
     top_k = @shared[:top_k]
     script_dir = @shared[:script_dir]
 
-    LOG.info "Running semantic search with refined query..."
+    # TODO: For now, hard-code to semantic search to keep compile green
+    # Future iteration will implement keyword search based on tool selection
+    if tool == :keyword
+      LOG.info "TODO: Keyword search not yet implemented, falling back to semantic search"
+    end
 
-    # Run semantic search with refined query
-    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(refined_query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+    LOG.info "Running semantic search with query..."
+
+    # Run semantic search 
+    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
     LOG.debug "Search command: #{search_cmd}"
 
     search_output = run_cmd(search_cmd)
@@ -538,11 +635,14 @@ class DeepResearchNode < Pocketflow::Node
   end
 
   def post(shared, prep_res, exec_res)
-    return "final" if prep_res.nil? # Max depth reached
+    return "final" if prep_res.nil? # No search plan
+
+    # Store the query used for memory tracking
+    query = prep_res[:query]
 
     # Add new findings to memory
     shared[:memory][:hits].concat(exec_res)
-    shared[:memory][:search_queries] << prep_res
+    shared[:memory][:search_queries] << query
 
     # Add research notes
     if exec_res.any?
@@ -565,10 +665,10 @@ class DeepResearchNode < Pocketflow::Node
 
     # Continue if under max depth, otherwise go to final report
     if shared[:current_depth] < shared[:max_depth] && exec_res.any?
-      LOG.info "Continuing to next deep research iteration..."
-      "default" # Continue deep research loop
+      LOG.info "Continuing to next research iteration..."
+      "continue" # Go back to planning for next iteration
     else
-      LOG.info "Deep research complete, moving to final report..."
+      LOG.info "Research complete, moving to final report..."
       "final"
     end
   end
@@ -719,14 +819,16 @@ shared = {
 # Build the workflow
 initial_node = InitialResearchNode.new
 clarify_node = AskClarifyingNode.new
-deep_node = DeepResearchNode.new
+planner_node = PlannerNode.new
+retriever_node = RetrieverNode.new
 final_node = FinalReportNode.new
 
 # Link the nodes
 initial_node.next(clarify_node)
-clarify_node.next(deep_node)
-deep_node.next(deep_node) # Loop back to itself
-deep_node.on("final", final_node)
+clarify_node.next(planner_node)
+planner_node.next(retriever_node)
+retriever_node.on("continue", planner_node) # Loop back to planner for next iteration
+retriever_node.on("final", final_node)
 
 # Create and run the flow
 flow = Pocketflow::Flow.new(initial_node)
