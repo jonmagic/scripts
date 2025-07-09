@@ -228,8 +228,14 @@ end
 def call_llm(prompt, model = nil)
   check_dependency("llm") # Check only when needed
   model_flag = model ? "-m #{Shellwords.escape(model)}" : ""
-  cmd = "llm #{model_flag} <<< #{Shellwords.escape(prompt)}"
-  run_cmd(cmd)
+
+  # Use a temporary file to avoid "Argument list too long" errors
+  Tempfile.create(["llm_prompt", ".txt"]) do |tmpfile|
+    tmpfile.write(prompt)
+    tmpfile.flush
+    cmd = "llm #{model_flag} < #{Shellwords.escape(tmpfile.path)}"
+    run_cmd(cmd)
+  end
 end
 
 # Public: Extracts conversation metadata from GitHub conversation data.
