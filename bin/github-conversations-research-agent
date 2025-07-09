@@ -30,6 +30,7 @@ require "json"
 require "logger"
 require "open3"
 require "optparse"
+require "set"
 require "tempfile"
 require "shellwords"
 
@@ -338,6 +339,57 @@ def parse_semantic_search_response(llm_response)
     LOG.warn "Error parsing structured search response: #{e.message}, treating as plain text"
     { query: llm_response.strip }
   end
+end
+
+# Public: Extracts GitHub conversation URLs from conversation data.
+#
+# conversation_data - Hash containing conversation data from fetch-github-conversation.
+#
+# Returns an Array of GitHub URL strings matching the pattern:
+#   https://github.com/<owner>/<repo>/(issues|pull|discussions)/<number>
+def extract_github_urls(conversation_data)
+  urls = []
+  github_url_pattern = %r{https://github\.com/[^/\s]+/[^/\s]+/(?:issues|pull|discussions)/\d+}
+  
+  # Helper to extract URLs from text
+  extract_from_text = lambda do |text|
+    return [] unless text.is_a?(String)
+    text.scan(github_url_pattern)
+  end
+  
+  # Extract from main conversation body
+  main_conversation = conversation_data["issue"] || conversation_data["pr"] || conversation_data["discussion"]
+  if main_conversation && main_conversation["body"]
+    urls.concat(extract_from_text.call(main_conversation["body"]))
+  end
+  
+  # Extract from comments
+  if conversation_data["comments"].is_a?(Array)
+    conversation_data["comments"].each do |comment|
+      if comment["body"]
+        urls.concat(extract_from_text.call(comment["body"]))
+      end
+    end
+  end
+  
+  # Extract from PR-specific data
+  if conversation_data["reviews"].is_a?(Array)
+    conversation_data["reviews"].each do |review|
+      if review["body"]
+        urls.concat(extract_from_text.call(review["body"]))
+      end
+    end
+  end
+  
+  if conversation_data["review_comments"].is_a?(Array)
+    conversation_data["review_comments"].each do |review_comment|
+      if review_comment["body"]
+        urls.concat(extract_from_text.call(review_comment["body"]))
+      end
+    end
+  end
+  
+  urls.uniq
 end
 
 # Public: Extracts qualifiers from user query and builds semantic search query.
@@ -972,6 +1024,91 @@ class RetrieverNode < Pocketflow::Node
     end
 
     LOG.info "Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
+    
+    # === Link Expansion Pass ===
+    # After successful fetch, scan body & comments for GitHub URLs to expand the research.
+    # This implements a depth guard to avoid infinite loops and limits expansion to 20 URLs
+    # per iteration to prevent overwhelming the system. The rationale is that conversations
+    # often reference related issues/PRs that provide additional context for research.
+    
+    # Initialize seen URLs tracking to avoid cycles
+    @shared[:seen_urls] ||= Set.new
+    
+    # Collect all URLs from fetched conversations
+    linked_urls = []
+    new_enriched.each do |enriched_result|
+      conversation_data = enriched_result[:conversation]
+      github_urls = extract_github_urls(conversation_data)
+      linked_urls.concat(github_urls)
+    end
+    
+    # Track all fetched URLs as seen (including the ones we just fetched)
+    new_enriched.each do |enriched_result|
+      @shared[:seen_urls].add(enriched_result[:url])
+    end
+    
+    # Also track previously fetched URLs to avoid refetching
+    existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
+    existing_urls.each { |url| @shared[:seen_urls].add(url) }
+    
+    # Filter out URLs we've already seen
+    unseen_linked_urls = linked_urls.uniq.reject { |url| @shared[:seen_urls].include?(url) }
+    
+    # Limit to 20 URLs per iteration to prevent overwhelming the system
+    unseen_linked_urls = unseen_linked_urls.first(20)
+    
+    if unseen_linked_urls.any?
+      LOG.info "+#{unseen_linked_urls.length} linked conversations discovered"
+      LOG.debug do
+        "Discovered linked URLs:\n" + unseen_linked_urls.map.with_index { |url, i| "  #{i + 1}. #{url}" }.join("\n")
+      end
+      
+      # Fetch detailed data for linked conversations
+      linked_enriched = []
+      unseen_linked_urls.each_with_index do |url, i|
+        LOG.debug "Fetching linked conversation #{i + 1}/#{unseen_linked_urls.length}: #{url}"
+        
+        begin
+          fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation"
+          if @shared[:cache_path]
+            fetch_cmd += " --cache-path #{Shellwords.escape(@shared[:cache_path])}"
+          end
+          fetch_cmd += " #{Shellwords.escape(url)}"
+          
+          conversation_json = run_cmd(fetch_cmd)
+          conversation_data = JSON.parse(conversation_json)
+          
+          metadata = extract_conversation_metadata(conversation_data)
+          
+          LOG.debug do
+            "✓ Successfully fetched linked: #{metadata[:title]}\n" \
+            "  Type: #{metadata[:type]}\n" \
+            "  State: #{metadata[:state]}\n" \
+            "  Comments: #{metadata[:comments_count]}"
+          end
+          
+          # Mark this URL as seen
+          @shared[:seen_urls].add(url)
+          
+          linked_enriched << {
+            url: url,
+            summary: "", # No summary available from link expansion
+            score: 0.0,  # No relevance score from link expansion
+            conversation: conversation_data
+          }
+        rescue => e
+          LOG.warn "Failed to fetch linked conversation #{url}: #{e.message}"
+          # Still mark as seen to avoid retrying
+          @shared[:seen_urls].add(url)
+        end
+      end
+      
+      LOG.info "Successfully fetched #{linked_enriched.length}/#{unseen_linked_urls.length} linked conversations"
+      
+      # Combine original results with linked results
+      new_enriched.concat(linked_enriched)
+    end
+    
     new_enriched
   end
 
