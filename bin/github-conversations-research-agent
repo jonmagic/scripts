@@ -80,14 +80,21 @@ You are an expert researcher mining GitHub conversations for actionable evidence
 Identify the most significant information gaps and craft one new natural-language search query (≤ 2 sentences, no operators) that will surface GitHub conversations to close them.
 Gaps may include — but are not limited to — missing implementation details, unclear project status (Implemented · In Progress · Proposed · Abandoned · Unknown), decisions, trade-offs, or alternative solutions.
 
-When project “doneness” is uncertain, bias your query toward finding evidence that proves or disproves implementation (e.g. merged PRs, release notes, deployment comments). Otherwise, target whatever gap is highest-impact.
+When project "doneness" is uncertain, bias your query toward finding evidence that proves or disproves implementation (e.g. merged PRs, release notes, deployment comments). Otherwise, target whatever gap is highest-impact.
 
-Return **only** the search query text.
+If helpful, suggest date ranges in ISO8601 format (created_after / created_before) to narrow the search.
+If appropriate, specify ordering (order_by: created_at asc|desc).
+
+Return a JSON object with:
+- "query": the natural language search query
+- "created_after": ISO date string (optional)
+- "created_before": ISO date string (optional)
+- "order_by": "created_at asc" or "created_at desc" (optional)
 
 *Examples*
-- “Confirmation that client-side rate limiting is merged and live”
-- “Alternative approaches to large-table migration performance”
-- “Discussion showing why the authentication redesign was abandoned”
+{"query": "Confirmation that client-side rate limiting is merged and live", "created_after": "2024-01-01"}
+{"query": "Alternative approaches to large-table migration performance", "order_by": "created_at desc"}
+{"query": "Discussion showing why the authentication redesign was abandoned"}
 PROMPT
 
 QUERY_BUILDER_PROMPT = <<~PROMPT
@@ -284,6 +291,85 @@ def extract_conversation_metadata(conversation_data)
     state: conversation_obj["state"] || "unknown",
     comments_count: conversation_data["comments"]&.length || 0
   }
+end
+
+# Public: Parses structured semantic search response from LLM.
+#
+# llm_response - The String response from LLM (should be JSON).
+#
+# Returns a Hash with parsed query and filter information.
+def parse_semantic_search_response(llm_response)
+  begin
+    # Try to parse as JSON first
+    parsed = JSON.parse(llm_response.strip)
+
+    # Validate required fields
+    unless parsed["query"] && parsed["query"].is_a?(String)
+      raise "Missing or invalid 'query' field"
+    end
+
+    result = { query: parsed["query"] }
+
+    # Add optional fields if present
+    if parsed["created_after"]
+      result[:created_after] = parsed["created_after"]
+    end
+
+    if parsed["created_before"]
+      result[:created_before] = parsed["created_before"]
+    end
+
+    if parsed["order_by"]
+      # Parse order_by into field and direction
+      parts = parsed["order_by"].split(" ", 2)
+      if parts.length == 2 && parts[0] == "created_at" && %w[asc desc].include?(parts[1])
+        result[:order_by] = { key: parts[0], direction: parts[1] }
+      else
+        LOG.warn "Invalid order_by format: #{parsed['order_by']}, ignoring"
+      end
+    end
+
+    result
+  rescue JSON::ParserError
+    # Fallback: treat as plain text query for backwards compatibility
+    LOG.warn "LLM response was not valid JSON, treating as plain text query"
+    { query: llm_response.strip }
+  rescue => e
+    LOG.warn "Error parsing structured search response: #{e.message}, treating as plain text"
+    { query: llm_response.strip }
+  end
+end
+
+# Public: Builds semantic search command with filters and ordering.
+#
+# search_plan - Hash containing query and optional filters.
+# script_dir - String path to the script directory.
+# collection - String collection name.
+# top_k - Integer limit for results.
+#
+# Returns the command string.
+def build_semantic_search_command(search_plan, script_dir, collection, top_k)
+  cmd = "#{script_dir}/semantic-search-github-conversations"
+  cmd += " #{Shellwords.escape(search_plan[:semantic_query] || search_plan[:query])}"
+  cmd += " --collection #{Shellwords.escape(collection)}"
+  cmd += " --limit #{top_k}"
+  cmd += " --format json"
+
+  # Add date filters if present
+  if search_plan[:created_after]
+    cmd += " --filter created_after:#{Shellwords.escape(search_plan[:created_after])}"
+  end
+  if search_plan[:created_before]
+    cmd += " --filter created_before:#{Shellwords.escape(search_plan[:created_before])}"
+  end
+
+  # Note: order_by is not yet supported by semantic-search-github-conversations
+  # TODO: Add order_by support to the underlying script
+  if search_plan[:order_by]
+    LOG.warn "Order by requested but not yet supported by semantic-search-github-conversations: #{search_plan[:order_by]}"
+  end
+
+  cmd
 end
 
 # === Pocketflow Nodes ===
@@ -514,8 +600,9 @@ class PlannerNode < Pocketflow::Node
       })
 
       LOG.debug "Calling LLM to generate natural language search query..."
-      refined_query = call_llm(prompt, shared[:models][:fast])
-      LOG.info "Generated natural language query: \"#{refined_query}\""
+      llm_response = call_llm(prompt, shared[:models][:fast])
+      refined_query = parse_semantic_search_response(llm_response)
+      LOG.info "Generated semantic search plan: #{refined_query}"
     elsif search_mode == "keyword"
       # Generate GitHub search string for keyword search
       prompt = fill_template(QUERY_BUILDER_PROMPT, {
@@ -541,8 +628,9 @@ class PlannerNode < Pocketflow::Node
       })
 
       LOG.debug "Calling LLM to generate semantic query..."
-      semantic_query = call_llm(semantic_prompt, shared[:models][:fast])
-      LOG.info "Generated semantic query: \"#{semantic_query}\""
+      semantic_response = call_llm(semantic_prompt, shared[:models][:fast])
+      semantic_query = parse_semantic_search_response(semantic_response)
+      LOG.info "Generated semantic query: #{semantic_query}"
 
       LOG.debug "Calling LLM to generate keyword query..."
       keyword_query = call_llm(keyword_prompt, shared[:models][:fast])
@@ -581,28 +669,60 @@ class PlannerNode < Pocketflow::Node
 
     # For hybrid mode, we already have both queries
     if tool == :hybrid
+      semantic_query = current_query[:semantic]
       search_plan = {
         tool: :hybrid,
-        semantic_query: current_query[:semantic],
+        semantic_query: semantic_query[:query],
         keyword_query: current_query[:keyword]
       }
+
+      # Add semantic search filters if present
+      if semantic_query[:created_after]
+        search_plan[:created_after] = semantic_query[:created_after]
+      end
+      if semantic_query[:created_before]
+        search_plan[:created_before] = semantic_query[:created_before]
+      end
+      if semantic_query[:order_by]
+        search_plan[:order_by] = semantic_query[:order_by]
+      end
     else
-      # Extract potential qualifiers from the query for logging/UI
-      qualifiers = {}
-      if current_query.is_a?(String)
-        %w[repo author label is created updated].each do |op|
-          if current_query =~ /\b#{op}:(\S+)/i
-            qualifiers[op.to_sym] = $1
-            LOG.debug "Extracted #{op} qualifier: #{qualifiers[op.to_sym]}"
+      # Handle both structured and legacy query formats
+      if current_query.is_a?(Hash) && current_query[:query]
+        # New structured format
+        search_plan = {
+          tool: tool,
+          query: current_query[:query]
+        }
+
+        # Add filters if present
+        if current_query[:created_after]
+          search_plan[:created_after] = current_query[:created_after]
+        end
+        if current_query[:created_before]
+          search_plan[:created_before] = current_query[:created_before]
+        end
+        if current_query[:order_by]
+          search_plan[:order_by] = current_query[:order_by]
+        end
+      else
+        # Legacy string format - extract potential qualifiers from the query for logging/UI
+        qualifiers = {}
+        if current_query.is_a?(String)
+          %w[repo author label is created updated].each do |op|
+            if current_query =~ /\b#{op}:(\S+)/i
+              qualifiers[op.to_sym] = $1
+              LOG.debug "Extracted #{op} qualifier: #{qualifiers[op.to_sym]}"
+            end
           end
         end
-      end
 
-      search_plan = {
-        tool: tool,
-        query: current_query,
-        qualifiers: qualifiers
-      }
+        search_plan = {
+          tool: tool,
+          query: current_query,
+          qualifiers: qualifiers
+        }
+      end
     end
 
     LOG.debug "Search plan: #{search_plan}"
@@ -658,7 +778,7 @@ class RetrieverNode < Pocketflow::Node
       keyword_query = search_plan[:keyword_query]
 
       LOG.info "Running semantic search with query: \"#{semantic_query}\""
-      semantic_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(semantic_query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+      semantic_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
       LOG.debug "Semantic search command: #{semantic_cmd}"
 
       semantic_output = run_cmd(semantic_cmd)
@@ -726,7 +846,7 @@ class RetrieverNode < Pocketflow::Node
     else
       query = search_plan[:query]
       LOG.info "Running semantic search with query..."
-      search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+      search_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
       LOG.debug "Search command: #{search_cmd}"
 
       search_output = run_cmd(search_cmd)
@@ -801,7 +921,7 @@ class RetrieverNode < Pocketflow::Node
     return "final" if prep_res.nil? # No search plan
 
     # Store the query used for memory tracking
-    query = prep_res[:query]
+    query = prep_res[:semantic_query] || prep_res[:query] || "Unknown query"
 
     # Add new findings to memory
     shared[:memory][:hits].concat(exec_res)

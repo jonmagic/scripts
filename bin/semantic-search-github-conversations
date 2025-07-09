@@ -152,7 +152,7 @@ def build_qdrant_filters(filter_args)
   if must_not_conditions.any?
     filter["must_not"] = must_not_conditions
   end
-  puts "Filter conditions: #{filter}"
+  $stderr.puts "Filter conditions: #{filter}" if filter.any?
   filter
 end
 
