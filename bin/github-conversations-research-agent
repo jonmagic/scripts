@@ -90,6 +90,22 @@ Return **only** the search query text.
 - “Discussion showing why the authentication redesign was abandoned”
 PROMPT
 
+QUERY_BUILDER_PROMPT = <<~PROMPT
+You are GitHub's top search power-user.
+
+## Research question
+{{question}}
+
+## Known clarifications
+{{clarifications}}
+
+Return **one** GitHub search string that is likely to surface the best discussions.
+• ≤ 5 terms/operators.
+• Prefer operators when obvious (`repo:`, `author:`, `label:`, `is:`, `created:`, `updated:`).
+• Otherwise fall back to 2-3 strong keywords.
+Output only the search string, nothing else.
+PROMPT
+
 FINAL_REPORT_PROMPT = <<~PROMPT
 You are an expert analyst preparing a comprehensive Markdown report.
 
@@ -444,16 +460,16 @@ CONTENT
   end
 end
 
-# PlannerNode: Decides whether to use semantic search or keyword search based on query heuristics.
+# PlannerNode: Uses LLM to generate GitHub search queries based on the research question and clarifications.
 #
-# This node implements tool-choice heuristics to determine the most appropriate search strategy:
-# - Keyword search: When query contains GitHub search operators (repo:, author:, label:, is:, created:, updated:)
-# - Semantic search: For natural language queries without specific operators
+# This node uses the QUERY_BUILDER_PROMPT to generate targeted GitHub search strings:
+# - Takes the research question and clarifications as input
+# - Generates GitHub-compatible search strings with operators when appropriate
+# - Defaults to keyword search since LLM produces GitHub search strings
+# - Supports --search-mode flag to override default behavior
 #
-# Future extensions may include:
-# - LLM-based tool selection for complex queries
-# - Hybrid search combining both approaches
-# - Dynamic threshold adjustment based on result quality
+# The generated queries are optimized for GitHub's search syntax and can include
+# operators like repo:, author:, label:, is:, created:, updated: when beneficial.
 class PlannerNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
@@ -469,7 +485,13 @@ class PlannerNode < Pocketflow::Node
       return nil
     end
 
-    # Generate refined query using the same logic as DeepResearchNode
+    # For the first iteration, we need to generate a different query than what was used in InitialResearchNode
+    # to avoid duplicates. We'll use the appropriate search mode logic.
+    if depth == 0
+      LOG.info "First iteration - generating query different from initial research"
+    end
+
+    # Generate query based on search mode
     findings_summary = shared[:memory][:notes].join("\n\n")
     previous_queries = shared[:memory][:search_queries].join(", ")
 
@@ -480,18 +502,57 @@ class PlannerNode < Pocketflow::Node
       "  Research notes accumulated: #{shared[:memory][:notes].length}"
     end
 
-    prompt = fill_template(DEEP_RESEARCH_PROMPT, {
-      question: shared[:question],
-      clarifications: shared[:clarifications] || "",
-      findings_summary: findings_summary,
-      previous_queries: previous_queries
-    })
+    search_mode = shared[:search_mode]
 
-    LOG.debug "Calling LLM to generate refined search query..."
-    # Use fast model for search query generation - this is light reasoning to refine search based on context
-    refined_query = call_llm(prompt, shared[:models][:fast])
+    if search_mode == "semantic"
+      # Generate natural language query for semantic search
+      prompt = fill_template(DEEP_RESEARCH_PROMPT, {
+        question: shared[:question],
+        clarifications: shared[:clarifications] || "",
+        findings_summary: findings_summary,
+        previous_queries: previous_queries
+      })
 
-    LOG.info "Generated refined search query: \"#{refined_query}\""
+      LOG.debug "Calling LLM to generate natural language search query..."
+      refined_query = call_llm(prompt, shared[:models][:fast])
+      LOG.info "Generated natural language query: \"#{refined_query}\""
+    elsif search_mode == "keyword"
+      # Generate GitHub search string for keyword search
+      prompt = fill_template(QUERY_BUILDER_PROMPT, {
+        question: shared[:question],
+        clarifications: shared[:clarifications] || ""
+      })
+
+      LOG.debug "Calling LLM to generate GitHub search query..."
+      refined_query = call_llm(prompt, shared[:models][:fast])
+      LOG.info "Generated GitHub search query: \"#{refined_query}\""
+    else
+      # Hybrid mode: generate both semantic and keyword queries
+      semantic_prompt = fill_template(DEEP_RESEARCH_PROMPT, {
+        question: shared[:question],
+        clarifications: shared[:clarifications] || "",
+        findings_summary: findings_summary,
+        previous_queries: previous_queries
+      })
+
+      keyword_prompt = fill_template(QUERY_BUILDER_PROMPT, {
+        question: shared[:question],
+        clarifications: shared[:clarifications] || ""
+      })
+
+      LOG.debug "Calling LLM to generate semantic query..."
+      semantic_query = call_llm(semantic_prompt, shared[:models][:fast])
+      LOG.info "Generated semantic query: \"#{semantic_query}\""
+
+      LOG.debug "Calling LLM to generate keyword query..."
+      keyword_query = call_llm(keyword_prompt, shared[:models][:fast])
+      LOG.info "Generated keyword query: \"#{keyword_query}\""
+
+      refined_query = {
+        semantic: semantic_query,
+        keyword: keyword_query
+      }
+    end
 
     refined_query
   end
@@ -502,8 +563,9 @@ class PlannerNode < Pocketflow::Node
     # Store the current query for use by RetrieverNode
     @shared[:current_query] = current_query
 
-    # Check if search mode is overridden
+    # Determine search mode based on flags and iteration depth
     search_mode = @shared[:search_mode]
+    depth = @shared[:current_depth] || 0
 
     if search_mode == "semantic"
       tool = :semantic
@@ -512,40 +574,36 @@ class PlannerNode < Pocketflow::Node
       tool = :keyword
       LOG.info "Forced keyword search mode via --search-mode flag"
     else
-      # Use heuristic-based tool selection (hybrid mode)
-      # Regex pattern matches GitHub search operators: repo:, author:, label:, is:, created:, updated:
-      keyword_pattern = /\b(repo|author|label|is|created|updated):/i
+      # Hybrid mode: do both semantic and keyword searches
+      tool = :hybrid
+      LOG.info "Hybrid mode: Running both semantic and keyword searches"
+    end
 
-      if keyword_pattern.match?(current_query)
-        tool = :keyword
-        LOG.info "Selected keyword search based on GitHub operators in query"
-        LOG.debug "Detected operators: #{current_query.scan(keyword_pattern).flatten.join(', ')}"
-      else
-        tool = :semantic
-        LOG.info "Selected semantic search for natural language query"
+    # For hybrid mode, we already have both queries
+    if tool == :hybrid
+      search_plan = {
+        tool: :hybrid,
+        semantic_query: current_query[:semantic],
+        keyword_query: current_query[:keyword]
+      }
+    else
+      # Extract potential qualifiers from the query for logging/UI
+      qualifiers = {}
+      if current_query.is_a?(String)
+        %w[repo author label is created updated].each do |op|
+          if current_query =~ /\b#{op}:(\S+)/i
+            qualifiers[op.to_sym] = $1
+            LOG.debug "Extracted #{op} qualifier: #{qualifiers[op.to_sym]}"
+          end
+        end
       end
+
+      search_plan = {
+        tool: tool,
+        query: current_query,
+        qualifiers: qualifiers
+      }
     end
-
-    # Extract potential qualifiers from the query
-    qualifiers = {}
-
-    # Extract repo qualifier if present
-    if current_query.match(/\brepo:(\S+)/i)
-      qualifiers[:repo] = $1
-      LOG.debug "Extracted repo qualifier: #{qualifiers[:repo]}"
-    end
-
-    # Extract author qualifier if present
-    if current_query.match(/\bauthor:(\S+)/i)
-      qualifiers[:author] = $1
-      LOG.debug "Extracted author qualifier: #{qualifiers[:author]}"
-    end
-
-    search_plan = {
-      tool: tool,
-      query: current_query,
-      qualifiers: qualifiers
-    }
 
     LOG.debug "Search plan: #{search_plan}"
 
@@ -589,14 +647,60 @@ class RetrieverNode < Pocketflow::Node
   def exec(search_plan)
     return [] if search_plan.nil?
 
-    query = search_plan[:query]
     tool = search_plan[:tool]
     collection = @shared[:collection]
     top_k = @shared[:top_k]
     script_dir = @shared[:script_dir]
 
-    # Switch between semantic and keyword search based on tool selection
-    if tool == :keyword
+    if tool == :hybrid
+      # Run both semantic and keyword searches and combine results
+      semantic_query = search_plan[:semantic_query]
+      keyword_query = search_plan[:keyword_query]
+
+      LOG.info "Running semantic search with query: \"#{semantic_query}\""
+      semantic_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(semantic_query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+      LOG.debug "Semantic search command: #{semantic_cmd}"
+
+      semantic_output = run_cmd(semantic_cmd)
+      semantic_results = JSON.parse(semantic_output)
+      LOG.debug "Raw semantic search results: #{semantic_results.length} conversations found"
+
+      LOG.info "Running keyword search with query: \"#{keyword_query}\""
+      keyword_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(keyword_query)}"
+      LOG.debug "Keyword search command: #{keyword_cmd}"
+
+      keyword_output = run_cmd(keyword_cmd)
+      keyword_results = JSON.parse(keyword_output)
+      LOG.debug "Raw keyword search results: #{keyword_results.length} conversations found"
+
+      # Convert keyword search results to match semantic search format
+      keyword_normalized = keyword_results.map do |result|
+        {
+          "payload" => {
+            "url" => result["url"],
+            "summary" => "" # No summary available from keyword search
+          },
+          "score" => 0.0 # No relevance score from keyword search
+        }
+      end
+
+      # Combine results and deduplicate by URL
+      combined_results = semantic_results + keyword_normalized
+      url_to_result = {}
+      combined_results.each do |result|
+        url = result.dig("payload", "url")
+        next unless url
+        # Keep the semantic result if we have both (it has score and summary)
+        if !url_to_result[url] || result["score"] > 0
+          url_to_result[url] = result
+        end
+      end
+
+      search_results = url_to_result.values.first(top_k)
+      LOG.info "Combined #{semantic_results.length} semantic + #{keyword_results.length} keyword results into #{search_results.length} unique conversations"
+
+    elsif tool == :keyword
+      query = search_plan[:query]
       LOG.info "Running keyword search with query..."
       search_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(query)}"
       LOG.debug "Search command: #{search_cmd}"
@@ -607,8 +711,6 @@ class RetrieverNode < Pocketflow::Node
       LOG.debug "Raw keyword search results: #{keyword_results.length} conversations found"
 
       # Convert keyword search results to match semantic search format
-      # keyword results have: [{"updated_at": "...", "url": "..."}]
-      # semantic results have: [{"payload": {"url": "...", "summary": "..."}, "score": 0.0}]
       search_results = keyword_results.map do |result|
         {
           "payload" => {
@@ -622,6 +724,7 @@ class RetrieverNode < Pocketflow::Node
       # Limit results to top_k
       search_results = search_results.first(top_k)
     else
+      query = search_plan[:query]
       LOG.info "Running semantic search with query..."
       search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
       LOG.debug "Search command: #{search_cmd}"
@@ -777,9 +880,9 @@ class FinalReportNode < Pocketflow::Node
   end
 
   def post(shared, prep_res, exec_res)
-    LOG.info "=== FINAL REPORT ==="
+    LOG.info "=== FINAL REPORT ===\n\n"
     puts exec_res
-    LOG.info "✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}"
+    LOG.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}"
 
     "default"
   end
