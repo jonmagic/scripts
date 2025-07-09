@@ -495,17 +495,28 @@ class PlannerNode < Pocketflow::Node
     # Store the current query for use by RetrieverNode
     @shared[:current_query] = current_query
 
-    # Apply tool-choice heuristics
-    # Regex pattern matches GitHub search operators: repo:, author:, label:, is:, created:, updated:
-    keyword_pattern = /\b(repo|author|label|is|created|updated):/i
-
-    if keyword_pattern.match?(current_query)
-      tool = :keyword
-      LOG.info "Selected keyword search based on GitHub operators in query"
-      LOG.debug "Detected operators: #{current_query.scan(keyword_pattern).flatten.join(', ')}"
-    else
+    # Check if search mode is overridden
+    search_mode = @shared[:search_mode]
+    
+    if search_mode == "semantic"
       tool = :semantic
-      LOG.info "Selected semantic search for natural language query"
+      LOG.info "Forced semantic search mode via --search-mode flag"
+    elsif search_mode == "keyword"
+      tool = :keyword
+      LOG.info "Forced keyword search mode via --search-mode flag"
+    else
+      # Use heuristic-based tool selection (hybrid mode)
+      # Regex pattern matches GitHub search operators: repo:, author:, label:, is:, created:, updated:
+      keyword_pattern = /\b(repo|author|label|is|created|updated):/i
+
+      if keyword_pattern.match?(current_query)
+        tool = :keyword
+        LOG.info "Selected keyword search based on GitHub operators in query"
+        LOG.debug "Detected operators: #{current_query.scan(keyword_pattern).flatten.join(', ')}"
+      else
+        tool = :semantic
+        LOG.info "Selected semantic search for natural language query"
+      end
     end
 
     # Extract potential qualifiers from the query
@@ -577,22 +588,42 @@ class RetrieverNode < Pocketflow::Node
     top_k = @shared[:top_k]
     script_dir = @shared[:script_dir]
 
-    # TODO: For now, hard-code to semantic search to keep compile green
-    # Future iteration will implement keyword search based on tool selection
+    # Switch between semantic and keyword search based on tool selection
     if tool == :keyword
-      LOG.info "TODO: Keyword search not yet implemented, falling back to semantic search"
+      LOG.info "Running keyword search with query..."
+      search_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(query)}"
+      LOG.debug "Search command: #{search_cmd}"
+
+      search_output = run_cmd(search_cmd)
+      keyword_results = JSON.parse(search_output)
+
+      LOG.debug "Raw keyword search results: #{keyword_results.length} conversations found"
+
+      # Convert keyword search results to match semantic search format
+      # keyword results have: [{"updated_at": "...", "url": "..."}]
+      # semantic results have: [{"payload": {"url": "...", "summary": "..."}, "score": 0.0}]
+      search_results = keyword_results.map do |result|
+        {
+          "payload" => {
+            "url" => result["url"],
+            "summary" => "" # No summary available from keyword search
+          },
+          "score" => 0.0 # No relevance score from keyword search
+        }
+      end
+
+      # Limit results to top_k
+      search_results = search_results.first(top_k)
+    else
+      LOG.info "Running semantic search with query..."
+      search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
+      LOG.debug "Search command: #{search_cmd}"
+
+      search_output = run_cmd(search_cmd)
+      search_results = JSON.parse(search_output)
+
+      LOG.debug "Raw semantic search results: #{search_results.length} conversations found"
     end
-
-    LOG.info "Running semantic search with query..."
-
-    # Run semantic search 
-    search_cmd = "#{script_dir}/semantic-search-github-conversations #{Shellwords.escape(query)} --collection #{Shellwords.escape(collection)} --limit #{top_k} --format json"
-    LOG.debug "Search command: #{search_cmd}"
-
-    search_output = run_cmd(search_cmd)
-    search_results = JSON.parse(search_output)
-
-    LOG.debug "Raw search results: #{search_results.length} conversations found"
 
     # Deduplicate URLs we already have
     existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
@@ -753,7 +784,8 @@ options = {
   clarifying_qa: nil,
   verbose: false,
   fast_model: ENV["FAST_LLM_MODEL"],
-  reasoning_model: ENV["LLM_MODEL"]
+  reasoning_model: ENV["LLM_MODEL"],
+  search_mode: "hybrid"
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -789,6 +821,10 @@ opt_parser = OptionParser.new do |opts|
 
   opts.on("--reasoning-model MODEL", "Reasoning LLM model for complex analysis (default: ENV['LLM_MODEL'] or llm default)") do |v|
     options[:reasoning_model] = v
+  end
+
+  opts.on("--search-mode MODE", ["semantic", "keyword", "hybrid"], "Override search mode (semantic, keyword, or hybrid - default: hybrid)") do |v|
+    options[:search_mode] = v
   end
 
   opts.on("-h", "--help", "Show this help message") do
@@ -832,6 +868,7 @@ shared = {
   editor_file: options[:editor_file],
   clarifying_qa: options[:clarifying_qa],
   verbose: options[:verbose],
+  search_mode: options[:search_mode],
   models: {
     fast: options[:fast_model],
     reasoning: options[:reasoning_model]
