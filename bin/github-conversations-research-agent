@@ -15,6 +15,7 @@
 #   -n, --limit N           Max results per search (default: 10)
 #   --max-depth N           Max deep-research passes (default: 10)
 #   --editor-file PATH      Use fixed file instead of Tempfile
+#   --clarifying-qa PATH    Path to file with clarifying Q&A to bypass interactive step
 #   --verbose               Show debug logs
 #   --fast-model MODEL      Fast LLM model for light reasoning
 #   --reasoning-model MODEL Reasoning LLM model for complex analysis
@@ -391,6 +392,22 @@ class AskClarifyingNode < Pocketflow::Node
   end
 
   def exec(clarifying_questions)
+    # Check if we have a pre-written Q&A file to bypass interactive step
+    if @shared[:clarifying_qa]
+      LOG.info "Using pre-written clarifying Q&A from file: #{@shared[:clarifying_qa]}"
+
+      unless File.exist?(@shared[:clarifying_qa])
+        abort "Error: Clarifying Q&A file not found: #{@shared[:clarifying_qa]}"
+      end
+
+      edited_content = File.read(@shared[:clarifying_qa])
+      LOG.debug do
+        "Pre-written clarifications:\n#{'=' * 60}\n#{edited_content}\n#{'=' * 60}"
+      end
+
+      return edited_content
+    end
+
     LOG.info "Opening editor for user to answer clarifying questions..."
 
     # Prepare editor content
@@ -633,6 +650,7 @@ options = {
   limit: 10,
   max_depth: 10,
   editor_file: nil,
+  clarifying_qa: nil,
   verbose: false,
   fast_model: ENV["FAST_LLM_MODEL"],
   reasoning_model: ENV["LLM_MODEL"]
@@ -655,6 +673,10 @@ opt_parser = OptionParser.new do |opts|
 
   opts.on("--editor-file PATH", "Use fixed file instead of Tempfile") do |v|
     options[:editor_file] = v
+  end
+
+  opts.on("--clarifying-qa PATH", "Path to file with clarifying Q&A to bypass interactive step") do |v|
+    options[:clarifying_qa] = v
   end
 
   opts.on("--verbose", "Show debug logs") do
@@ -708,6 +730,7 @@ shared = {
   top_k: options[:limit],
   max_depth: options[:max_depth],
   editor_file: options[:editor_file],
+  clarifying_qa: options[:clarifying_qa],
   verbose: options[:verbose],
   models: {
     fast: options[:fast_model],
