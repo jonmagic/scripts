@@ -221,6 +221,7 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `-n, --limit N`: Max results per search (default: 10)
 - `--max-depth N`: Max deep-research passes (default: 10)
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
+- `--search-mode MODE`: Override search mode (semantic, keyword, or hybrid - default: hybrid)
 - `--verbose`: Show debug logs and progress information
 - `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: $FAST_LLM_MODEL environment variable or llm default)
 - `--reasoning-model MODEL`: Reasoning LLM model for complex analysis like final report generation (default: $LLM_MODEL environment variable or llm default)
@@ -231,6 +232,14 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - Qdrant server running with indexed GitHub conversation summaries
 - `EDITOR` environment variable set (e.g., `export EDITOR=nano`)
 - `bin/semantic-search-github-conversations` and `bin/fetch-github-conversation` available
+
+**Search Modes:**
+
+- **hybrid** (default): Automatically selects search strategy based on query analysis
+  - Uses keyword search for queries with GitHub operators (repo:, author:, label:, is:, created:, updated:)
+  - Uses semantic search for natural language queries
+- **semantic**: Forces semantic search using vector similarity against indexed conversation summaries
+- **keyword**: Forces keyword search using GitHub's search API via `bin/search-github-conversations`
 
 **Workflow:**
 
@@ -263,6 +272,18 @@ Dual-model research with gpt-4.1 for fast reasoning and o3 for complex analysis:
 
 ```sh
 ./path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3
+```
+
+Force keyword search for repository-specific queries:
+
+```sh
+./path/to/github-conversations-research-agent "repo:owner/repo is:issue label:bug" --collection github-conversations --search-mode keyword
+```
+
+Force semantic search even with GitHub operators:
+
+```sh
+./path/to/github-conversations-research-agent "repo:owner/repo authentication issues" --collection github-conversations --search-mode semantic
 ```
 
 **Sample Output:**
