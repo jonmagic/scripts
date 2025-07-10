@@ -350,19 +350,19 @@ end
 def extract_github_urls(conversation_data)
   urls = []
   github_url_pattern = %r{https://github\.com/[^/\s]+/[^/\s]+/(?:issues|pull|discussions)/\d+}
-  
+
   # Helper to extract URLs from text
   extract_from_text = lambda do |text|
     return [] unless text.is_a?(String)
     text.scan(github_url_pattern)
   end
-  
+
   # Extract from main conversation body
   main_conversation = conversation_data["issue"] || conversation_data["pr"] || conversation_data["discussion"]
   if main_conversation && main_conversation["body"]
     urls.concat(extract_from_text.call(main_conversation["body"]))
   end
-  
+
   # Extract from comments
   if conversation_data["comments"].is_a?(Array)
     conversation_data["comments"].each do |comment|
@@ -371,7 +371,7 @@ def extract_github_urls(conversation_data)
       end
     end
   end
-  
+
   # Extract from PR-specific data
   if conversation_data["reviews"].is_a?(Array)
     conversation_data["reviews"].each do |review|
@@ -380,7 +380,7 @@ def extract_github_urls(conversation_data)
       end
     end
   end
-  
+
   if conversation_data["review_comments"].is_a?(Array)
     conversation_data["review_comments"].each do |review_comment|
       if review_comment["body"]
@@ -388,7 +388,7 @@ def extract_github_urls(conversation_data)
       end
     end
   end
-  
+
   urls.uniq
 end
 
@@ -404,21 +404,110 @@ def build_semantic_query(user_query)
   # Extract repo: and author: qualifiers
   repo_match = user_query.match(/\brepo:(\S+)/)
   author_match = user_query.match(/\bauthor:(\S+)/)
-  
+
   # Strip qualifiers from the query for semantic search
   semantic_query = user_query.dup
   semantic_query.gsub!(/\brepo:\S+/, '')
   semantic_query.gsub!(/\bauthor:\S+/, '')
   semantic_query.strip!
-  
+
   # Clean up extra whitespace
   semantic_query.gsub!(/\s+/, ' ')
-  
+
   {
     semantic_query: semantic_query,
     repo_filter: repo_match ? repo_match[1] : nil,
     author_filter: author_match ? author_match[1] : nil
   }
+end
+
+# Public: Fetches existing summary from Qdrant using URL filter.
+#
+# url - The String GitHub conversation URL to search for.
+# collection - The String Qdrant collection name.
+# script_dir - The String path to the script directory.
+#
+# Returns the summary String if found, nil otherwise.
+def fetch_summary_from_qdrant(url, collection, script_dir)
+  begin
+    search_cmd = "#{script_dir}/semantic-search-github-conversations"
+    search_cmd += " --collection #{Shellwords.escape(collection)}"
+    search_cmd += " --filter url:#{Shellwords.escape(url)}"
+    search_cmd += " --limit 1"
+    search_cmd += " --format json"
+
+    LOG.debug "Fetching existing summary from Qdrant: #{search_cmd}"
+
+    search_output = run_cmd(search_cmd)
+    search_results = JSON.parse(search_output)
+
+    if search_results.any?
+      summary = search_results.first.dig("payload", "summary")
+      LOG.debug "Found existing summary in Qdrant for #{url}: #{summary&.slice(0, 100)}..."
+      return summary
+    else
+      LOG.debug "No existing summary found in Qdrant for #{url}"
+      return nil
+    end
+  rescue => e
+    LOG.warn "Failed to fetch summary from Qdrant for #{url}: #{e.message}"
+    return nil
+  end
+end
+
+# Public: Generates a new summary for a GitHub conversation.
+#
+# url - The String GitHub conversation URL.
+# executive_summary_prompt_path - The String path to the prompt file.
+# cache_path - The String cache path (optional).
+#
+# Returns the generated summary String, or empty string on failure.
+def generate_new_summary(url, executive_summary_prompt_path, cache_path = nil)
+  begin
+    LOG.debug "Generating new summary for #{url}"
+
+    summarize_cmd = "#{File.dirname(__FILE__)}/summarize-github-conversation"
+    summarize_cmd += " --executive-summary-prompt-path #{Shellwords.escape(executive_summary_prompt_path)}"
+
+    if cache_path
+      summarize_cmd += " --cache-path #{Shellwords.escape(cache_path)}"
+    end
+
+    summarize_cmd += " #{Shellwords.escape(url)}"
+
+    LOG.debug "Running summary generation: #{summarize_cmd}"
+
+    summary = run_cmd(summarize_cmd)
+    LOG.debug "Generated summary for #{url}: #{summary&.slice(0, 100)}..."
+
+    return summary.strip
+  rescue => e
+    LOG.warn "Failed to generate summary for #{url}: #{e.message}"
+    return ""
+  end
+end
+
+# Public: Gets or generates a summary for a GitHub conversation.
+#
+# url - The String GitHub conversation URL.
+# collection - The String Qdrant collection name.
+# script_dir - The String path to the script directory.
+# executive_summary_prompt_path - The String path to the prompt file (optional).
+# cache_path - The String cache path (optional).
+#
+# Returns the summary String (empty string if generation fails or is disabled).
+def get_or_generate_summary(url, collection, script_dir, executive_summary_prompt_path = nil, cache_path = nil)
+  # Step 1: Try to fetch existing summary from Qdrant
+  existing_summary = fetch_summary_from_qdrant(url, collection, script_dir)
+  return existing_summary if existing_summary && !existing_summary.empty?
+
+  # Step 2: Generate new summary if prompt path is provided
+  if executive_summary_prompt_path
+    return generate_new_summary(url, executive_summary_prompt_path, cache_path)
+  else
+    LOG.warn "No executive summary prompt path provided - skipping summary generation for #{url}"
+    return ""
+  end
 end
 
 # Public: Builds semantic search command with filters and ordering.
@@ -449,7 +538,7 @@ def build_semantic_search_command(search_plan, script_dir, collection, top_k)
     cmd += " --filter repo:#{Shellwords.escape(search_plan[:repo_filter])}"
   end
 
-  # Add author filter if present  
+  # Add author filter if present
   if search_plan[:author_filter]
     cmd += " --filter author:#{Shellwords.escape(search_plan[:author_filter])}"
   end
@@ -486,7 +575,7 @@ class InitialResearchNode < Pocketflow::Node
 
     # Build search plan with extracted qualifiers
     search_plan = semantic_query_info.merge({ query: question })
-    
+
     # Run semantic search with qualifier extraction
     search_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
     LOG.debug "Running search command: #{search_cmd}"
@@ -898,7 +987,7 @@ class RetrieverNode < Pocketflow::Node
         {
           "payload" => {
             "url" => result["url"],
-            "summary" => "" # No summary available from keyword search
+            "summary" => "" # No summary available from keyword search - will be enriched later
           },
           "score" => 0.0 # No relevance score from keyword search
         }
@@ -919,6 +1008,27 @@ class RetrieverNode < Pocketflow::Node
       search_results = url_to_result.values.first(top_k)
       LOG.info "Combined #{semantic_results.length} semantic + #{keyword_results.length} keyword results into #{search_results.length} unique conversations"
 
+      # Enrich keyword search results with summaries
+      search_results.each do |result|
+        url = result.dig("payload", "url")
+        next unless url
+
+        # Skip if already has a summary (from semantic search)
+        next if result.dig("payload", "summary") && !result.dig("payload", "summary").empty?
+
+        # Get or generate summary for this conversation
+        summary = get_or_generate_summary(
+          url,
+          collection,
+          script_dir,
+          @shared[:executive_summary_prompt_path],
+          @shared[:cache_path]
+        )
+
+        # Update the result with the enriched summary
+        result["payload"]["summary"] = summary
+      end
+
     elsif tool == :keyword
       query = search_plan[:query]
       LOG.info "Running keyword search with query..."
@@ -935,7 +1045,7 @@ class RetrieverNode < Pocketflow::Node
         {
           "payload" => {
             "url" => result["url"],
-            "summary" => "" # No summary available from keyword search
+            "summary" => "" # No summary available from keyword search - will be enriched later
           },
           "score" => 0.0 # No relevance score from keyword search
         }
@@ -943,19 +1053,37 @@ class RetrieverNode < Pocketflow::Node
 
       # Limit results to top_k
       search_results = search_results.first(top_k)
+
+      # Enrich keyword search results with summaries
+      search_results.each do |result|
+        url = result.dig("payload", "url")
+        next unless url
+
+        # Get or generate summary for this conversation
+        summary = get_or_generate_summary(
+          url,
+          collection,
+          script_dir,
+          @shared[:executive_summary_prompt_path],
+          @shared[:cache_path]
+        )
+
+        # Update the result with the enriched summary
+        result["payload"]["summary"] = summary
+      end
     else
       query = search_plan[:query]
       LOG.info "Running semantic search with query..."
-      
+
       # Extract qualifiers from the query for semantic search
       semantic_query_info = build_semantic_query(query)
       LOG.debug "Extracted semantic query: '#{semantic_query_info[:semantic_query]}'"
       LOG.debug "Extracted repo filter: #{semantic_query_info[:repo_filter]}" if semantic_query_info[:repo_filter]
       LOG.debug "Extracted author filter: #{semantic_query_info[:author_filter]}" if semantic_query_info[:author_filter]
-      
+
       # Build updated search plan with extracted qualifiers
       updated_search_plan = search_plan.merge(semantic_query_info)
-      
+
       search_cmd = build_semantic_search_command(updated_search_plan, script_dir, collection, top_k)
       LOG.debug "Search command: #{search_cmd}"
 
@@ -1024,16 +1152,37 @@ class RetrieverNode < Pocketflow::Node
     end
 
     LOG.info "Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
-    
+
+    # Enrich any conversations that still have empty summaries (from keyword searches)
+    new_enriched.each do |enriched_result|
+      url = enriched_result[:url]
+      next unless url
+
+      # Skip if already has a summary (from semantic search)
+      next if enriched_result[:summary] && !enriched_result[:summary].empty?
+
+      # Get or generate summary for this conversation
+      summary = get_or_generate_summary(
+        url,
+        @shared[:collection],
+        @shared[:script_dir],
+        @shared[:executive_summary_prompt_path],
+        @shared[:cache_path]
+      )
+
+      # Update the result with the enriched summary
+      enriched_result[:summary] = summary
+    end
+
     # === Link Expansion Pass ===
     # After successful fetch, scan body & comments for GitHub URLs to expand the research.
     # This implements a depth guard to avoid infinite loops and limits expansion to 20 URLs
     # per iteration to prevent overwhelming the system. The rationale is that conversations
     # often reference related issues/PRs that provide additional context for research.
-    
+
     # Initialize seen URLs tracking to avoid cycles
     @shared[:seen_urls] ||= Set.new
-    
+
     # Collect all URLs from fetched conversations
     linked_urls = []
     new_enriched.each do |enriched_result|
@@ -1041,58 +1190,58 @@ class RetrieverNode < Pocketflow::Node
       github_urls = extract_github_urls(conversation_data)
       linked_urls.concat(github_urls)
     end
-    
+
     # Track all fetched URLs as seen (including the ones we just fetched)
     new_enriched.each do |enriched_result|
       @shared[:seen_urls].add(enriched_result[:url])
     end
-    
+
     # Also track previously fetched URLs to avoid refetching
     existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
     existing_urls.each { |url| @shared[:seen_urls].add(url) }
-    
+
     # Filter out URLs we've already seen
     unseen_linked_urls = linked_urls.uniq.reject { |url| @shared[:seen_urls].include?(url) }
-    
+
     # Limit to 20 URLs per iteration to prevent overwhelming the system
     unseen_linked_urls = unseen_linked_urls.first(20)
-    
+
     if unseen_linked_urls.any?
       LOG.info "+#{unseen_linked_urls.length} linked conversations discovered"
       LOG.debug do
         "Discovered linked URLs:\n" + unseen_linked_urls.map.with_index { |url, i| "  #{i + 1}. #{url}" }.join("\n")
       end
-      
+
       # Fetch detailed data for linked conversations
       linked_enriched = []
       unseen_linked_urls.each_with_index do |url, i|
         LOG.debug "Fetching linked conversation #{i + 1}/#{unseen_linked_urls.length}: #{url}"
-        
+
         begin
           fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation"
           if @shared[:cache_path]
             fetch_cmd += " --cache-path #{Shellwords.escape(@shared[:cache_path])}"
           end
           fetch_cmd += " #{Shellwords.escape(url)}"
-          
+
           conversation_json = run_cmd(fetch_cmd)
           conversation_data = JSON.parse(conversation_json)
-          
+
           metadata = extract_conversation_metadata(conversation_data)
-          
+
           LOG.debug do
             "✓ Successfully fetched linked: #{metadata[:title]}\n" \
             "  Type: #{metadata[:type]}\n" \
             "  State: #{metadata[:state]}\n" \
             "  Comments: #{metadata[:comments_count]}"
           end
-          
+
           # Mark this URL as seen
           @shared[:seen_urls].add(url)
-          
+
           linked_enriched << {
             url: url,
-            summary: "", # No summary available from link expansion
+            summary: "", # No summary available from link expansion - will be enriched later
             score: 0.0,  # No relevance score from link expansion
             conversation: conversation_data
           }
@@ -1102,13 +1251,31 @@ class RetrieverNode < Pocketflow::Node
           @shared[:seen_urls].add(url)
         end
       end
-      
+
       LOG.info "Successfully fetched #{linked_enriched.length}/#{unseen_linked_urls.length} linked conversations"
-      
+
+      # Enrich linked conversations with summaries
+      linked_enriched.each do |enriched_result|
+        url = enriched_result[:url]
+        next unless url
+
+        # Get or generate summary for this linked conversation
+        summary = get_or_generate_summary(
+          url,
+          @shared[:collection],
+          @shared[:script_dir],
+          @shared[:executive_summary_prompt_path],
+          @shared[:cache_path]
+        )
+
+        # Update the result with the enriched summary
+        enriched_result[:summary] = summary
+      end
+
       # Combine original results with linked results
       new_enriched.concat(linked_enriched)
     end
-    
+
     new_enriched
   end
 
@@ -1216,7 +1383,8 @@ options = {
   fast_model: ENV["FAST_LLM_MODEL"],
   reasoning_model: ENV["LLM_MODEL"],
   search_mode: "hybrid",
-  cache_path: nil
+  cache_path: nil,
+  executive_summary_prompt_path: nil
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -1262,6 +1430,10 @@ opt_parser = OptionParser.new do |opts|
     options[:cache_path] = v
   end
 
+  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file for executive summary generation") do |v|
+    options[:executive_summary_prompt_path] = v
+  end
+
   opts.on("-h", "--help", "Show this help message") do
     puts opts
     exit
@@ -1305,6 +1477,7 @@ shared = {
   verbose: options[:verbose],
   search_mode: options[:search_mode],
   cache_path: options[:cache_path],
+  executive_summary_prompt_path: options[:executive_summary_prompt_path],
   models: {
     fast: options[:fast_model],
     reasoning: options[:reasoning_model]
