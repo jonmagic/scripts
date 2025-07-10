@@ -3,12 +3,12 @@
 # bin/github-conversations-research-agent: Multi-turn research agent for GitHub conversations
 #
 # This script implements a research workflow that:
-# 1. Takes a natural language question and performs initial semantic search
+# 1. Takes a natural language request and performs initial semantic search
 # 2. Generates clarifying questions and opens them in $EDITOR
 # 3. Performs iterative deep research based on clarifications
 # 4. Produces a final well-formatted Markdown report citing all sources
 #
-# Usage: github-conversations-research-agent "QUESTION" --collection COLLECTION [options]
+# Usage: github-conversations-research-agent "REQUEST" --collection COLLECTION [options]
 #
 # Options:
 #   --collection NAME        Qdrant collection name (required)
@@ -44,29 +44,24 @@ LOG.level = Logger::INFO  # Default level, will be changed to DEBUG with --verbo
 # === Embedded Prompt Templates ===
 
 ASK_CLARIFY_PROMPT = <<~PROMPT
-You are an expert analyst reviewing a research question and initial findings from GitHub conversations.
+You are an expert analyst reviewing a research request and initial findings from GitHub conversations.
 
-## Research Question
-{{question}}
+## Research Request
+{{request}}
 
 ## Initial Findings Summary
 {{initial_findings}}
 
-Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the issue and provide more targeted research. When creating your questions, focus on uncovering:
-
-1. Objectives: What is the ultimate goal or outcome the requester wants?
-2. Scope: What boundaries or constraints should the research stay within?
-3. Data & Format: What data sources, formats, or tools are expected or preferred?
-4. Success Criteria: What does a “good” answer look like to the requester?
+Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the intent of the request, bridge gaps in context to better refine the search (e.g. specifying the search space like a github organization or repository), and understand the expected output format (executive summary, detailed analysis, ADR, etc). If any of these areas are covered in their request or initial findings, do not ask about them.
 
 Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number. The instructions should ask for inline answers to these questions.
 PROMPT
 
-DEEP_RESEARCH_PROMPT = <<~PROMPT
+SEMANTIC_RESEARCH_PROMPT = <<~PROMPT
 You are an expert researcher mining GitHub conversations for actionable evidence.
 
-## Original Question
-{{question}}
+## Original Request
+{{request}}
 
 ## User Clarifications
 {{clarifications}}
@@ -98,11 +93,11 @@ Return a JSON object with:
 {"query": "Discussion showing why the authentication redesign was abandoned"}
 PROMPT
 
-QUERY_BUILDER_PROMPT = <<~PROMPT
+GITHUB_SEARCH_PROMPT = <<~PROMPT
 You are GitHub's top search power-user.
 
-## Research question
-{{question}}
+## Research request
+{{request}}
 
 ## Known clarifications
 {{clarifications}}
@@ -117,8 +112,8 @@ PROMPT
 FINAL_REPORT_PROMPT = <<~PROMPT
 You are an expert analyst preparing a comprehensive Markdown report.
 
-## Original Question
-{{question}}
+## Original Request
+{{request}}
 
 ## User Clarifications
 {{clarifications}}
@@ -126,24 +121,7 @@ You are an expert analyst preparing a comprehensive Markdown report.
 ## Research Corpus
 {{all_findings}}
 
-Produce a well-structured Markdown report with these sections:
-
-### 1. Executive Summary
-Brief answer (≤ 5 sentences).
-
-### 2. Key Findings
-Bullet list of the main insights. For each item include:
-- **Topic** (one line)
-- **Implementation Status** in parentheses — *Implemented · In Progress · Proposed · Abandoned · Unknown*
-- One-sentence takeaway
-- GitHub URL
-
-### 3. Detailed Analysis
-Expanded discussion grouped by logical themes (performance, security, etc.).
-For any feature or project, explicitly state its **Implementation Status** and quote a short evidence snippet (commit SHA, “Merged” event, comment, etc.) supporting that status.
-
-### 4. Sources
-Plain list of every GitHub conversation URL cited.
+Produce a well-structured Markdown report based on the initial request and clarifications and cite relevant sources used to support your findings.
 
 **Style guide**
 
@@ -165,6 +143,18 @@ PROMPT
 def run_cmd(cmd)
   stdout, stderr, status = Open3.capture3(cmd)
   abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+  stdout.strip
+end
+
+# Public: Runs a shell command and returns stdout. Raises exception if the command fails.
+#
+# cmd - The shell command to run (String).
+#
+# Returns the standard output of the command (String).
+# Raises RuntimeError if the command fails.
+def run_cmd_safe(cmd)
+  stdout, stderr, status = Open3.capture3(cmd)
+  raise "Command failed: #{cmd}\n#{stderr}" unless status.success?
   stdout.strip
 end
 
@@ -389,6 +379,7 @@ def extract_github_urls(conversation_data)
     end
   end
 
+  # Return unique set
   urls.uniq
 end
 
@@ -435,6 +426,7 @@ def fetch_summary_from_qdrant(url, collection, script_dir)
     search_cmd += " --filter url:#{Shellwords.escape(url)}"
     search_cmd += " --limit 1"
     search_cmd += " --format json"
+    search_cmd += " #{Shellwords.escape('*')}"  # Dummy query since we're filtering by URL
 
     LOG.debug "Fetching existing summary from Qdrant: #{search_cmd}"
 
@@ -558,23 +550,23 @@ class InitialResearchNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context for use in exec
     LOG.info "=== INITIAL RESEARCH PHASE ==="
-    LOG.info "Starting initial semantic search for: #{shared[:question]}"
+    LOG.info "Starting initial semantic search for: #{shared[:request]}"
     LOG.debug "Collection: #{shared[:collection]}"
     LOG.debug "Max results: #{shared[:top_k]}"
 
-    question = shared[:question]
+    request = shared[:request]
     collection = shared[:collection]
     top_k = shared[:top_k]
     script_dir = shared[:script_dir]
 
-    # Extract qualifiers from the initial question for semantic search
-    semantic_query_info = build_semantic_query(question)
+    # Extract qualifiers from the initial request for semantic search
+    semantic_query_info = build_semantic_query(request)
     LOG.debug "Extracted semantic query: '#{semantic_query_info[:semantic_query]}'"
     LOG.debug "Extracted repo filter: #{semantic_query_info[:repo_filter]}" if semantic_query_info[:repo_filter]
     LOG.debug "Extracted author filter: #{semantic_query_info[:author_filter]}" if semantic_query_info[:author_filter]
 
     # Build search plan with extracted qualifiers
-    search_plan = semantic_query_info.merge({ query: question })
+    search_plan = semantic_query_info.merge({ query: request })
 
     # Run semantic search with qualifier extraction
     search_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
@@ -616,7 +608,7 @@ class InitialResearchNode < Pocketflow::Node
         end
         fetch_cmd += " #{Shellwords.escape(url)}"
 
-        conversation_json = run_cmd(fetch_cmd)
+        conversation_json = run_cmd_safe(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
         metadata = extract_conversation_metadata(conversation_data)
@@ -647,7 +639,7 @@ class InitialResearchNode < Pocketflow::Node
     shared[:memory] ||= {}
     shared[:memory][:hits] = exec_res
     shared[:memory][:notes] = []
-    shared[:memory][:search_queries] = [shared[:question]]
+    shared[:memory][:search_queries] = [shared[:request]]
 
     LOG.info "✓ Initial research complete: #{exec_res.length} conversations collected"
     LOG.debug "Moving to clarifying questions phase..."
@@ -673,7 +665,7 @@ class AskClarifyingNode < Pocketflow::Node
 
     # Fill template and call LLM
     prompt = fill_template(ASK_CLARIFY_PROMPT, {
-      question: shared[:question],
+      request: shared[:request],
       initial_findings: initial_findings
     })
 
@@ -735,10 +727,10 @@ CONTENT
   end
 end
 
-# PlannerNode: Uses LLM to generate GitHub search queries based on the research question and clarifications.
+# PlannerNode: Uses LLM to generate GitHub search queries based on the research request and clarifications.
 #
-# This node uses the QUERY_BUILDER_PROMPT to generate targeted GitHub search strings:
-# - Takes the research question and clarifications as input
+# This node uses the GITHUB_SEARCH_PROMPT to generate targeted GitHub search strings:
+# - Takes the research request and clarifications as input
 # - Generates GitHub-compatible search strings with operators when appropriate
 # - Defaults to keyword search since LLM produces GitHub search strings
 # - Supports --search-mode flag to override default behavior
@@ -781,8 +773,8 @@ class PlannerNode < Pocketflow::Node
 
     if search_mode == "semantic"
       # Generate natural language query for semantic search
-      prompt = fill_template(DEEP_RESEARCH_PROMPT, {
-        question: shared[:question],
+      prompt = fill_template(SEMANTIC_RESEARCH_PROMPT, {
+        request: shared[:request],
         clarifications: shared[:clarifications] || "",
         findings_summary: findings_summary,
         previous_queries: previous_queries
@@ -794,8 +786,8 @@ class PlannerNode < Pocketflow::Node
       LOG.info "Generated semantic search plan: #{refined_query}"
     elsif search_mode == "keyword"
       # Generate GitHub search string for keyword search
-      prompt = fill_template(QUERY_BUILDER_PROMPT, {
-        question: shared[:question],
+      prompt = fill_template(GITHUB_SEARCH_PROMPT, {
+        request: shared[:request],
         clarifications: shared[:clarifications] || ""
       })
 
@@ -804,15 +796,15 @@ class PlannerNode < Pocketflow::Node
       LOG.info "Generated GitHub search query: \"#{refined_query}\""
     else
       # Hybrid mode: generate both semantic and keyword queries
-      semantic_prompt = fill_template(DEEP_RESEARCH_PROMPT, {
-        question: shared[:question],
+      semantic_prompt = fill_template(SEMANTIC_RESEARCH_PROMPT, {
+        request: shared[:request],
         clarifications: shared[:clarifications] || "",
         findings_summary: findings_summary,
         previous_queries: previous_queries
       })
 
-      keyword_prompt = fill_template(QUERY_BUILDER_PROMPT, {
-        question: shared[:question],
+      keyword_prompt = fill_template(GITHUB_SEARCH_PROMPT, {
+        request: shared[:request],
         clarifications: shared[:clarifications] || ""
       })
 
@@ -1128,7 +1120,7 @@ class RetrieverNode < Pocketflow::Node
         end
         fetch_cmd += " #{Shellwords.escape(url)}"
 
-        conversation_json = run_cmd(fetch_cmd)
+        conversation_json = run_cmd_safe(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
         metadata = extract_conversation_metadata(conversation_data)
@@ -1224,7 +1216,7 @@ class RetrieverNode < Pocketflow::Node
           end
           fetch_cmd += " #{Shellwords.escape(url)}"
 
-          conversation_json = run_cmd(fetch_cmd)
+          conversation_json = run_cmd_safe(fetch_cmd)
           conversation_data = JSON.parse(conversation_json)
 
           metadata = extract_conversation_metadata(conversation_data)
@@ -1347,7 +1339,7 @@ class FinalReportNode < Pocketflow::Node
     end.join("\n\n---\n\n")
 
     prompt = fill_template(FINAL_REPORT_PROMPT, {
-      question: shared[:question],
+      request: shared[:request],
       clarifications: shared[:clarifications] || "None provided",
       all_findings: all_findings
     })
@@ -1388,7 +1380,7 @@ options = {
 }
 
 opt_parser = OptionParser.new do |opts|
-  opts.banner = "Usage: #{File.basename($0)} \"QUESTION\" --collection COLLECTION [options]"
+  opts.banner = "Usage: #{File.basename($0)} \"REQUEST\" --collection COLLECTION [options]"
 
   opts.on("--collection NAME", "Qdrant collection name (required)") do |v|
     options[:collection] = v
@@ -1454,10 +1446,10 @@ if ARGV.empty?
   abort opt_parser.to_s
 end
 
-question = ARGV.join(" ")
+request = ARGV.join(" ")
 
-if question.strip.empty?
-  abort "Error: Empty question provided"
+if request.strip.empty?
+  abort "Error: Empty request provided"
 end
 
 unless options[:collection]
@@ -1468,7 +1460,7 @@ end
 script_dir = File.expand_path(File.dirname(__FILE__))
 
 shared = {
-  question: question,
+  request: request,
   collection: options[:collection],
   top_k: options[:limit],
   max_depth: options[:max_depth],
@@ -1504,7 +1496,7 @@ flow = Pocketflow::Flow.new(initial_node)
 
 begin
   LOG.info "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
-  LOG.info "Question: #{question}"
+  LOG.info "Request: #{request}"
   LOG.info "Collection: #{options[:collection]}"
   LOG.info "Max results per search: #{options[:limit]}"
   LOG.info "Max deep research iterations: #{options[:max_depth]}"
