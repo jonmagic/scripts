@@ -1168,7 +1168,7 @@ class RetrieverNode < Pocketflow::Node
 
     # === Link Expansion Pass ===
     # After successful fetch, scan body & comments for GitHub URLs to expand the research.
-    # This implements a depth guard to avoid infinite loops and limits expansion to 20 URLs
+    # This implements a depth guard to avoid infinite loops and limits expansion to 5 URLs
     # per iteration to prevent overwhelming the system. The rationale is that conversations
     # often reference related issues/PRs that provide additional context for research.
 
@@ -1195,8 +1195,8 @@ class RetrieverNode < Pocketflow::Node
     # Filter out URLs we've already seen
     unseen_linked_urls = linked_urls.uniq.reject { |url| @shared[:seen_urls].include?(url) }
 
-    # Limit to 20 URLs per iteration to prevent overwhelming the system
-    unseen_linked_urls = unseen_linked_urls.first(20)
+    # Limit to 5 URLs per iteration to prevent overwhelming the system
+    unseen_linked_urls = unseen_linked_urls.first(5)
 
     if unseen_linked_urls.any?
       LOG.info "+#{unseen_linked_urls.length} linked conversations discovered"
