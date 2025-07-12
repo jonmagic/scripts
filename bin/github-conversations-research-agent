@@ -86,6 +86,8 @@ Return a JSON object with:
 - "created_before": ISO date string (optional)
 - "order_by": "created_at asc" or "created_at desc" (optional)
 
+Do not use markdown code blocks - return only the raw JSON object.
+
 *Examples*
 {"query": "Confirmation that client-side rate limiting is merged and live", "created_after": "2024-01-01"}
 {"query": "Alternative approaches to large-table migration performance", "order_by": "created_at desc"}
@@ -129,6 +131,93 @@ Produce a well-structured Markdown report based on the initial request and clari
 * If status cannot be confirmed, mark it **Unknown** and note what evidence is missing.
 
 Return only the Markdown document—no extra commentary.
+PROMPT
+
+EXTRACT_CLAIMS_PROMPT = <<~PROMPT
+You are an expert fact-checker analyzing a research report for factual claims.
+
+## Research Report
+{{report}}
+
+Extract all distinct factual claims from this report. Focus on specific, verifiable statements about:
+- Implementation status (what is implemented, merged, released, etc.)
+- Technical decisions and their outcomes
+- Project statuses and timelines
+- Performance metrics and measurements
+- Process changes and their effects
+
+**Requirements:**
+- Each claim should be one clear, specific sentence
+- Focus on claims that can be verified against GitHub conversations
+- Ignore general opinions, recommendations, or conclusions
+- Limit to the first 25 most important claims
+- Do not include claims about what the report itself says or concludes
+
+Return your response as a JSON array of strings, where each string is one factual claim. Do not use markdown code blocks - return only the raw JSON array.
+
+Example format:
+["Feature X was merged in PR #123", "Performance improved by 50% after the optimization", "The team decided to use library Y instead of Z"]
+PROMPT
+
+VERIFY_CLAIM_PROMPT = <<~PROMPT
+You are an expert fact-checker determining if evidence supports a specific claim.
+
+## Claim to Verify
+{{claim}}
+
+## Evidence from GitHub Conversations
+{{evidence}}
+
+Does the evidence clearly support this claim? Consider:
+- Is there direct evidence that confirms the claim?
+- Do the conversations provide sufficient detail to verify the claim?
+- Are there any contradictions in the evidence?
+
+Respond with exactly one word:
+- "SUPPORTED" if the evidence clearly supports the claim
+- "UNSUPPORTED" if the evidence does not support the claim or is insufficient
+
+Do not provide any explanation - just the single word response.
+PROMPT
+
+UNSUPPORTED_CLAIMS_RESEARCH_PROMPT = <<~PROMPT
+You are an expert researcher focusing on verifying unsupported claims from a research report.
+
+## Original Request
+{{request}}
+
+## User Clarifications
+{{clarifications}}
+
+## Unsupported Claims That Need Verification
+{{unsupported_claims}}
+
+## Previous Findings
+{{findings_summary}}
+
+## Prior Search Queries
+{{previous_queries}}
+
+**Goal**
+Generate a natural-language search query (≤ 2 sentences, no operators) specifically designed to find GitHub conversations that could provide evidence for the unsupported claims listed above.
+
+Focus on finding conversations that contain:
+- Direct evidence of implementation status
+- Specific technical decisions and outcomes
+- Concrete examples or proof points
+- Timeline information and project updates
+
+Return a JSON object with:
+- "query": the natural language search query targeting evidence for unsupported claims
+- "created_after": ISO date string (optional)
+- "created_before": ISO date string (optional)
+- "order_by": "created_at asc" or "created_at desc" (optional)
+
+Do not use markdown code blocks - return only the raw JSON object.
+
+*Examples*
+{"query": "Evidence of feature implementation and merge status with specific PR numbers", "order_by": "created_at desc"}
+{"query": "Performance measurement results and optimization outcomes with concrete metrics"}
 PROMPT
 
 # === Helper Methods ===
@@ -376,8 +465,18 @@ end
 # Returns a Hash with parsed query and filter information.
 def parse_semantic_search_response(llm_response)
   begin
+    # Clean up response - remove markdown code blocks if present
+    cleaned_response = llm_response.strip
+    if cleaned_response.start_with?('```json')
+      # Remove ```json from start and ``` from end
+      cleaned_response = cleaned_response.gsub(/\A```json\s*/, '').gsub(/\s*```\z/, '')
+    elsif cleaned_response.start_with?('```')
+      # Remove generic ``` from start and end
+      cleaned_response = cleaned_response.gsub(/\A```\s*/, '').gsub(/\s*```\z/, '')
+    end
+
     # Try to parse as JSON first
-    parsed = JSON.parse(llm_response.strip)
+    parsed = JSON.parse(cleaned_response.strip)
 
     # Validate required fields
     unless parsed["query"] && parsed["query"].is_a?(String)
@@ -409,9 +508,11 @@ def parse_semantic_search_response(llm_response)
   rescue JSON::ParserError
     # Fallback: treat as plain text query for backwards compatibility
     LOG.warn "LLM response was not valid JSON, treating as plain text query"
+    LOG.debug "Raw LLM response: #{llm_response.inspect}"
     { query: llm_response.strip }
   rescue => e
     LOG.warn "Error parsing structured search response: #{e.message}, treating as plain text"
+    LOG.debug "Raw LLM response: #{llm_response.inspect}" if llm_response
     { query: llm_response.strip }
   end
 end
@@ -576,6 +677,133 @@ def build_semantic_search_command(search_plan, script_dir, collection, top_k)
   end
 
   cmd
+end
+
+# Public: Extracts factual claims from a research report using LLM.
+#
+# report - The String research report to extract claims from.
+# model - Optional String model name for LLM.
+#
+# Returns an Array of claim strings.
+def extract_claims_from_report(report, model = nil)
+  prompt = fill_template(EXTRACT_CLAIMS_PROMPT, { report: report })
+
+  LOG.debug "Calling LLM to extract claims from report..."
+
+  begin
+    llm_response = call_llm(prompt, model)
+
+    # Clean up response - remove markdown code blocks if present
+    cleaned_response = llm_response.strip
+    if cleaned_response.start_with?('```json')
+      # Remove ```json from start and ``` from end
+      cleaned_response = cleaned_response.gsub(/\A```json\s*/, '').gsub(/\s*```\z/, '')
+    elsif cleaned_response.start_with?('```')
+      # Remove generic ``` from start and end
+      cleaned_response = cleaned_response.gsub(/\A```\s*/, '').gsub(/\s*```\z/, '')
+    end
+
+    claims = JSON.parse(cleaned_response.strip)
+
+    unless claims.is_a?(Array)
+      LOG.warn "LLM response was not an array, treating as empty claims list"
+      return []
+    end
+
+    # Limit to first 25 claims as specified
+    claims = claims.first(25)
+
+    LOG.debug "Extracted #{claims.length} claims from report"
+    claims
+  rescue JSON::ParserError => e
+    LOG.warn "Failed to parse claims as JSON: #{e.message}"
+    LOG.debug "Raw LLM response: #{llm_response.inspect}" if llm_response
+    []
+  rescue => e
+    LOG.warn "Failed to extract claims: #{e.message}"
+    []
+  end
+end
+
+# Public: Verifies a single claim against evidence using LLM.
+#
+# claim - The String claim to verify.
+# evidence - The String evidence to check against.
+# model - Optional String model name for LLM.
+#
+# Returns true if claim is supported, false otherwise.
+def verify_claim_against_evidence(claim, evidence, model = nil)
+  prompt = fill_template(VERIFY_CLAIM_PROMPT, {
+    claim: claim,
+    evidence: evidence
+  })
+
+  LOG.debug "Verifying claim: #{claim.slice(0, 100)}..."
+
+  begin
+    llm_response = call_llm(prompt, model)
+    result = llm_response.strip.upcase
+
+    case result
+    when "SUPPORTED"
+      LOG.debug "✓ Claim supported"
+      true
+    when "UNSUPPORTED"
+      LOG.debug "✗ Claim unsupported"
+      false
+    else
+      LOG.warn "Unexpected verification response: '#{result}', treating as unsupported"
+      false
+    end
+  rescue => e
+    LOG.warn "Failed to verify claim: #{e.message}, treating as unsupported"
+    false
+  end
+end
+
+# Public: Searches for evidence related to a specific claim.
+#
+# claim - The String claim to search evidence for.
+# collection - The String Qdrant collection name.
+# script_dir - The String path to the script directory.
+# limit - The Integer number of results to return (default: 3).
+#
+# Returns a String containing the summarized evidence.
+def search_evidence_for_claim(claim, collection, script_dir, limit = 3)
+  search_cmd = "#{script_dir}/semantic-search-github-conversations"
+  search_cmd += " #{Shellwords.escape(claim)}"
+  search_cmd += " --collection #{Shellwords.escape(collection)}"
+  search_cmd += " --limit #{limit}"
+  search_cmd += " --format json"
+
+  LOG.debug "Searching for evidence: #{search_cmd}"
+
+  begin
+    search_output = run_cmd_safe(search_cmd)
+    search_results = JSON.parse(search_output)
+
+    if search_results.empty?
+      LOG.debug "No evidence found for claim"
+      return "No relevant evidence found."
+    end
+
+    # Extract summaries from search results
+    evidence_parts = search_results.map.with_index do |result, i|
+      url = result.dig("payload", "url") || "Unknown URL"
+      summary = result.dig("payload", "summary") || "No summary available"
+      score = result["score"] || 0.0
+
+      "Evidence #{i + 1} (Score: #{score.round(3)}):\nSource: #{url}\nSummary: #{summary}"
+    end
+
+    evidence = evidence_parts.join("\n\n---\n\n")
+    LOG.debug "Found #{search_results.length} pieces of evidence for claim"
+
+    evidence
+  rescue => e
+    LOG.warn "Failed to search for evidence: #{e.message}"
+    "Error retrieving evidence: #{e.message}"
+  end
 end
 
 # === Pocketflow Nodes ===
@@ -778,6 +1006,35 @@ class PlannerNode < Pocketflow::Node
     max_depth = shared[:max_depth]
 
     LOG.info "=== PLANNING PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
+
+    # Check if we have unsupported claims to research
+    if shared[:unsupported_claims] && shared[:unsupported_claims].any?
+      LOG.info "Focusing search on gathering evidence for #{shared[:unsupported_claims].length} unsupported claims"
+
+      # Use special prompt for unsupported claims research
+      unsupported_claims_list = shared[:unsupported_claims].map.with_index do |claim, i|
+        "#{i + 1}. #{claim}"
+      end.join("\n")
+
+      findings_summary = shared[:memory][:notes].join("\n\n")
+      previous_queries = shared[:memory][:search_queries].join(", ")
+
+      prompt = fill_template(UNSUPPORTED_CLAIMS_RESEARCH_PROMPT, {
+        request: shared[:request],
+        clarifications: shared[:clarifications] || "",
+        unsupported_claims: unsupported_claims_list,
+        findings_summary: findings_summary,
+        previous_queries: previous_queries
+      })
+
+      LOG.debug "Calling LLM to generate search query for unsupported claims..."
+      llm_response = call_llm(prompt, shared[:models][:fast])
+      refined_query = parse_semantic_search_response(llm_response)
+      LOG.info "Generated claim verification search plan: #{refined_query}"
+
+      return refined_query
+    end
+
     LOG.info "Determining search strategy based on query analysis..."
 
     # Check if we've reached max depth
@@ -882,26 +1139,57 @@ class PlannerNode < Pocketflow::Node
       LOG.info "Hybrid mode: Running both semantic and keyword searches"
     end
 
-    # For hybrid mode, we already have both queries
+    # For hybrid mode, we need to check if we have separate semantic/keyword queries or a single query
     if tool == :hybrid
-      semantic_query = current_query[:semantic]
-      search_plan = {
-        tool: :hybrid,
-        semantic_query: semantic_query[:query],
-        keyword_query: current_query[:keyword]
-      }
+      # Check if current_query has separate semantic and keyword queries (from normal planning)
+      # or if it's a single query (from unsupported claims research)
+      if current_query.is_a?(Hash) && current_query[:semantic] && current_query[:keyword]
+        # Normal hybrid mode with separate queries
+        semantic_query = current_query[:semantic]
+        search_plan = {
+          tool: :hybrid,
+          semantic_query: semantic_query[:query],
+          keyword_query: current_query[:keyword]
+        }
 
-      # Add semantic search filters if present
-      if semantic_query[:created_after]
-        search_plan[:created_after] = semantic_query[:created_after]
+        # Add semantic search filters if present
+        if semantic_query[:created_after]
+          search_plan[:created_after] = semantic_query[:created_after]
+        end
+        if semantic_query[:created_before]
+          search_plan[:created_before] = semantic_query[:created_before]
+        end
+        if semantic_query[:order_by]
+          search_plan[:order_by] = semantic_query[:order_by]
+        end
+      else
+        # Single query (likely from unsupported claims research) - treat as semantic search
+        LOG.info "Single query provided, treating as semantic search in hybrid mode"
+        tool = :semantic
+
+        # Fall through to semantic search handling below
+        search_plan = {
+          tool: :semantic,
+          query: current_query[:query] || current_query
+        }
+
+        # Add filters if present
+        if current_query.is_a?(Hash)
+          if current_query[:created_after]
+            search_plan[:created_after] = current_query[:created_after]
+          end
+          if current_query[:created_before]
+            search_plan[:created_before] = current_query[:created_before]
+          end
+          if current_query[:order_by]
+            search_plan[:order_by] = current_query[:order_by]
+          end
+        end
       end
-      if semantic_query[:created_before]
-        search_plan[:created_before] = semantic_query[:created_before]
-      end
-      if semantic_query[:order_by]
-        search_plan[:order_by] = semantic_query[:order_by]
-      end
-    else
+    end
+
+    # Handle non-hybrid modes or fall-through from hybrid mode
+    if tool != :hybrid
       # Handle both structured and legacy query formats
       if current_query.is_a?(Hash) && current_query[:query]
         # New structured format
@@ -1240,6 +1528,13 @@ class RetrieverNode < Pocketflow::Node
       "continue" # Go back to planning for next iteration
     else
       LOG.info "Research complete, moving to final report..."
+
+      # Clear unsupported claims if we were researching them (to avoid re-triggering claim verification loop)
+      if shared[:unsupported_claims] && shared[:unsupported_claims].any?
+        LOG.info "Clearing unsupported claims after research attempt"
+        shared[:unsupported_claims] = []
+      end
+
       "final"
     end
   end
@@ -1404,6 +1699,110 @@ class ContextCompactionNode < Pocketflow::Node
   end
 end
 
+class ClaimVerifierNode < Pocketflow::Node
+  def prep(shared)
+    @shared = shared # Store shared context
+    LOG.info "=== CLAIM VERIFICATION PHASE ==="
+
+    # Check if we already have a draft answer to verify
+    unless shared[:draft_answer]
+      LOG.error "No draft answer found for claim verification"
+      return nil
+    end
+
+    LOG.info "Extracting factual claims from draft answer for verification..."
+
+    # Extract claims from the draft answer
+    claims = extract_claims_from_report(shared[:draft_answer], shared[:models][:fast])
+
+    if claims.empty?
+      LOG.info "No factual claims found in draft answer, proceeding to final report"
+      return :no_claims
+    end
+
+    LOG.info "Found #{claims.length} claims to verify"
+    LOG.debug do
+      claims_list = claims.map.with_index { |claim, i| "  #{i + 1}. #{claim}" }.join("\n")
+      "Claims to verify:\n#{claims_list}"
+    end
+
+    claims
+  end
+
+  def exec(claims)
+    return :no_claims if claims == :no_claims || claims.nil?
+
+    LOG.info "Verifying #{claims.length} claims against available evidence..."
+
+    collection = @shared[:collection]
+    script_dir = @shared[:script_dir]
+    fast_model = @shared[:models][:fast]
+
+    supported_claims = []
+    unsupported_claims = []
+
+    claims.each_with_index do |claim, i|
+      LOG.debug "Verifying claim #{i + 1}/#{claims.length}: #{claim.slice(0, 100)}..."
+
+      # Search for evidence related to this claim
+      evidence = search_evidence_for_claim(claim, collection, script_dir, 3)
+
+      # Verify the claim against the evidence
+      is_supported = verify_claim_against_evidence(claim, evidence, fast_model)
+
+      if is_supported
+        supported_claims << claim
+        LOG.debug "✓ Claim #{i + 1} SUPPORTED"
+      else
+        unsupported_claims << claim
+        LOG.debug "✗ Claim #{i + 1} UNSUPPORTED"
+      end
+    end
+
+    LOG.info "Verification complete: #{supported_claims.length} supported, #{unsupported_claims.length} unsupported"
+
+    if unsupported_claims.any?
+      LOG.warn "Found unsupported claims:"
+      unsupported_claims.each_with_index do |claim, i|
+        LOG.warn "  #{i + 1}. #{claim}"
+      end
+    end
+
+    {
+      total_claims: claims.length,
+      supported_claims: supported_claims,
+      unsupported_claims: unsupported_claims
+    }
+  end
+
+  def post(shared, prep_res, exec_res)
+    return "ok" if prep_res.nil? || exec_res == :no_claims
+
+    verification_attempts = shared[:verification_attempts] || 0
+
+    # Store verification results
+    shared[:claim_verification] = exec_res
+    shared[:unsupported_claims] = exec_res[:unsupported_claims]
+
+    if exec_res[:unsupported_claims].empty?
+      LOG.info "✓ All claims verified successfully, proceeding to final report"
+      return "ok"
+    else
+      LOG.warn "Found #{exec_res[:unsupported_claims].length} unsupported claims"
+
+      # Allow only one retry to gather better evidence
+      if verification_attempts < 1
+        shared[:verification_attempts] = verification_attempts + 1
+        LOG.info "Routing back to planner to gather better evidence for unsupported claims (attempt #{verification_attempts + 1}/1)"
+        return "fix"
+      else
+        LOG.warn "Maximum verification attempts reached, proceeding with unsupported claims noted"
+        return "ok"
+      end
+    end
+  end
+end
+
 class FinalReportNode < Pocketflow::Node
   def prep(shared)
     @shared = shared # Store shared context
@@ -1449,7 +1848,12 @@ class FinalReportNode < Pocketflow::Node
   def exec(prompt)
     begin
       # Use reasoning model for final report - this requires complex analysis and synthesis of all gathered data
-      call_llm(prompt, @shared[:models][:reasoning])
+      draft_answer = call_llm(prompt, @shared[:models][:reasoning])
+
+      # Store the draft answer for claim verification
+      @shared[:draft_answer] = draft_answer
+
+      draft_answer
     rescue => e
       if context_too_large_error?(e.message) || rate_limit_error?(e.message)
         if rate_limit_error?(e.message)
@@ -1480,17 +1884,39 @@ class FinalReportNode < Pocketflow::Node
       return "compact"
     end
 
+    # Check if this is the first time generating the report (route to claim verification)
+    unless shared[:claim_verification_completed]
+      LOG.info "Routing to claim verification before final output"
+      shared[:claim_verification_completed] = true
+      return "verify"
+    end
+
+    # Final output with claim verification results
     LOG.info "=== FINAL REPORT ===\n\n"
     puts exec_res
+
+    # Add note about unsupported claims if any
+    if shared[:unsupported_claims] && shared[:unsupported_claims].any?
+      puts "\n\n---\n\n"
+      puts "**Note**: The following #{shared[:unsupported_claims].length} claims could not be fully verified against the available evidence:"
+      shared[:unsupported_claims].each_with_index do |claim, i|
+        puts "#{i + 1}. #{claim}"
+      end
+    end
 
     compaction_note = ""
     if shared[:compaction_attempts] && shared[:compaction_attempts] > 0
       compaction_note = " (after #{shared[:compaction_attempts]} context compaction attempts)"
     end
 
-    LOG.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}#{compaction_note}"
+    verification_note = ""
+    if shared[:claim_verification]
+      verification_note = ", #{shared[:claim_verification][:total_claims]} claims verified (#{shared[:claim_verification][:supported_claims].length} supported, #{shared[:claim_verification][:unsupported_claims].length} unsupported)"
+    end
 
-    "default"
+    LOG.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}#{compaction_note}#{verification_note}"
+
+    nil
   end
 end
 
@@ -1615,6 +2041,7 @@ clarify_node = AskClarifyingNode.new
 planner_node = PlannerNode.new
 retriever_node = RetrieverNode.new
 compaction_node = ContextCompactionNode.new
+claim_verifier_node = ClaimVerifierNode.new
 final_node = FinalReportNode.new
 
 # Link the nodes
@@ -1623,6 +2050,11 @@ clarify_node.next(planner_node)
 planner_node.next(retriever_node)
 retriever_node.on("continue", planner_node) # Loop back to planner for next iteration
 retriever_node.on("final", final_node)
+
+# Add claim verification flow
+final_node.on("verify", claim_verifier_node)  # Route to claim verification after draft report
+claim_verifier_node.on("ok", final_node)     # Continue to final output after verification
+claim_verifier_node.on("fix", planner_node)  # Route back to planner to gather evidence for unsupported claims
 
 # Add compaction handling
 final_node.on("compact", compaction_node)         # Route to compaction when context too large
