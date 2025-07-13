@@ -36,6 +36,10 @@ require "shellwords"
 # Load vendored Pocketflow library
 require_relative "../lib/pocketflow"
 
+# Load GitHub Deep Research Agent modules
+require_relative "../lib/utils"
+require_relative "../lib/github_deep_research_agent/end_node"
+
 # Set up global logger
 LOG = Logger.new($stdout)
 LOG.level = Logger::INFO  # Default level, will be changed to DEBUG with --verbose
@@ -1920,13 +1924,6 @@ class FinalReportNode < Pocketflow::Node
   end
 end
 
-class EndNode < Pocketflow::Node
-  def exec(*)
-    # This node does nothing - it's just a clean termination point
-    nil
-  end
-end
-
 # === Main Script ===
 
 # Parse command-line options
@@ -2050,7 +2047,7 @@ retriever_node = RetrieverNode.new
 compaction_node = ContextCompactionNode.new
 claim_verifier_node = ClaimVerifierNode.new
 final_node = FinalReportNode.new
-end_node = EndNode.new
+end_node = GitHubDeepResearchAgent::EndNode.new
 
 # Link the nodes
 initial_node.next(clarify_node)
