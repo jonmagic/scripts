@@ -44,26 +44,11 @@ require_relative "../lib/github_deep_research_agent/claim_verifier_node"
 require_relative "../lib/github_deep_research_agent/context_compaction_node"
 require_relative "../lib/github_deep_research_agent/retriever_node"
 require_relative "../lib/github_deep_research_agent/planner_node"
+require_relative "../lib/github_deep_research_agent/ask_clarifying_node"
 
 # Set up global logger
 LOG = Logger.new($stdout)
 LOG.level = Logger::INFO  # Default level, will be changed to DEBUG with --verbose
-
-# === Embedded Prompt Templates ===
-
-ASK_CLARIFY_PROMPT = <<~PROMPT
-You are an expert analyst reviewing a research request and initial findings from GitHub conversations.
-
-## Research Request
-{{request}}
-
-## Initial Findings Summary
-{{initial_findings}}
-
-Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the intent of the request, bridge gaps in context to better refine the search (e.g. specifying the search space like a github organization or repository), and understand the expected output format (executive summary, detailed analysis, ADR, etc). If any of these areas are covered in their request or initial findings, do not ask about them.
-
-Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number. The instructions should ask for inline answers to these questions.
-PROMPT
 
 # === Pocketflow Nodes ===
 
@@ -164,85 +149,6 @@ class InitialResearchNode < Pocketflow::Node
 
     LOG.info "✓ Initial research complete: #{exec_res.length} conversations collected"
     LOG.debug "Moving to clarifying questions phase..."
-
-    nil
-  end
-end
-
-class AskClarifyingNode < Pocketflow::Node
-  def prep(shared)
-    @shared = shared # Store shared context
-    LOG.info "=== CLARIFYING QUESTIONS PHASE ==="
-    LOG.info "Generating clarifying questions based on initial findings..."
-
-    # Summarize initial findings
-    initial_findings = shared[:memory][:hits].map do |hit|
-      "- #{hit[:url]}: #{hit[:summary]}"
-    end.join("\n")
-
-    LOG.debug do
-      "Initial findings summary:\n#{initial_findings}"
-    end
-
-    # Fill template and call LLM
-    prompt = Utils.fill_template(ASK_CLARIFY_PROMPT, {
-      request: shared[:request],
-      initial_findings: initial_findings
-    })
-
-    LOG.debug "Calling LLM to generate clarifying questions..."
-    # Use fast model for clarifying questions - this is light reasoning to generate questions based on initial findings
-    llm_response = Utils.call_llm(prompt, shared[:models][:fast])
-
-    LOG.info "Generated clarifying questions for user review"
-    LOG.debug do
-      "Generated questions:\n#{'=' * 60}\n#{llm_response}\n#{'=' * 60}"
-    end
-
-    llm_response
-  end
-
-  def exec(clarifying_questions)
-    # Check if we have a pre-written Q&A file to bypass interactive step
-    if @shared[:clarifying_qa]
-      LOG.info "Using pre-written clarifying Q&A from file: #{@shared[:clarifying_qa]}"
-
-      unless File.exist?(@shared[:clarifying_qa])
-        abort "Error: Clarifying Q&A file not found: #{@shared[:clarifying_qa]}"
-      end
-
-      edited_content = File.read(@shared[:clarifying_qa])
-      LOG.debug do
-        "Pre-written clarifications:\n#{'=' * 60}\n#{edited_content}\n#{'=' * 60}"
-      end
-
-      return edited_content
-    end
-
-    LOG.info "Opening editor for user to answer clarifying questions..."
-
-    # Prepare editor content
-    editor_content = <<~CONTENT
-Please review the following questions and provide inline answers to help focus the research:
-
-#{clarifying_questions}
-CONTENT
-
-    # Open editor
-    edited_content = Utils.edit_text(editor_content, @shared[:editor_file])
-
-    LOG.info "User provided clarifications"
-    LOG.debug do
-      "User clarifications:\n#{'=' * 60}\n#{edited_content}\n#{'=' * 60}"
-    end
-
-    edited_content
-  end
-
-  def post(shared, prep_res, exec_res)
-    shared[:clarifications] = exec_res
-    LOG.info "✓ Clarifications collected, proceeding to planning phase"
-    LOG.debug "Moving to planning phase..."
 
     nil
   end
@@ -365,7 +271,7 @@ shared = {
 
 # Build the workflow
 initial_node = InitialResearchNode.new
-clarify_node = AskClarifyingNode.new
+clarify_node = GitHubDeepResearchAgent::AskClarifyingNode.new
 planner_node = GitHubDeepResearchAgent::PlannerNode.new
 retriever_node = GitHubDeepResearchAgent::RetrieverNode.new
 compaction_node = GitHubDeepResearchAgent::ContextCompactionNode.new
