@@ -64,8 +64,7 @@ options = {
   fast_model: ENV["FAST_LLM_MODEL"],
   reasoning_model: ENV["LLM_MODEL"],
   search_mode: "hybrid",
-  cache_path: nil,
-  executive_summary_prompt_path: nil
+  cache_path: nil
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -111,10 +110,6 @@ opt_parser = OptionParser.new do |opts|
     options[:cache_path] = v
   end
 
-  opts.on("--executive-summary-prompt-path PATH", "Path to LLM prompt file for executive summary generation") do |v|
-    options[:executive_summary_prompt_path] = v
-  end
-
   opts.on("-h", "--help", "Show this help message") do
     puts opts
     exit
@@ -158,7 +153,6 @@ shared = {
   verbose: options[:verbose],
   search_mode: options[:search_mode],
   cache_path: options[:cache_path],
-  executive_summary_prompt_path: options[:executive_summary_prompt_path],
   models: {
     fast: options[:fast_model],
     reasoning: options[:reasoning_model]
