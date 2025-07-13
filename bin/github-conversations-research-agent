@@ -26,26 +26,10 @@
 # bin/search-github-conversations and bin/fetch-github-conversation scripts
 # to gather context, and integrates with the llm CLI for AI-powered analysis.
 
-require "json"
 require "logger"
-require "open3"
 require "optparse"
-require "tempfile"
-require "shellwords"
 
-# Load vendored Pocketflow library
-require_relative "../lib/pocketflow"
-
-# Load GitHub Deep Research Agent modules
-require_relative "../lib/utils"
-require_relative "../lib/github_deep_research_agent/end_node"
-require_relative "../lib/github_deep_research_agent/final_report_node"
-require_relative "../lib/github_deep_research_agent/claim_verifier_node"
-require_relative "../lib/github_deep_research_agent/context_compaction_node"
-require_relative "../lib/github_deep_research_agent/retriever_node"
-require_relative "../lib/github_deep_research_agent/planner_node"
-require_relative "../lib/github_deep_research_agent/ask_clarifying_node"
-require_relative "../lib/github_deep_research_agent/initial_research_node"
+require_relative "../lib/github_deep_research_agent"
 
 # Set up global logger
 LOG = Logger.new($stdout)

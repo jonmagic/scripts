@@ -1,19 +1,33 @@
-# lib/github_deep_research_agent/claim_verifier_node.rb
-#
-# Handles fact-checking and claim verification against GitHub conversations evidence
-
-require "json"
-require "shellwords"
-require_relative "../../lib/pocketflow"
-require_relative "../../lib/utils"
-
 module GitHubDeepResearchAgent
+  # ClaimVerifierNode - Automated fact-checking for research reports
+  #
+  # See lib/github_deep_research_agent.rb for architecture and workflow details.
+  #
+  # ## Overview
+  # This node extracts verifiable claims from draft research outputs and checks them
+  # against evidence from the GitHub conversation database using LLMs and semantic search.
+  # It ensures research accuracy and flags unsupported claims for further review.
+  #
+  # ## Pipeline Position
+  # - Input: Draft answer/report from shared context
+  # - Output: Verification results and unsupported claims
+  #
+  # @example
+  #   node = ClaimVerifierNode.new
+  #   claims = node.prep(shared)
+  #   results = node.exec(claims)
+  #   status = node.post(shared, claims, results)
   class ClaimVerifierNode < Pocketflow::Node
+    # Extract verifiable claims from draft research report using LLM.
+    #
+    # @param shared [Hash] Workflow context with :draft_answer, :models
+    # @return [Array<String>, Symbol, nil] List of claims, :no_claims, or nil
     def prep(shared)
-      @shared = shared # Store shared context
+      @shared = shared # Store shared context for downstream method access
       puts "=== CLAIM VERIFICATION PHASE ==="
 
-      # Check if we already have a draft answer to verify
+      # Validate that we have a draft report to analyze
+      # Without a draft, there's nothing to fact-check
       unless shared[:draft_answer]
         puts "No draft answer found for claim verification"
         return nil
@@ -21,9 +35,12 @@ module GitHubDeepResearchAgent
 
       puts "Extracting factual claims from draft answer for verification..."
 
-      # Extract claims from the draft answer
+      # Extract claims using LLM analysis
+      # The fast model is sufficient for this extraction task
       claims = extract_claims_from_report(shared[:draft_answer], shared[:models][:fast])
 
+      # Handle edge case where no verifiable claims are found
+      # This can happen with opinion-heavy or recommendation-focused reports
       if claims.empty?
         puts "No factual claims found in draft answer, proceeding to final report"
         return :no_claims
@@ -33,27 +50,38 @@ module GitHubDeepResearchAgent
       claims
     end
 
+    # Verify extracted claims against evidence from GitHub conversations.
+    #
+    # @param claims [Array<String>, Symbol, nil] Claims to verify
+    # @return [Hash, Symbol] Verification results or :no_claims
     def exec(claims)
+      # Handle edge cases where no claims need verification
       return :no_claims if claims == :no_claims || claims.nil?
 
       puts "Verifying #{claims.length} claims against available evidence..."
 
-      collection = @shared[:collection]
-      script_dir = @shared[:script_dir]
-      fast_model = @shared[:models][:fast]
+      # Extract configuration from shared context
+      collection = @shared[:collection]    # Qdrant collection name
+      script_dir = @shared[:script_dir]    # Path to search scripts
+      fast_model = @shared[:models][:fast] # LLM model for verification
 
+      # Initialize result tracking arrays
       supported_claims = []
       unsupported_claims = []
 
+      # Process each claim individually with progress tracking
       claims.each_with_index do |claim, i|
         puts "Verifying claim #{i + 1}/#{claims.length}: #{claim.slice(0, 100)}..."
 
-        # Search for evidence related to this claim
+        # Search for evidence related to this specific claim
+        # Limit to 3 results to focus on most relevant evidence
         evidence = search_evidence_for_claim(claim, collection, script_dir, 3)
 
-        # Verify the claim against the evidence
+        # Use LLM to verify the claim against gathered evidence
+        # This provides consistent, objective assessment
         is_supported = verify_claim_against_evidence(claim, evidence, fast_model)
 
+        # Classify and track the claim based on verification result
         if is_supported
           supported_claims << claim
           puts "✓ Claim #{i + 1} SUPPORTED"
@@ -63,8 +91,10 @@ module GitHubDeepResearchAgent
         end
       end
 
+      # Provide summary statistics for verification process
       puts "Verification complete: #{supported_claims.length} supported, #{unsupported_claims.length} unsupported"
 
+      # Log unsupported claims for transparency and debugging
       if unsupported_claims.any?
         puts "Found unsupported claims:"
         unsupported_claims.each_with_index do |claim, i|
@@ -72,6 +102,7 @@ module GitHubDeepResearchAgent
         end
       end
 
+      # Return structured verification results
       {
         total_claims: claims.length,
         supported_claims: supported_claims,
@@ -79,21 +110,31 @@ module GitHubDeepResearchAgent
       }
     end
 
+    # Handle verification results and workflow routing.
+    #
+    # @param shared [Hash] Workflow context to update
+    # @param prep_res [Array<String>, Symbol, nil] Claims from prep()
+    # @param exec_res [Hash, Symbol] Verification results from exec()
+    # @return [String] Workflow routing decision ("ok" or "fix")
     def post(shared, prep_res, exec_res)
+      # Handle edge cases where verification wasn't performed
       return "ok" if prep_res.nil? || exec_res == :no_claims
 
+      # Track verification attempts to prevent infinite retry loops
       verification_attempts = shared[:verification_attempts] || 0
 
-      # Store verification results
+      # Store comprehensive verification results in shared context
       shared[:claim_verification] = exec_res
       shared[:unsupported_claims] = exec_res[:unsupported_claims]
 
+      # Check if all claims were successfully verified
       if exec_res[:unsupported_claims].empty?
         puts "✓ All claims verified successfully, proceeding to final report"
         return "ok"
       else
         puts "Found #{exec_res[:unsupported_claims].length} unsupported claims"
 
+        # Implement retry logic with maximum attempt limit
         # Allow only one retry to gather better evidence
         if verification_attempts < 1
           shared[:verification_attempts] = verification_attempts + 1
@@ -106,14 +147,21 @@ module GitHubDeepResearchAgent
       end
     end
 
-    # Extracts claims from a report using LLM analysis.
+    # Extract factual claims from research report using LLM.
+    #
+    # @param report [String] Research report text
+    # @param model [String, nil] LLM model to use
+    # @return [Array<String>] List of claims (max 25)
     def extract_claims_from_report(report, model = nil)
+      # Fill prompt template with the report content
       prompt = Utils.fill_template(EXTRACT_CLAIMS_PROMPT, { report: report })
 
       begin
+        # Call LLM to extract claims using structured prompt
         llm_response = Utils.call_llm(prompt, model)
 
-        # Clean up response - remove markdown code blocks if present
+        # Clean up response to handle various formatting patterns
+        # LLMs sometimes wrap JSON in code blocks for readability
         cleaned_response = llm_response.strip
         if cleaned_response.start_with?('```json')
           # Remove ```json from start and ``` from end
@@ -123,77 +171,107 @@ module GitHubDeepResearchAgent
           cleaned_response = cleaned_response.gsub(/\A```\s*/, '').gsub(/\s*```\z/, '')
         end
 
+        # Parse the cleaned JSON response
         claims = JSON.parse(cleaned_response.strip)
 
+        # Validate that response is an array as expected
         unless claims.is_a?(Array)
           return []
         end
 
-        # Limit to first 25 claims as specified
+        # Limit to first 25 claims as specified in prompt
         claims.first(25)
       rescue JSON::ParserError
+        # Handle JSON parsing failures gracefully
         []
       rescue
+        # Handle any other extraction errors
         []
       end
     end
 
-    # Verifies a single claim against evidence using LLM.
+    # Verify a single claim against evidence using LLM.
+    #
+    # @param claim [String] Claim to verify
+    # @param evidence [String] Evidence text
+    # @param model [String, nil] LLM model to use
+    # @return [Boolean] true if supported, false otherwise
     def verify_claim_against_evidence(claim, evidence, model = nil)
+      # Fill verification prompt with claim and evidence context
       prompt = Utils.fill_template(VERIFY_CLAIM_PROMPT, {
         claim: claim,
         evidence: evidence
       })
 
       begin
+        # Call LLM to perform verification analysis
         llm_response = Utils.call_llm(prompt, model)
+
+        # Normalize response for consistent matching
         result = llm_response.strip.upcase
 
+        # Map LLM response to boolean decision
         case result
         when "SUPPORTED"
           true
         when "UNSUPPORTED"
           false
         else
+          # Handle unexpected responses conservatively
           false
         end
       rescue
+        # Handle any verification errors by defaulting to unsupported
+        # This ensures that technical failures don't incorrectly validate claims
         false
       end
     end
 
-    # Searches for evidence related to a specific claim.
+    # Search for evidence related to a claim using semantic search.
+    #
+    # @param claim [String] Claim text
+    # @param collection [String] Qdrant collection name
+    # @param script_dir [String] Path to search scripts
+    # @param limit [Integer] Max results (default: 3)
+    # @return [String] Formatted evidence or error message
     def search_evidence_for_claim(claim, collection, script_dir, limit = 3)
+      # Construct semantic search command with proper escaping
       search_cmd = "#{script_dir}/semantic-search-github-conversations"
-      search_cmd += " #{Shellwords.escape(claim)}"
-      search_cmd += " --collection #{Shellwords.escape(collection)}"
-      search_cmd += " --limit #{limit}"
-      search_cmd += " --format json"
+      search_cmd += " #{Shellwords.escape(claim)}"                    # Escaped query text
+      search_cmd += " --collection #{Shellwords.escape(collection)}"  # Target collection
+      search_cmd += " --limit #{limit}"                               # Result count limit
+      search_cmd += " --format json"                                  # Output format
 
       begin
+        # Execute search command and capture results
         search_output = Utils.run_cmd_safe(search_cmd)
         search_results = JSON.parse(search_output)
 
+        # Handle case where no relevant conversations are found
         if search_results.empty?
           return "No relevant evidence found."
         end
 
-        # Extract summaries from search results
+        # Format search results into structured evidence blocks
         evidence_parts = search_results.map.with_index do |result, i|
+          # Extract metadata from search result payload
           url = result.dig("payload", "url") || "Unknown URL"
           summary = result.dig("payload", "summary") || "No summary available"
           score = result["score"] || 0.0
 
+          # Format each evidence piece with clear attribution
           "Evidence #{i + 1} (Score: #{score.round(3)}):\nSource: #{url}\nSummary: #{summary}"
         end
 
+        # Join evidence blocks with clear separators for LLM parsing
         evidence_parts.join("\n\n---\n\n")
       rescue => e
+        # Return descriptive error message for search failures
         "Error retrieving evidence: #{e.message}"
       end
     end
 
-    # Prompt constants used by claim verification functions
+    # Prompt for extracting verifiable claims from research reports (see extract_claims_from_report).
     EXTRACT_CLAIMS_PROMPT = <<~PROMPT
       You are tasked with extracting factual claims from a research report. Extract specific, verifiable claims that can be fact-checked against evidence.
 
@@ -218,6 +296,7 @@ module GitHubDeepResearchAgent
       ["Claim 1 text here", "Claim 2 text here", "Claim 3 text here"]
     PROMPT
 
+    # Prompt for verifying individual claims against evidence (see verify_claim_against_evidence).
     VERIFY_CLAIM_PROMPT = <<~PROMPT
       You are a fact-checker tasked with verifying a claim against provided evidence.
 

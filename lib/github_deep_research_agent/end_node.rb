@@ -1,13 +1,19 @@
-# lib/github_deep_research_agent/end_node.rb
-#
-# EndNode: Clean termination point for the research workflow
-
-require_relative "../pocketflow"
-
 module GitHubDeepResearchAgent
+  # EndNode provides clean workflow termination for the research pipeline.
+  #
+  # This node serves as the designated termination point for the GitHub research
+  # workflow. It accepts any input and returns nil to signal workflow completion
+  # to the Pocketflow engine.
+  #
+  # @note This node intentionally implements only the exec() method since it serves
+  #       as a termination point and doesn't require preparation or post-processing.
   class EndNode < Pocketflow::Node
+    # Terminates the workflow by returning nil to the Pocketflow engine.
+    #
+    # @param * [Any] Accepts any parameters from upstream nodes (ignored)
+    # @return [nil] Signals workflow termination
     def exec(*)
-      # This node does nothing - it's just a clean termination point
+      # Clean termination point - returns nil to signal workflow completion
       nil
     end
   end

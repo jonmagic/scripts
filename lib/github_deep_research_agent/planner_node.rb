@@ -1,41 +1,47 @@
-# lib/github_deep_research_agent/planner_node.rb
-#
-# PlannerNode: Uses LLM to generate GitHub search queries based on the research request and clarifications.
-
-require_relative "../pocketflow"
-require_relative "../utils"
-
 module GitHubDeepResearchAgent
-  # PlannerNode: Uses LLM to generate GitHub search queries based on the research request and clarifications.
+  # PlannerNode - Generates search strategies for iterative GitHub research
   #
-  # This node uses the GITHUB_SEARCH_PROMPT to generate targeted GitHub search strings:
-  # - Takes the research request and clarifications as input
-  # - Generates GitHub-compatible search strings with operators when appropriate
-  # - Defaults to keyword search since LLM produces GitHub search strings
-  # - Supports --search-mode flag to override default behavior
+  # See lib/github_deep_research_agent.rb for architecture and workflow details.
   #
-  # The generated queries are optimized for GitHub's search syntax and can include
-  # operators like repo:, author:, label:, is:, created:, updated: when beneficial.
+  # ## Overview
+  # This node analyzes accumulated findings and context to generate targeted search queries
+  # and strategies for iterative research, including claim verification and multi-modal search.
+  #
+  # ## Pipeline Position
+  # - Input: Research context, findings, clarifications, unsupported claims
+  # - Output: Structured search plans for RetrieverNode
+  #
+  # @example
+  #   node = PlannerNode.new
+  #   query = node.prep(shared)
+  #   plan = node.exec(query)
+  #   node.post(shared, query, plan)
   class PlannerNode < Pocketflow::Node
+    # Analyze research context and generate targeted search queries.
+    #
+    # @param shared [Hash] Workflow context with research state, findings, clarifications, etc.
+    # @return [Hash, String, nil] Query structure, string, or nil if max depth
     def prep(shared)
-      @shared = shared # Store shared context
+      @shared = shared # Store shared context for access in exec() and post()
       depth = shared[:current_depth] || 0
       max_depth = shared[:max_depth]
 
       LOG.info "=== PLANNING PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
 
-      # Check if we have unsupported claims to research
+      # Priority 1: Handle unsupported claims from verification process
       if shared[:unsupported_claims] && shared[:unsupported_claims].any?
         LOG.info "Focusing search on gathering evidence for #{shared[:unsupported_claims].length} unsupported claims"
 
-        # Use special prompt for unsupported claims research
+        # Format unsupported claims for LLM processing
         unsupported_claims_list = shared[:unsupported_claims].map.with_index do |claim, i|
           "#{i + 1}. #{claim}"
         end.join("\n")
 
+        # Compile research context for claim verification
         findings_summary = shared[:memory][:notes].join("\n\n")
         previous_queries = shared[:memory][:search_queries].join(", ")
 
+        # Generate claim verification query using specialized prompt
         prompt = Utils.fill_template(UNSUPPORTED_CLAIMS_RESEARCH_PROMPT, {
           request: shared[:request],
           clarifications: shared[:clarifications] || "",
@@ -54,19 +60,18 @@ module GitHubDeepResearchAgent
 
       LOG.info "Determining search strategy based on query analysis..."
 
-      # Check if we've reached max depth
+      # Priority 2: Check iteration depth limits
       if depth >= max_depth
         LOG.info "Maximum depth reached, moving to final report"
         return nil
       end
 
-      # For the first iteration, we need to generate a different query than what was used in InitialResearchNode
-      # to avoid duplicates. We'll use the appropriate search mode logic.
+      # Log iteration context for transparency
       if depth == 0
         LOG.info "First iteration - generating query different from initial research"
       end
 
-      # Generate query based on search mode
+      # Compile current research context for gap analysis
       findings_summary = shared[:memory][:notes].join("\n\n")
       previous_queries = shared[:memory][:search_queries].join(", ")
 
@@ -77,6 +82,7 @@ module GitHubDeepResearchAgent
         "  Research notes accumulated: #{shared[:memory][:notes].length}"
       end
 
+      # Priority 3: Generate queries based on configured search mode
       search_mode = shared[:search_mode]
 
       if search_mode == "semantic"
@@ -125,6 +131,7 @@ module GitHubDeepResearchAgent
         keyword_query = Utils.call_llm(keyword_prompt, shared[:models][:fast])
         LOG.info "Generated keyword query: \"#{keyword_query}\""
 
+        # Combine both queries into structured hybrid format
         refined_query = {
           semantic: semantic_query,
           keyword: keyword_query
@@ -134,16 +141,22 @@ module GitHubDeepResearchAgent
       refined_query
     end
 
+    # Transform queries into structured search plans for RetrieverNode.
+    #
+    # @param current_query [Hash, String, nil] Query from prep()
+    # @return [Hash, nil] Search plan or nil if no query
     def exec(current_query)
+      # Handle maximum depth scenario where no further search is needed
       return nil if current_query.nil?
 
-      # Store the current query for use by RetrieverNode
+      # Store the current query for potential access by other workflow components
       @shared[:current_query] = current_query
 
-      # Determine search mode based on flags and iteration depth
+      # Determine search mode based on configuration and iteration context
       search_mode = @shared[:search_mode]
       depth = @shared[:current_depth] || 0
 
+      # Initial tool selection based on configured search mode
       if search_mode == "semantic"
         tool = :semantic
         LOG.info "Forced semantic search mode via --search-mode flag"
@@ -151,17 +164,17 @@ module GitHubDeepResearchAgent
         tool = :keyword
         LOG.info "Forced keyword search mode via --search-mode flag"
       else
-        # Hybrid mode: do both semantic and keyword searches
+        # Default to hybrid mode for comprehensive coverage
         tool = :hybrid
         LOG.info "Hybrid mode: Running both semantic and keyword searches"
       end
 
-      # For hybrid mode, we need to check if we have separate semantic/keyword queries or a single query
+      # Handle hybrid mode with sophisticated query format detection
       if tool == :hybrid
-        # Check if current_query has separate semantic and keyword queries (from normal planning)
-        # or if it's a single query (from unsupported claims research)
+        # Check if current_query has separate semantic and keyword components
+        # This distinguishes normal planning from claim verification scenarios
         if current_query.is_a?(Hash) && current_query[:semantic] && current_query[:keyword]
-          # Normal hybrid mode with separate queries
+          # Normal hybrid mode with separate queries from dual LLM generation
           semantic_query = current_query[:semantic]
           search_plan = {
             tool: :hybrid,
@@ -169,7 +182,7 @@ module GitHubDeepResearchAgent
             keyword_query: current_query[:keyword]
           }
 
-          # Add semantic search filters if present
+          # Add semantic search filters if present in the structured query
           if semantic_query[:created_after]
             search_plan[:created_after] = semantic_query[:created_after]
           end
@@ -180,7 +193,8 @@ module GitHubDeepResearchAgent
             search_plan[:order_by] = semantic_query[:order_by]
           end
         else
-          # Single query (likely from unsupported claims research) - treat as semantic search
+          # Single query provided (likely from unsupported claims research)
+          # Treat as semantic search since claim verification benefits from vector similarity
           LOG.info "Single query provided, treating as semantic search in hybrid mode"
           tool = :semantic
 
@@ -190,7 +204,7 @@ module GitHubDeepResearchAgent
             query: current_query[:query] || current_query
           }
 
-          # Add filters if present
+          # Add filters if present in structured format
           if current_query.is_a?(Hash)
             if current_query[:created_after]
               search_plan[:created_after] = current_query[:created_after]
@@ -205,17 +219,17 @@ module GitHubDeepResearchAgent
         end
       end
 
-      # Handle non-hybrid modes or fall-through from hybrid mode
+      # Handle non-hybrid modes or fall-through from hybrid mode logic
       if tool != :hybrid
-        # Handle both structured and legacy query formats
+        # Process both structured and legacy query formats
         if current_query.is_a?(Hash) && current_query[:query]
-          # New structured format
+          # New structured format with explicit query and filter fields
           search_plan = {
             tool: tool,
             query: current_query[:query]
           }
 
-          # Add filters if present
+          # Add temporal and ordering filters if present
           if current_query[:created_after]
             search_plan[:created_after] = current_query[:created_after]
           end
@@ -226,9 +240,10 @@ module GitHubDeepResearchAgent
             search_plan[:order_by] = current_query[:order_by]
           end
         else
-          # Legacy string format - extract potential qualifiers from the query for logging/UI
+          # Legacy string format - extract potential qualifiers for logging and debugging
           qualifiers = {}
           if current_query.is_a?(String)
+            # Parse GitHub search operators from the query string
             %w[repo author label is created updated].each do |op|
               if current_query =~ /\b#{op}:(\S+)/i
                 qualifiers[op.to_sym] = $1
@@ -237,6 +252,7 @@ module GitHubDeepResearchAgent
             end
           end
 
+          # Create search plan with extracted qualifiers for reference
           search_plan = {
             tool: tool,
             query: current_query,
@@ -250,19 +266,57 @@ module GitHubDeepResearchAgent
       search_plan
     end
 
+    # Store search plan and coordinate workflow routing.
+    #
+    # @param shared [Hash] Workflow context to update
+    # @param prep_res [Hash, String, nil] Query from prep()
+    # @param exec_res [Hash, nil] Search plan from exec()
+    # @return [String, nil] "final" if max depth, else nil
     def post(shared, prep_res, exec_res)
+      # Handle maximum depth scenario by routing to final report generation
       return "final" if prep_res.nil? # Max depth reached
 
-      # Store the search plan for RetrieverNode
+      # Store the comprehensive search plan for RetrieverNode execution
       shared[:next_search] = exec_res
 
       LOG.info "✓ Planning complete, proceeding to retrieval"
       LOG.debug "Moving to retrieval phase..."
 
+      # Return nil to continue workflow with retrieval phase
       nil
     end
 
-    # Embedded prompt templates
+    # Template for generating semantic search strategies based on research question
+    #
+    # This template guides the LLM in creating semantic search strategies for GitHub
+    # conversations related to the research question. It focuses on conceptual understanding
+    # and thematic analysis rather than specific keyword matching.
+    #
+    # ## Template Variables
+    # - **{{request}}**: The original research question requiring semantic investigation
+    # - **{{clarifications}}**: User-provided context and clarifying responses
+    # - **{{findings_summary}}**: Current research findings and accumulated knowledge
+    # - **{{previous_queries}}**: Prior search attempts to avoid duplication
+    #
+    # ## Generated Output Format
+    # The template produces structured semantic queries optimized for vector similarity:
+    # - Conceptual terms that capture the essence of the research topic
+    # - Thematic keywords related to problem domains and solutions
+    # - Abstract concepts that may appear across multiple conversation types
+    #
+    # ## Search Strategy Focus
+    # Semantic searches excel at finding conversations that:
+    # - Discuss related concepts using different terminology
+    # - Address similar problems with varied approaches
+    # - Contain thematic overlap without exact keyword matches
+    # - Represent conceptual evolution of ideas over time
+    #
+    # ## JSON Output Structure
+    # Returns structured query with optional temporal constraints:
+    # - **query**: Natural language query optimized for semantic similarity
+    # - **created_after**: Optional ISO date for temporal filtering
+    # - **created_before**: Optional ISO date for temporal filtering
+    # - **order_by**: Optional ordering preference for result chronology
     SEMANTIC_RESEARCH_PROMPT = <<~PROMPT
 You are an expert researcher mining GitHub conversations for actionable evidence.
 
@@ -301,6 +355,39 @@ Do not use markdown code blocks - return only the raw JSON object.
 {"query": "Discussion showing why the authentication redesign was abandoned"}
 PROMPT
 
+    # Template for generating GitHub search queries using operator-based syntax
+    #
+    # This template guides the LLM in creating precise GitHub search queries that leverage
+    # GitHub's advanced search operators for targeted conversation discovery. It emphasizes
+    # structured search syntax and temporal constraints for comprehensive results.
+    #
+    # ## Template Variables
+    # - **{{request}}**: The original research question requiring operator-based search
+    # - **{{clarifications}}**: User-provided context and clarifying responses
+    # - **{{findings_summary}}**: Current research findings for query refinement
+    # - **{{previous_queries}}**: Prior search attempts to avoid duplication
+    #
+    # ## Generated Search Operators
+    # The template produces queries utilizing GitHub's search capabilities:
+    # - **Scope Operators**: `repo:`, `org:`, `user:` for targeted searching
+    # - **Type Operators**: `is:issue`, `is:pr`, `is:discussion` for content filtering
+    # - **Temporal Operators**: `created:`, `updated:`, `closed:` for time-based filtering
+    # - **Status Operators**: `state:open`, `state:closed` for lifecycle filtering
+    # - **Metadata Operators**: `label:`, `assignee:`, `author:` for attribution filtering
+    #
+    # ## Search Strategy Focus
+    # GitHub search queries excel at finding conversations that:
+    # - Match specific repositories, organizations, or user contributions
+    # - Fall within defined time periods or project phases
+    # - Contain specific labels, assignments, or status conditions
+    # - Represent particular types of development discussions
+    #
+    # ## JSON Output Structure
+    # Returns structured query with comprehensive search parameters:
+    # - **query**: GitHub search query with advanced operators
+    # - **created_after**: Optional ISO date for temporal filtering
+    # - **created_before**: Optional ISO date for temporal filtering
+    # - **order_by**: Optional ordering preference for result chronology
     GITHUB_SEARCH_PROMPT = <<~PROMPT
 You are GitHub's top search power-user.
 
@@ -317,6 +404,41 @@ Return **one** GitHub search string that is likely to surface the best discussio
 Output only the search string, nothing else.
 PROMPT
 
+    # Template for generating targeted queries to find evidence for unsupported claims
+    #
+    # This template specializes in creating search strategies for fact-checking and claim
+    # verification. It focuses on finding concrete evidence, implementation details, and
+    # verifiable information to support or refute specific research claims.
+    #
+    # ## Template Variables
+    # - **{{request}}**: Original research question requiring claim verification
+    # - **{{clarifications}}**: User-provided context and clarifying responses
+    # - **{{unsupported_claims}}**: Specific claims that need evidential support
+    # - **{{findings_summary}}**: Current research findings and evidence gaps
+    # - **{{previous_queries}}**: Prior search attempts to avoid duplication
+    #
+    # ## Evidence Discovery Strategy
+    # The template generates queries optimized for finding:
+    # - **Implementation Evidence**: Direct proof of feature development and deployment
+    # - **Technical Decisions**: Documented choices and their rationales
+    # - **Concrete Examples**: Specific instances, metrics, and measurable outcomes
+    # - **Timeline Information**: Project phases, release schedules, and progress updates
+    # - **Status Verification**: Current implementation state and deployment status
+    #
+    # ## Search Result Structure
+    # Produces structured queries with temporal and ordering constraints:
+    # - Natural language queries optimized for comprehensive evidence discovery
+    # - Optional temporal boundaries for focused historical analysis
+    # - Ordering preferences to prioritize recent or chronological information
+    # - JSON format for consistent parsing and execution by RetrieverNode
+    #
+    # ## Claim Verification Focus
+    # The template emphasizes finding conversations that contain:
+    # - Direct evidence of implementation status and completion
+    # - Specific technical decisions and documented outcomes
+    # - Concrete examples, metrics, and proof points
+    # - Timeline information and project update communications
+    # - Verifiable status indicators (merged PRs, releases, deployments)
     UNSUPPORTED_CLAIMS_RESEARCH_PROMPT = <<~PROMPT
 You are an expert researcher focusing on verifying unsupported claims from a research report.
 

@@ -1,29 +1,34 @@
-# lib/github_deep_research_agent/ask_clarifying_node.rb
-#
-# AskClarifyingNode: Generates clarifying questions based on initial research findings and collects user input.
-
-require_relative "../pocketflow"
-require_relative "../utils"
-
 module GitHubDeepResearchAgent
-  # AskClarifyingNode: Generates clarifying questions based on initial research findings and collects user input.
+  # AskClarifyingNode - Generates and collects clarifying questions to refine research focus
   #
-  # This node:
-  # - Uses LLM to generate clarifying questions based on research request and initial findings
-  # - Opens an editor for user to provide answers (or uses pre-written Q&A file)
-  # - Stores clarifications in shared context for later nodes to use
+  # See lib/github_deep_research_agent.rb for architecture and workflow details.
   #
-  # The generated questions help focus the research by understanding:
-  # - Intent and scope of the request
-  # - Specific search spaces (repos, organizations)
-  # - Expected output format (summary, analysis, ADR, etc.)
+  # ## Overview
+  # After initial search, this node uses an LLM to generate up to 4 clarifying questions
+  # that help specify research intent, scope, output format, and fill context gaps.
+  # User answers are collected (via editor or file) and stored for downstream nodes.
+  #
+  # ## Pipeline Position
+  # - Input: Initial research findings, user request
+  # - Output: User clarifications for PlannerNode and others
+  #
+  # @example
+  #   node = AskClarifyingNode.new
+  #   questions = node.prep(shared)
+  #   answers = node.exec(questions)
+  #   node.post(shared, questions, answers)
   class AskClarifyingNode < Pocketflow::Node
+    # Generate up to 4 clarifying questions using LLM, based on initial findings and user request.
+    #
+    # @param shared [Hash] Workflow context with :memory, :request, :models
+    # @return [String] Numbered list of clarifying questions
     def prep(shared)
-      @shared = shared # Store shared context
+      @shared = shared # Store shared context for use in other methods
       LOG.info "=== CLARIFYING QUESTIONS PHASE ==="
       LOG.info "Generating clarifying questions based on initial findings..."
 
-      # Summarize initial findings
+      # Extract and format initial findings from the shared memory
+      # Each hit contains: {url: String, summary: String, other_metadata...}
       initial_findings = shared[:memory][:hits].map do |hit|
         "- #{hit[:url]}: #{hit[:summary]}"
       end.join("\n")
@@ -32,14 +37,17 @@ module GitHubDeepResearchAgent
         "Initial findings summary:\n#{initial_findings}"
       end
 
-      # Fill template and call LLM
+      # Fill the prompt template with current context
+      # This creates a structured prompt that gives the LLM both the user's
+      # original request and what we've already discovered
       prompt = Utils.fill_template(ASK_CLARIFY_PROMPT, {
         request: shared[:request],
         initial_findings: initial_findings
       })
 
       LOG.debug "Calling LLM to generate clarifying questions..."
-      # Use fast model for clarifying questions - this is light reasoning to generate questions based on initial findings
+      # Use fast model for clarifying questions - this is light reasoning to generate
+      # questions based on initial findings, not heavy analysis
       llm_response = Utils.call_llm(prompt, shared[:models][:fast])
 
       LOG.info "Generated clarifying questions for user review"
@@ -50,11 +58,16 @@ module GitHubDeepResearchAgent
       llm_response
     end
 
+    # Collect user responses to clarifying questions (from file or editor).
+    #
+    # @param clarifying_questions [String] Questions from prep()
+    # @return [String] User responses (inline answers)
     def exec(clarifying_questions)
-      # Check if we have a pre-written Q&A file to bypass interactive step
+      # Branch 1: Use pre-written Q&A file (for automation/testing)
       if @shared[:clarifying_qa]
         LOG.info "Using pre-written clarifying Q&A from file: #{@shared[:clarifying_qa]}"
 
+        # Validate file existence before attempting to read
         unless File.exist?(@shared[:clarifying_qa])
           abort "Error: Clarifying Q&A file not found: #{@shared[:clarifying_qa]}"
         end
@@ -67,16 +80,19 @@ module GitHubDeepResearchAgent
         return edited_content
       end
 
+      # Branch 2: Interactive editor session for user input
       LOG.info "Opening editor for user to answer clarifying questions..."
 
-      # Prepare editor content
+      # Prepare editor content with instructions and questions
+      # The format provides clear guidance on what the user should do
       editor_content = <<~CONTENT
 Please review the following questions and provide inline answers to help focus the research:
 
 #{clarifying_questions}
 CONTENT
 
-      # Open editor
+      # Open text editor and collect user input
+      # Utils.edit_text handles temporary file creation, editor launching, and cleanup
       edited_content = Utils.edit_text(editor_content, @shared[:editor_file])
 
       LOG.info "User provided clarifications"
@@ -87,15 +103,23 @@ CONTENT
       edited_content
     end
 
+    # Store clarifications in shared context for downstream nodes.
+    #
+    # @param shared [Hash] Workflow context to update
+    # @param prep_res [String] Questions from prep()
+    # @param exec_res [String] User responses from exec()
+    # @return [nil]
     def post(shared, prep_res, exec_res)
+      # Store user clarifications in shared context for downstream nodes
       shared[:clarifications] = exec_res
       LOG.info "✓ Clarifications collected, proceeding to planning phase"
       LOG.debug "Moving to planning phase..."
 
+      # Return nil to indicate completion without additional data flow
       nil
     end
 
-    # Embedded prompt template
+    # Prompt for generating clarifying questions (see prep for usage)
     ASK_CLARIFY_PROMPT = <<~PROMPT
 You are an expert analyst reviewing a research request and initial findings from GitHub conversations.
 
