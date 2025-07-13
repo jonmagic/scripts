@@ -219,8 +219,8 @@ AI workflow that answers a question by semantically searching your GitHub conver
 
 - `"QUESTION"`: **(Required)** The research question you want answered (positional argument)
 - `--collection COLLECTION`: **(Required)** Qdrant collection name containing indexed GitHub conversations
-- `-n, --limit N`: Max results per search (default: 10)
-- `--max-depth N`: Max deep-research passes (default: 10)
+- `--limit N`: Max results per search (default: 5)
+- `--max-depth N`: Max deep-research passes (default: 2)
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
 - `--clarifying-qa PATH`: Path to file with clarifying Q&A to bypass interactive step
 - `--search-mode MODE`: Override search mode (semantic, keyword, or hybrid - default: hybrid)
@@ -234,7 +234,7 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `llm` CLI installed and configured
 - Qdrant server running with indexed GitHub conversation summaries
 - `EDITOR` environment variable set (e.g., `export EDITOR=nano`)
-- `bin/semantic-search-github-conversations` and `bin/fetch-github-conversation` available
+- `bin/semantic-search-github-conversations`, `bin/search-github-conversations`, and `bin/fetch-github-conversation` available
 
 **Search Modes:**
 

@@ -11,9 +11,9 @@
 # Usage: github-conversations-research-agent "REQUEST" --collection COLLECTION [options]
 #
 # Options:
-#   --collection NAME        Qdrant collection name (required)
-#   -n, --limit N           Max results per search (default: 10)
-#   --max-depth N           Max deep-research passes (default: 10)
+#   --collection NAME       Qdrant collection name (required)
+#   --limit N               Max results per search (default: 5)
+#   --max-depth N           Max deep-research passes (default: 2)
 #   --editor-file PATH      Use fixed file instead of Tempfile
 #   --clarifying-qa PATH    Path to file with clarifying Q&A to bypass interactive step
 #   --verbose               Show debug logs
@@ -22,9 +22,9 @@
 #   --search-mode MODE      Override search mode (semantic, keyword, or hybrid - default: hybrid)
 #   --cache-path PATH       Root path for caching fetched data
 #
-# The script uses the existing bin/semantic-search-github-conversations and
-# bin/fetch-github-conversation scripts to gather context, and integrates
-# with the llm CLI for AI-powered analysis.
+# The script uses the existing bin/semantic-search-github-conversations,
+# bin/search-github-conversations and bin/fetch-github-conversation scripts
+# to gather context, and integrates with the llm CLI for AI-powered analysis.
 
 require "json"
 require "logger"
@@ -74,11 +74,11 @@ opt_parser = OptionParser.new do |opts|
     options[:collection] = v
   end
 
-  opts.on("-n", "--limit N", Integer, "Max results per search (default: 10)") do |v|
+  opts.on("--limit N", Integer, "Max results per search (default: 5)") do |v|
     options[:limit] = v
   end
 
-  opts.on("--max-depth N", Integer, "Max deep-research passes (default: 10)") do |v|
+  opts.on("--max-depth N", Integer, "Max deep-research passes (default: 2)") do |v|
     options[:max_depth] = v
   end
 
