@@ -906,7 +906,7 @@ class InitialResearchNode < Pocketflow::Node
     LOG.info "✓ Initial research complete: #{exec_res.length} conversations collected"
     LOG.debug "Moving to clarifying questions phase..."
 
-    "default"
+    nil
   end
 end
 
@@ -985,7 +985,7 @@ CONTENT
     LOG.info "✓ Clarifications collected, proceeding to planning phase"
     LOG.debug "Moving to planning phase..."
 
-    "default"
+    nil
   end
 end
 
@@ -1242,7 +1242,7 @@ class PlannerNode < Pocketflow::Node
     LOG.info "✓ Planning complete, proceeding to retrieval"
     LOG.debug "Moving to retrieval phase..."
 
-    "default"
+    nil
   end
 end
 
@@ -1916,6 +1916,13 @@ class FinalReportNode < Pocketflow::Node
 
     LOG.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}#{compaction_note}#{verification_note}"
 
+    "complete"
+  end
+end
+
+class EndNode < Pocketflow::Node
+  def exec(*)
+    # This node does nothing - it's just a clean termination point
     nil
   end
 end
@@ -2043,6 +2050,7 @@ retriever_node = RetrieverNode.new
 compaction_node = ContextCompactionNode.new
 claim_verifier_node = ClaimVerifierNode.new
 final_node = FinalReportNode.new
+end_node = EndNode.new
 
 # Link the nodes
 initial_node.next(clarify_node)
@@ -2053,6 +2061,7 @@ retriever_node.on("final", final_node)
 
 # Add claim verification flow
 final_node.on("verify", claim_verifier_node)  # Route to claim verification after draft report
+final_node.on("complete", end_node)           # Route to clean termination
 claim_verifier_node.on("ok", final_node)     # Continue to final output after verification
 claim_verifier_node.on("fix", planner_node)  # Route back to planner to gather evidence for unsupported claims
 
@@ -2060,6 +2069,9 @@ claim_verifier_node.on("fix", planner_node)  # Route back to planner to gather e
 final_node.on("compact", compaction_node)         # Route to compaction when context too large
 compaction_node.on("retry", final_node)          # Retry final report after compaction
 compaction_node.on("proceed_anyway", final_node) # Proceed with minimal context if compaction fails
+
+# Set end node as the final termination point
+final_node.next(end_node)
 
 # Create and run the flow
 flow = Pocketflow::Flow.new(initial_node)
