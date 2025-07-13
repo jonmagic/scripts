@@ -1932,8 +1932,8 @@ end
 # Parse command-line options
 options = {
   collection: nil,
-  limit: 10,
-  max_depth: 10,
+  limit: 5,
+  max_depth: 2,
   editor_file: nil,
   clarifying_qa: nil,
   verbose: false,
