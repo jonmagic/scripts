@@ -39,6 +39,7 @@ require_relative "../lib/pocketflow"
 # Load GitHub Deep Research Agent modules
 require_relative "../lib/utils"
 require_relative "../lib/github_deep_research_agent/end_node"
+require_relative "../lib/github_deep_research_agent/final_report_node"
 
 # Set up global logger
 LOG = Logger.new($stdout)
@@ -112,29 +113,6 @@ Return **one** GitHub search string that is likely to surface the best discussio
 • Prefer operators when obvious (`repo:`, `author:`, `label:`, `is:`, `created:`, `updated:`).
 • Otherwise fall back to 2-3 strong keywords.
 Output only the search string, nothing else.
-PROMPT
-
-FINAL_REPORT_PROMPT = <<~PROMPT
-You are an expert analyst preparing a comprehensive Markdown report.
-
-## Original Request
-{{request}}
-
-## User Clarifications
-{{clarifications}}
-
-## Research Corpus
-{{all_findings}}
-
-Produce a well-structured Markdown report based on the initial request and clarifications and cite relevant sources used to support your findings.
-
-**Style guide**
-
-* Use proper Markdown headings (`##`, `###`) and omit horizontal rules (`---`).
-* Every factual claim must be backed by an inline citation (full URL).
-* If status cannot be confirmed, mark it **Unknown** and note what evidence is missing.
-
-Return only the Markdown document—no extra commentary.
 PROMPT
 
 EXTRACT_CLAIMS_PROMPT = <<~PROMPT
@@ -236,164 +214,6 @@ def run_cmd(cmd)
   stdout, stderr, status = Open3.capture3(cmd)
   abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
   stdout.strip
-end
-
-# Public: Runs a shell command and returns stdout. Raises exception if the command fails.
-#
-# cmd - The shell command to run (String).
-#
-# Returns the standard output of the command (String).
-# Raises RuntimeError if the command fails.
-def run_cmd_safe(cmd)
-  stdout, stderr, status = Open3.capture3(cmd)
-  raise "Command failed: #{cmd}\n#{stderr}" unless status.success?
-  stdout.strip
-end
-
-# Public: Checks if a required command-line dependency is available in PATH.
-#
-# cmd - The String name of the command to check.
-#
-# Returns nothing. Exits if not found.
-def check_dependency(cmd)
-  system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
-end
-
-# Public: Gets the editor using Git's resolution order.
-#
-# Returns the editor command as a String.
-def get_git_editor
-  # Follow Git's editor resolution order:
-  # 1. GIT_EDITOR environment variable
-  # 2. core.editor config value
-  # 3. VISUAL environment variable
-  # 4. EDITOR environment variable
-  # 5. Fall back to system default
-
-  return ENV["GIT_EDITOR"] if ENV["GIT_EDITOR"] && !ENV["GIT_EDITOR"].strip.empty?
-
-  # Try git config core.editor
-  git_config_editor = `git config --get core.editor 2>/dev/null`.strip
-  return git_config_editor unless git_config_editor.empty?
-
-  return ENV["VISUAL"] if ENV["VISUAL"] && !ENV["VISUAL"].strip.empty?
-  return ENV["EDITOR"] if ENV["EDITOR"] && !ENV["EDITOR"].strip.empty?
-
-  # Fall back to nano as a sensible default
-  "nano"
-end
-
-# Public: Opens a text editor with the given content and returns the edited result.
-#
-# text - The String text to edit.
-# file_path - Optional String path to use instead of a temporary file.
-#
-# Returns the edited text as a String.
-def edit_text(text, file_path = nil)
-  if file_path
-    File.write(file_path, text)
-    tmp_path = file_path
-  else
-    tmp = Tempfile.create(["research_edit", ".md"])
-    tmp.puts text
-    tmp.flush
-    tmp_path = tmp.path
-  end
-
-  # Get editor using Git's resolution order
-  editor = get_git_editor()
-
-  # Open editor
-  unless system("#{editor} #{tmp_path}")
-    abort "Editor command failed: #{editor}"
-  end
-
-  # Read the edited content
-  File.read(tmp_path)
-ensure
-  tmp&.close unless file_path
-end
-
-# Public: Fills in template variables in a prompt string.
-#
-# template - The String template with {{variable}} placeholders.
-# variables - Hash of variable names to values.
-#
-# Returns the filled template as a String.
-def fill_template(template, variables)
-  result = template.dup
-  variables.each do |key, value|
-    result.gsub!("{{#{key}}}", value.to_s)
-  end
-  result
-end
-
-# Public: Calls the LLM CLI for chat completion.
-#
-# prompt - The String prompt to send.
-# model - Optional String model name.
-#
-# Returns the LLM response as a String.
-def call_llm(prompt, model = nil)
-  check_dependency("llm") # Check only when needed
-  model_flag = model ? "-m #{Shellwords.escape(model)}" : ""
-
-  # Use a temporary file to avoid "Argument list too long" errors
-  Tempfile.create(["llm_prompt", ".txt"]) do |tmpfile|
-    tmpfile.write(prompt)
-    tmpfile.flush
-    cmd = "llm #{model_flag} < #{Shellwords.escape(tmpfile.path)}"
-    run_cmd_safe(cmd)
-  end
-end
-
-# Public: Detects if an error message indicates context is too large for the model.
-#
-# error_message - The String error message to check.
-#
-# Returns true if the error indicates context is too large, false otherwise.
-def context_too_large_error?(error_message)
-  # Azure OpenAI error patterns
-  return true if error_message.include?("maximum context length")
-  return true if error_message.include?("token limit")
-  return true if error_message.include?("Request too large")
-  return true if error_message.include?("context_length_exceeded")
-
-  # OpenAI API error patterns
-  return true if error_message.include?("This model's maximum context length")
-  return true if error_message.include?("reduce the length of the messages")
-
-  # Anthropic Claude error patterns
-  return true if error_message.include?("max_tokens")
-  return true if error_message.include?("context window")
-
-  # Generic patterns
-  return true if error_message.include?("too long")
-  return true if error_message.include?("exceeds")
-
-  false
-end
-
-# Public: Detects if an error message indicates a rate limit that should trigger compaction.
-#
-# error_message - The String error message to check.
-#
-# Returns true if the error indicates rate limiting, false otherwise.
-def rate_limit_error?(error_message)
-  # Azure OpenAI rate limit patterns
-  return true if error_message.include?("rate limit")
-  return true if error_message.include?("Error code: 429")
-  return true if error_message.include?("exceeded token rate limit")
-
-  # OpenAI API rate limit patterns
-  return true if error_message.include?("Rate limit reached")
-  return true if error_message.include?("Too Many Requests")
-
-  # Anthropic Claude rate limit patterns
-  return true if error_message.include?("rate_limit_error")
-  return true if error_message.include?("overloaded_error")
-
-  false
 end
 
 # Public: Sorts conversations by priority for context compaction.
@@ -690,12 +510,12 @@ end
 #
 # Returns an Array of claim strings.
 def extract_claims_from_report(report, model = nil)
-  prompt = fill_template(EXTRACT_CLAIMS_PROMPT, { report: report })
+  prompt = Utils.fill_template(EXTRACT_CLAIMS_PROMPT, { report: report })
 
   LOG.debug "Calling LLM to extract claims from report..."
 
   begin
-    llm_response = call_llm(prompt, model)
+    llm_response = Utils.call_llm(prompt, model)
 
     # Clean up response - remove markdown code blocks if present
     cleaned_response = llm_response.strip
@@ -737,7 +557,7 @@ end
 #
 # Returns true if claim is supported, false otherwise.
 def verify_claim_against_evidence(claim, evidence, model = nil)
-  prompt = fill_template(VERIFY_CLAIM_PROMPT, {
+  prompt = Utils.fill_template(VERIFY_CLAIM_PROMPT, {
     claim: claim,
     evidence: evidence
   })
@@ -745,7 +565,7 @@ def verify_claim_against_evidence(claim, evidence, model = nil)
   LOG.debug "Verifying claim: #{claim.slice(0, 100)}..."
 
   begin
-    llm_response = call_llm(prompt, model)
+    llm_response = Utils.call_llm(prompt, model)
     result = llm_response.strip.upcase
 
     case result
@@ -783,7 +603,7 @@ def search_evidence_for_claim(claim, collection, script_dir, limit = 3)
   LOG.debug "Searching for evidence: #{search_cmd}"
 
   begin
-    search_output = run_cmd_safe(search_cmd)
+    search_output = Utils.run_cmd_safe(search_cmd)
     search_results = JSON.parse(search_output)
 
     if search_results.empty?
@@ -874,7 +694,7 @@ class InitialResearchNode < Pocketflow::Node
         end
         fetch_cmd += " #{Shellwords.escape(url)}"
 
-        conversation_json = run_cmd_safe(fetch_cmd)
+        conversation_json = Utils.run_cmd_safe(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
         metadata = extract_conversation_metadata(conversation_data)
@@ -930,14 +750,14 @@ class AskClarifyingNode < Pocketflow::Node
     end
 
     # Fill template and call LLM
-    prompt = fill_template(ASK_CLARIFY_PROMPT, {
+    prompt = Utils.fill_template(ASK_CLARIFY_PROMPT, {
       request: shared[:request],
       initial_findings: initial_findings
     })
 
     LOG.debug "Calling LLM to generate clarifying questions..."
     # Use fast model for clarifying questions - this is light reasoning to generate questions based on initial findings
-    llm_response = call_llm(prompt, shared[:models][:fast])
+    llm_response = Utils.call_llm(prompt, shared[:models][:fast])
 
     LOG.info "Generated clarifying questions for user review"
     LOG.debug do
@@ -974,7 +794,7 @@ Please review the following questions and provide inline answers to help focus t
 CONTENT
 
     # Open editor
-    edited_content = edit_text(editor_content, @shared[:editor_file])
+    edited_content = Utils.edit_text(editor_content, @shared[:editor_file])
 
     LOG.info "User provided clarifications"
     LOG.debug do
@@ -1023,7 +843,7 @@ class PlannerNode < Pocketflow::Node
       findings_summary = shared[:memory][:notes].join("\n\n")
       previous_queries = shared[:memory][:search_queries].join(", ")
 
-      prompt = fill_template(UNSUPPORTED_CLAIMS_RESEARCH_PROMPT, {
+      prompt = Utils.fill_template(UNSUPPORTED_CLAIMS_RESEARCH_PROMPT, {
         request: shared[:request],
         clarifications: shared[:clarifications] || "",
         unsupported_claims: unsupported_claims_list,
@@ -1032,7 +852,7 @@ class PlannerNode < Pocketflow::Node
       })
 
       LOG.debug "Calling LLM to generate search query for unsupported claims..."
-      llm_response = call_llm(prompt, shared[:models][:fast])
+      llm_response = Utils.call_llm(prompt, shared[:models][:fast])
       refined_query = parse_semantic_search_response(llm_response)
       LOG.info "Generated claim verification search plan: #{refined_query}"
 
@@ -1068,7 +888,7 @@ class PlannerNode < Pocketflow::Node
 
     if search_mode == "semantic"
       # Generate natural language query for semantic search
-      prompt = fill_template(SEMANTIC_RESEARCH_PROMPT, {
+      prompt = Utils.fill_template(SEMANTIC_RESEARCH_PROMPT, {
         request: shared[:request],
         clarifications: shared[:clarifications] || "",
         findings_summary: findings_summary,
@@ -1076,40 +896,40 @@ class PlannerNode < Pocketflow::Node
       })
 
       LOG.debug "Calling LLM to generate natural language search query..."
-      llm_response = call_llm(prompt, shared[:models][:fast])
+      llm_response = Utils.call_llm(prompt, shared[:models][:fast])
       refined_query = parse_semantic_search_response(llm_response)
       LOG.info "Generated semantic search plan: #{refined_query}"
     elsif search_mode == "keyword"
       # Generate GitHub search string for keyword search
-      prompt = fill_template(GITHUB_SEARCH_PROMPT, {
+      prompt = Utils.fill_template(GITHUB_SEARCH_PROMPT, {
         request: shared[:request],
         clarifications: shared[:clarifications] || ""
       })
 
       LOG.debug "Calling LLM to generate GitHub search query..."
-      refined_query = call_llm(prompt, shared[:models][:fast])
+      refined_query = Utils.call_llm(prompt, shared[:models][:fast])
       LOG.info "Generated GitHub search query: \"#{refined_query}\""
     else
       # Hybrid mode: generate both semantic and keyword queries
-      semantic_prompt = fill_template(SEMANTIC_RESEARCH_PROMPT, {
+      semantic_prompt = Utils.fill_template(SEMANTIC_RESEARCH_PROMPT, {
         request: shared[:request],
         clarifications: shared[:clarifications] || "",
         findings_summary: findings_summary,
         previous_queries: previous_queries
       })
 
-      keyword_prompt = fill_template(GITHUB_SEARCH_PROMPT, {
+      keyword_prompt = Utils.fill_template(GITHUB_SEARCH_PROMPT, {
         request: shared[:request],
         clarifications: shared[:clarifications] || ""
       })
 
       LOG.debug "Calling LLM to generate semantic query..."
-      semantic_response = call_llm(semantic_prompt, shared[:models][:fast])
+      semantic_response = Utils.call_llm(semantic_prompt, shared[:models][:fast])
       semantic_query = parse_semantic_search_response(semantic_response)
       LOG.info "Generated semantic query: #{semantic_query}"
 
       LOG.debug "Calling LLM to generate keyword query..."
-      keyword_query = call_llm(keyword_prompt, shared[:models][:fast])
+      keyword_query = Utils.call_llm(keyword_prompt, shared[:models][:fast])
       LOG.info "Generated keyword query: \"#{keyword_query}\""
 
       refined_query = {
@@ -1446,7 +1266,7 @@ class RetrieverNode < Pocketflow::Node
         end
         fetch_cmd += " #{Shellwords.escape(url)}"
 
-        conversation_json = run_cmd_safe(fetch_cmd)
+        conversation_json = Utils.run_cmd_safe(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
         metadata = extract_conversation_metadata(conversation_data)
@@ -1807,123 +1627,6 @@ class ClaimVerifierNode < Pocketflow::Node
   end
 end
 
-class FinalReportNode < Pocketflow::Node
-  def prep(shared)
-    @shared = shared # Store shared context
-    LOG.info "=== FINAL REPORT PHASE ==="
-    LOG.info "Generating final report from all gathered data..."
-
-    compaction_note = ""
-    if shared[:compaction_attempts] && shared[:compaction_attempts] > 0
-      compaction_note = " (after #{shared[:compaction_attempts]} context compaction attempts)"
-    end
-
-    LOG.info "Research summary: #{shared[:memory][:hits].length} conversations analyzed#{compaction_note}, #{shared[:memory][:search_queries].length} queries used, #{shared[:current_depth] || 0} deep research iterations"
-
-    LOG.debug do
-      sources_list = shared[:memory][:hits].map.with_index do |hit, i|
-        "  #{i + 1}. #{hit[:url]} (score: #{hit[:score]})"
-      end.join("\n")
-      "All conversation sources:\n#{sources_list}"
-    end
-
-    # Compile all findings
-    all_findings = shared[:memory][:hits].map do |hit|
-      <<~FINDING
-      **Source**: #{hit[:url]}
-      **Summary**: #{hit[:summary]}
-      **Relevance Score**: #{hit[:score]}
-
-      **Conversation Details**:
-      #{JSON.pretty_generate(hit[:conversation])}
-      FINDING
-    end.join("\n\n---\n\n")
-
-    prompt = fill_template(FINAL_REPORT_PROMPT, {
-      request: shared[:request],
-      clarifications: shared[:clarifications] || "None provided",
-      all_findings: all_findings
-    })
-
-    LOG.debug "Calling LLM to generate final report..."
-    prompt
-  end
-
-  def exec(prompt)
-    begin
-      # Use reasoning model for final report - this requires complex analysis and synthesis of all gathered data
-      draft_answer = call_llm(prompt, @shared[:models][:reasoning])
-
-      # Store the draft answer for claim verification
-      @shared[:draft_answer] = draft_answer
-
-      draft_answer
-    rescue => e
-      if context_too_large_error?(e.message) || rate_limit_error?(e.message)
-        if rate_limit_error?(e.message)
-          LOG.warn "Rate limit encountered: #{e.message}"
-          LOG.info "Will attempt to compact context to reduce token usage and retry..."
-        else
-          LOG.warn "Context too large for model: #{e.message}"
-          LOG.info "Will attempt to compact context and retry..."
-        end
-
-        # Store the error for reference
-        @shared[:last_context_error] = e.message
-
-        # Return a special signal to indicate compaction is needed
-        return :context_too_large
-      else
-        # Re-raise other errors
-        LOG.error "Unexpected error during final report generation: #{e.message}"
-        raise e
-      end
-    end
-  end
-
-  def post(shared, prep_res, exec_res)
-    # Check if we need to compact context
-    if exec_res == :context_too_large
-      LOG.info "Context too large, routing to compaction..."
-      return "compact"
-    end
-
-    # Check if this is the first time generating the report (route to claim verification)
-    unless shared[:claim_verification_completed]
-      LOG.info "Routing to claim verification before final output"
-      shared[:claim_verification_completed] = true
-      return "verify"
-    end
-
-    # Final output with claim verification results
-    LOG.info "=== FINAL REPORT ===\n\n"
-    puts exec_res
-
-    # Add note about unsupported claims if any
-    if shared[:unsupported_claims] && shared[:unsupported_claims].any?
-      puts "\n\n---\n\n"
-      puts "**Note**: The following #{shared[:unsupported_claims].length} claims could not be fully verified against the available evidence:"
-      shared[:unsupported_claims].each_with_index do |claim, i|
-        puts "#{i + 1}. #{claim}"
-      end
-    end
-
-    compaction_note = ""
-    if shared[:compaction_attempts] && shared[:compaction_attempts] > 0
-      compaction_note = " (after #{shared[:compaction_attempts]} context compaction attempts)"
-    end
-
-    verification_note = ""
-    if shared[:claim_verification]
-      verification_note = ", #{shared[:claim_verification][:total_claims]} claims verified (#{shared[:claim_verification][:supported_claims].length} supported, #{shared[:claim_verification][:unsupported_claims].length} unsupported)"
-    end
-
-    LOG.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}#{compaction_note}#{verification_note}"
-
-    "complete"
-  end
-end
-
 # === Main Script ===
 
 # Parse command-line options
@@ -2046,7 +1749,7 @@ planner_node = PlannerNode.new
 retriever_node = RetrieverNode.new
 compaction_node = ContextCompactionNode.new
 claim_verifier_node = ClaimVerifierNode.new
-final_node = FinalReportNode.new
+final_node = GitHubDeepResearchAgent::FinalReportNode.new
 end_node = GitHubDeepResearchAgent::EndNode.new
 
 # Link the nodes
