@@ -100,6 +100,18 @@ module Utils
     system("which #{cmd} > /dev/null 2>&1") || abort("Required dependency '#{cmd}' not found in PATH.")
   end
 
+  # Public: Runs a shell command and returns stdout. Aborts if the command fails.
+  #
+  # cmd - The shell command to run (String).
+  #
+  # Returns the standard output of the command (String).
+  # Aborts with an error message if the command fails.
+  def self.run_cmd(cmd)
+    stdout, stderr, status = Open3.capture3(cmd)
+    abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
+    stdout.strip
+  end
+
   # Public: Runs a shell command and returns stdout. Raises exception if the command fails.
   #
   # cmd - The shell command to run (String).
@@ -165,5 +177,162 @@ module Utils
     File.read(tmp_path)
   ensure
     tmp&.close unless file_path
+  end
+
+  # Public: Extracts conversation metadata from GitHub conversation data.
+  #
+  # conversation_data - The parsed JSON from fetch-github-conversation.
+  #
+  # Returns a Hash with conversation metadata and logging information.
+  def self.extract_conversation_metadata(conversation_data)
+    # Determine type and extract conversation metadata
+    conversation_type = if conversation_data["issue"]
+      "issue"
+    elsif conversation_data["pr"]
+      "pull request"
+    elsif conversation_data["discussion"]
+      "discussion"
+    else
+      "unknown"
+    end
+
+    # Get the actual conversation object based on type
+    conversation_obj = conversation_data["issue"] || conversation_data["pr"] || conversation_data["discussion"] || {}
+
+    # Extract metadata for logging and return
+    {
+      type: conversation_type,
+      title: conversation_obj["title"] || "Unknown title",
+      state: conversation_obj["state"] || "unknown",
+      comments_count: conversation_data["comments"]&.length || 0
+    }
+  end
+
+  # Public: Extracts qualifiers from user query and builds semantic search query.
+  #
+  # user_query - String containing the user's query with potential qualifiers.
+  #
+  # Returns a Hash with:
+  #   - :semantic_query - String with qualifiers stripped for embedding
+  #   - :repo_filter - String with repo qualifier (e.g., "owner/name") or nil
+  #   - :author_filter - String with author qualifier or nil
+  def self.build_semantic_query(user_query)
+    # Extract repo: and author: qualifiers
+    repo_match = user_query.match(/\brepo:(\S+)/)
+    author_match = user_query.match(/\bauthor:(\S+)/)
+
+    # Strip qualifiers from the query for semantic search
+    semantic_query = user_query.dup
+    semantic_query.gsub!(/\brepo:\S+/, '')
+    semantic_query.gsub!(/\bauthor:\S+/, '')
+    semantic_query.strip!
+
+    # Clean up extra whitespace
+    semantic_query.gsub!(/\s+/, ' ')
+
+    {
+      semantic_query: semantic_query,
+      repo_filter: repo_match ? repo_match[1] : nil,
+      author_filter: author_match ? author_match[1] : nil
+    }
+  end
+
+  # Public: Builds semantic search command with filters and ordering.
+  #
+  # search_plan - Hash containing query and optional filters.
+  # script_dir - String path to the script directory.
+  # collection - String collection name.
+  # top_k - Integer limit for results.
+  #
+  # Returns the command string.
+  def self.build_semantic_search_command(search_plan, script_dir, collection, top_k)
+    cmd = "#{script_dir}/semantic-search-github-conversations"
+    cmd += " #{Shellwords.escape(search_plan[:semantic_query] || search_plan[:query])}"
+    cmd += " --collection #{Shellwords.escape(collection)}"
+    cmd += " --limit #{top_k}"
+    cmd += " --format json"
+
+    # Add date filters if present
+    if search_plan[:created_after]
+      cmd += " --filter created_after:#{Shellwords.escape(search_plan[:created_after])}"
+    end
+    if search_plan[:created_before]
+      cmd += " --filter created_before:#{Shellwords.escape(search_plan[:created_before])}"
+    end
+
+    # Add repo filter if present
+    if search_plan[:repo_filter]
+      cmd += " --filter repo:#{Shellwords.escape(search_plan[:repo_filter])}"
+    end
+
+    # Add author filter if present
+    if search_plan[:author_filter]
+      cmd += " --filter author:#{Shellwords.escape(search_plan[:author_filter])}"
+    end
+
+    # Add ordering if present
+    if search_plan[:order_by]
+      order_by_str = "#{search_plan[:order_by][:key]} #{search_plan[:order_by][:direction]}"
+      cmd += " --order-by #{Shellwords.escape(order_by_str)}"
+    end
+
+    cmd
+  end
+
+  # Public: Parses structured semantic search response from LLM.
+  #
+  # llm_response - The String response from LLM (should be JSON).
+  #
+  # Returns a Hash with parsed query and filter information.
+  def self.parse_semantic_search_response(llm_response)
+    begin
+      # Clean up response - remove markdown code blocks if present
+      cleaned_response = llm_response.strip
+      if cleaned_response.start_with?('```json')
+        # Remove ```json from start and ``` from end
+        cleaned_response = cleaned_response.gsub(/\A```json\s*/, '').gsub(/\s*```\z/, '')
+      elsif cleaned_response.start_with?('```')
+        # Remove generic ``` from start and end
+        cleaned_response = cleaned_response.gsub(/\A```\s*/, '').gsub(/\s*```\z/, '')
+      end
+
+      # Try to parse as JSON first
+      parsed = JSON.parse(cleaned_response.strip)
+
+      # Validate required fields
+      unless parsed["query"] && parsed["query"].is_a?(String)
+        raise "Missing or invalid 'query' field"
+      end
+
+      result = { query: parsed["query"] }
+
+      # Add optional fields if present
+      if parsed["created_after"]
+        result[:created_after] = parsed["created_after"]
+      end
+
+      if parsed["created_before"]
+        result[:created_before] = parsed["created_before"]
+      end
+
+      if parsed["order_by"]
+        # Parse order_by into field and direction
+        parts = parsed["order_by"].split(" ", 2)
+        if parts.length == 2 && parts[0] == "created_at" && %w[asc desc].include?(parts[1])
+          result[:order_by] = { key: parts[0], direction: parts[1] }
+        else
+          # Add logging to warn about invalid order_by format
+          result[:order_by] = nil
+        end
+      end
+
+      result
+    rescue JSON::ParserError
+      # Fallback: treat as plain text query for backwards compatibility
+      { query: llm_response.strip }
+    rescue => e
+      # Generic error handling
+      { query: llm_response.strip }
+    end
   end
 end

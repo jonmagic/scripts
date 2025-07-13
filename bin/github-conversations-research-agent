@@ -42,6 +42,7 @@ require_relative "../lib/github_deep_research_agent/end_node"
 require_relative "../lib/github_deep_research_agent/final_report_node"
 require_relative "../lib/github_deep_research_agent/claim_verifier_node"
 require_relative "../lib/github_deep_research_agent/context_compaction_node"
+require_relative "../lib/github_deep_research_agent/retriever_node"
 
 # Set up global logger
 LOG = Logger.new($stdout)
@@ -157,270 +158,6 @@ Do not use markdown code blocks - return only the raw JSON object.
 {"query": "Performance measurement results and optimization outcomes with concrete metrics"}
 PROMPT
 
-# === Helper Methods ===
-
-# Public: Runs a shell command and returns stdout. Aborts if the command fails.
-#
-# cmd - The shell command to run (String).
-#
-# Returns the standard output of the command (String).
-# Raises SystemExit if the command fails.
-def run_cmd(cmd)
-  stdout, stderr, status = Open3.capture3(cmd)
-  abort "Command failed: #{cmd}\n#{stderr}" unless status.success?
-  stdout.strip
-end
-
-# Public: Extracts conversation metadata from GitHub conversation data.
-#
-# conversation_data - The parsed JSON from fetch-github-conversation.
-#
-# Returns a Hash with conversation metadata and logging information.
-def extract_conversation_metadata(conversation_data)
-  # Determine type and extract conversation metadata
-  conversation_type = if conversation_data["issue"]
-    "issue"
-  elsif conversation_data["pr"]
-    "pull request"
-  elsif conversation_data["discussion"]
-    "discussion"
-  else
-    "unknown"
-  end
-
-  # Get the actual conversation object based on type
-  conversation_obj = conversation_data["issue"] || conversation_data["pr"] || conversation_data["discussion"] || {}
-
-  # Extract metadata for logging and return
-  {
-    type: conversation_type,
-    title: conversation_obj["title"] || "Unknown title",
-    state: conversation_obj["state"] || "unknown",
-    comments_count: conversation_data["comments"]&.length || 0
-  }
-end
-
-# Public: Parses structured semantic search response from LLM.
-#
-# llm_response - The String response from LLM (should be JSON).
-#
-# Returns a Hash with parsed query and filter information.
-def parse_semantic_search_response(llm_response)
-  begin
-    # Clean up response - remove markdown code blocks if present
-    cleaned_response = llm_response.strip
-    if cleaned_response.start_with?('```json')
-      # Remove ```json from start and ``` from end
-      cleaned_response = cleaned_response.gsub(/\A```json\s*/, '').gsub(/\s*```\z/, '')
-    elsif cleaned_response.start_with?('```')
-      # Remove generic ``` from start and end
-      cleaned_response = cleaned_response.gsub(/\A```\s*/, '').gsub(/\s*```\z/, '')
-    end
-
-    # Try to parse as JSON first
-    parsed = JSON.parse(cleaned_response.strip)
-
-    # Validate required fields
-    unless parsed["query"] && parsed["query"].is_a?(String)
-      raise "Missing or invalid 'query' field"
-    end
-
-    result = { query: parsed["query"] }
-
-    # Add optional fields if present
-    if parsed["created_after"]
-      result[:created_after] = parsed["created_after"]
-    end
-
-    if parsed["created_before"]
-      result[:created_before] = parsed["created_before"]
-    end
-
-    if parsed["order_by"]
-      # Parse order_by into field and direction
-      parts = parsed["order_by"].split(" ", 2)
-      if parts.length == 2 && parts[0] == "created_at" && %w[asc desc].include?(parts[1])
-        result[:order_by] = { key: parts[0], direction: parts[1] }
-      else
-        LOG.warn "Invalid order_by format: #{parsed['order_by']}, ignoring"
-      end
-    end
-
-    result
-  rescue JSON::ParserError
-    # Fallback: treat as plain text query for backwards compatibility
-    LOG.warn "LLM response was not valid JSON, treating as plain text query"
-    LOG.debug "Raw LLM response: #{llm_response.inspect}"
-    { query: llm_response.strip }
-  rescue => e
-    LOG.warn "Error parsing structured search response: #{e.message}, treating as plain text"
-    LOG.debug "Raw LLM response: #{llm_response.inspect}" if llm_response
-    { query: llm_response.strip }
-  end
-end
-
-
-# Public: Extracts qualifiers from user query and builds semantic search query.
-#
-# user_query - String containing the user's query with potential qualifiers.
-#
-# Returns a Hash with:
-#   - :semantic_query - String with qualifiers stripped for embedding
-#   - :repo_filter - String with repo qualifier (e.g., "owner/name") or nil
-#   - :author_filter - String with author qualifier or nil
-def build_semantic_query(user_query)
-  # Extract repo: and author: qualifiers
-  repo_match = user_query.match(/\brepo:(\S+)/)
-  author_match = user_query.match(/\bauthor:(\S+)/)
-
-  # Strip qualifiers from the query for semantic search
-  semantic_query = user_query.dup
-  semantic_query.gsub!(/\brepo:\S+/, '')
-  semantic_query.gsub!(/\bauthor:\S+/, '')
-  semantic_query.strip!
-
-  # Clean up extra whitespace
-  semantic_query.gsub!(/\s+/, ' ')
-
-  {
-    semantic_query: semantic_query,
-    repo_filter: repo_match ? repo_match[1] : nil,
-    author_filter: author_match ? author_match[1] : nil
-  }
-end
-
-# Public: Fetches existing summary from Qdrant using URL filter.
-#
-# url - The String GitHub conversation URL to search for.
-# collection - The String Qdrant collection name.
-# script_dir - The String path to the script directory.
-#
-# Returns the summary String if found, nil otherwise.
-def fetch_summary_from_qdrant(url, collection, script_dir)
-  begin
-    search_cmd = "#{script_dir}/semantic-search-github-conversations"
-    search_cmd += " --collection #{Shellwords.escape(collection)}"
-    search_cmd += " --filter url:#{Shellwords.escape(url)}"
-    search_cmd += " --limit 1"
-    search_cmd += " --format json"
-    search_cmd += " #{Shellwords.escape('*')}"  # Dummy query since we're filtering by URL
-
-    LOG.debug "Fetching existing summary from Qdrant: #{search_cmd}"
-
-    search_output = run_cmd(search_cmd)
-    search_results = JSON.parse(search_output)
-
-    if search_results.any?
-      summary = search_results.first.dig("payload", "summary")
-      LOG.debug "Found existing summary in Qdrant for #{url}: #{summary&.slice(0, 100)}..."
-      return summary
-    else
-      LOG.debug "No existing summary found in Qdrant for #{url}"
-      return nil
-    end
-  rescue => e
-    LOG.warn "Failed to fetch summary from Qdrant for #{url}: #{e.message}"
-    return nil
-  end
-end
-
-# Public: Generates a new summary for a GitHub conversation.
-#
-# url - The String GitHub conversation URL.
-# executive_summary_prompt_path - The String path to the prompt file.
-# cache_path - The String cache path (optional).
-#
-# Returns the generated summary String, or empty string on failure.
-def generate_new_summary(url, executive_summary_prompt_path, cache_path = nil)
-  begin
-    LOG.debug "Generating new summary for #{url}"
-
-    summarize_cmd = "#{File.dirname(__FILE__)}/summarize-github-conversation"
-    summarize_cmd += " --executive-summary-prompt-path #{Shellwords.escape(executive_summary_prompt_path)}"
-
-    if cache_path
-      summarize_cmd += " --cache-path #{Shellwords.escape(cache_path)}"
-    end
-
-    summarize_cmd += " #{Shellwords.escape(url)}"
-
-    LOG.debug "Running summary generation: #{summarize_cmd}"
-
-    summary = run_cmd(summarize_cmd)
-    LOG.debug "Generated summary for #{url}: #{summary&.slice(0, 100)}..."
-
-    return summary.strip
-  rescue => e
-    LOG.warn "Failed to generate summary for #{url}: #{e.message}"
-    return ""
-  end
-end
-
-# Public: Gets or generates a summary for a GitHub conversation.
-#
-# url - The String GitHub conversation URL.
-# collection - The String Qdrant collection name.
-# script_dir - The String path to the script directory.
-# executive_summary_prompt_path - The String path to the prompt file (optional).
-# cache_path - The String cache path (optional).
-#
-# Returns the summary String (empty string if generation fails or is disabled).
-def get_or_generate_summary(url, collection, script_dir, executive_summary_prompt_path = nil, cache_path = nil)
-  # Step 1: Try to fetch existing summary from Qdrant
-  existing_summary = fetch_summary_from_qdrant(url, collection, script_dir)
-  return existing_summary if existing_summary && !existing_summary.empty?
-
-  # Step 2: Generate new summary if prompt path is provided
-  if executive_summary_prompt_path
-    return generate_new_summary(url, executive_summary_prompt_path, cache_path)
-  else
-    LOG.warn "No executive summary prompt path provided - skipping summary generation for #{url}"
-    return ""
-  end
-end
-
-# Public: Builds semantic search command with filters and ordering.
-#
-# search_plan - Hash containing query and optional filters.
-# script_dir - String path to the script directory.
-# collection - String collection name.
-# top_k - Integer limit for results.
-#
-# Returns the command string.
-def build_semantic_search_command(search_plan, script_dir, collection, top_k)
-  cmd = "#{script_dir}/semantic-search-github-conversations"
-  cmd += " #{Shellwords.escape(search_plan[:semantic_query] || search_plan[:query])}"
-  cmd += " --collection #{Shellwords.escape(collection)}"
-  cmd += " --limit #{top_k}"
-  cmd += " --format json"
-
-  # Add date filters if present
-  if search_plan[:created_after]
-    cmd += " --filter created_after:#{Shellwords.escape(search_plan[:created_after])}"
-  end
-  if search_plan[:created_before]
-    cmd += " --filter created_before:#{Shellwords.escape(search_plan[:created_before])}"
-  end
-
-  # Add repo filter if present
-  if search_plan[:repo_filter]
-    cmd += " --filter repo:#{Shellwords.escape(search_plan[:repo_filter])}"
-  end
-
-  # Add author filter if present
-  if search_plan[:author_filter]
-    cmd += " --filter author:#{Shellwords.escape(search_plan[:author_filter])}"
-  end
-
-  # Add ordering if present
-  if search_plan[:order_by]
-    order_by_str = "#{search_plan[:order_by][:key]} #{search_plan[:order_by][:direction]}"
-    cmd += " --order-by #{Shellwords.escape(order_by_str)}"
-  end
-
-  cmd
-end
-
 # === Pocketflow Nodes ===
 
 class InitialResearchNode < Pocketflow::Node
@@ -437,7 +174,7 @@ class InitialResearchNode < Pocketflow::Node
     script_dir = shared[:script_dir]
 
     # Extract qualifiers from the initial request for semantic search
-    semantic_query_info = build_semantic_query(request)
+    semantic_query_info = Utils.build_semantic_query(request)
     LOG.debug "Extracted semantic query: '#{semantic_query_info[:semantic_query]}'"
     LOG.debug "Extracted repo filter: #{semantic_query_info[:repo_filter]}" if semantic_query_info[:repo_filter]
     LOG.debug "Extracted author filter: #{semantic_query_info[:author_filter]}" if semantic_query_info[:author_filter]
@@ -446,10 +183,10 @@ class InitialResearchNode < Pocketflow::Node
     search_plan = semantic_query_info.merge({ query: request })
 
     # Run semantic search with qualifier extraction
-    search_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
+    search_cmd = Utils.build_semantic_search_command(search_plan, script_dir, collection, top_k)
     LOG.debug "Running search command: #{search_cmd}"
 
-    search_output = run_cmd(search_cmd)
+    search_output = Utils.run_cmd(search_cmd)
     search_results = JSON.parse(search_output)
 
     LOG.info "Found #{search_results.length} initial results"
@@ -488,7 +225,7 @@ class InitialResearchNode < Pocketflow::Node
         conversation_json = Utils.run_cmd_safe(fetch_cmd)
         conversation_data = JSON.parse(conversation_json)
 
-        metadata = extract_conversation_metadata(conversation_data)
+        metadata = Utils.extract_conversation_metadata(conversation_data)
 
         LOG.debug do
           "✓ Successfully fetched: #{metadata[:title]}\n" \
@@ -644,7 +381,7 @@ class PlannerNode < Pocketflow::Node
 
       LOG.debug "Calling LLM to generate search query for unsupported claims..."
       llm_response = Utils.call_llm(prompt, shared[:models][:fast])
-      refined_query = parse_semantic_search_response(llm_response)
+      refined_query = Utils.parse_semantic_search_response(llm_response)
       LOG.info "Generated claim verification search plan: #{refined_query}"
 
       return refined_query
@@ -688,7 +425,7 @@ class PlannerNode < Pocketflow::Node
 
       LOG.debug "Calling LLM to generate natural language search query..."
       llm_response = Utils.call_llm(prompt, shared[:models][:fast])
-      refined_query = parse_semantic_search_response(llm_response)
+      refined_query = Utils.parse_semantic_search_response(llm_response)
       LOG.info "Generated semantic search plan: #{refined_query}"
     elsif search_mode == "keyword"
       # Generate GitHub search string for keyword search
@@ -716,7 +453,7 @@ class PlannerNode < Pocketflow::Node
 
       LOG.debug "Calling LLM to generate semantic query..."
       semantic_response = Utils.call_llm(semantic_prompt, shared[:models][:fast])
-      semantic_query = parse_semantic_search_response(semantic_response)
+      semantic_query = Utils.parse_semantic_search_response(semantic_response)
       LOG.info "Generated semantic query: #{semantic_query}"
 
       LOG.debug "Calling LLM to generate keyword query..."
@@ -861,300 +598,6 @@ class PlannerNode < Pocketflow::Node
   end
 end
 
-# RetrieverNode: Executes the actual search based on PlannerNode's decisions.
-#
-# This node retrieves conversations using the search strategy determined by PlannerNode.
-# Currently hard-coded to semantic search to maintain compatibility during transition.
-# TODO: Implement keyword search support in next iteration.
-class RetrieverNode < Pocketflow::Node
-  def prep(shared)
-    @shared = shared # Store shared context
-    search_plan = shared[:next_search]
-
-    if search_plan.nil?
-      LOG.error "No search plan found from PlannerNode"
-      return nil
-    end
-
-    LOG.info "=== RETRIEVAL PHASE ==="
-    LOG.info "Executing #{search_plan[:tool]} search with query: \"#{search_plan[:query]}\""
-
-    search_plan
-  end
-
-  def exec(search_plan)
-    return [] if search_plan.nil?
-
-    tool = search_plan[:tool]
-    collection = @shared[:collection]
-    top_k = @shared[:top_k]
-    script_dir = @shared[:script_dir]
-
-    if tool == :hybrid
-      # Run both semantic and keyword searches and combine results
-      semantic_query = search_plan[:semantic_query]
-      keyword_query = search_plan[:keyword_query]
-
-      LOG.info "Running semantic search with query: \"#{semantic_query}\""
-      semantic_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
-      LOG.debug "Semantic search command: #{semantic_cmd}"
-
-      semantic_output = run_cmd(semantic_cmd)
-      semantic_results = JSON.parse(semantic_output)
-      LOG.debug "Raw semantic search results: #{semantic_results.length} conversations found"
-
-      LOG.info "Running keyword search with query: \"#{keyword_query}\""
-      keyword_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(keyword_query)}"
-      LOG.debug "Keyword search command: #{keyword_cmd}"
-
-      keyword_output = run_cmd(keyword_cmd)
-      keyword_results = JSON.parse(keyword_output)
-      LOG.debug "Raw keyword search results: #{keyword_results.length} conversations found"
-
-      # Convert keyword search results to match semantic search format
-      keyword_normalized = keyword_results.map do |result|
-        {
-          "payload" => {
-            "url" => result["url"],
-            "summary" => "" # No summary available from keyword search - will be enriched later
-          },
-          "score" => 0.0 # No relevance score from keyword search
-        }
-      end
-
-      # Combine results and deduplicate by URL
-      combined_results = semantic_results + keyword_normalized
-      url_to_result = {}
-      combined_results.each do |result|
-        url = result.dig("payload", "url")
-        next unless url
-        # Keep the semantic result if we have both (it has score and summary)
-        if !url_to_result[url] || result["score"] > 0
-          url_to_result[url] = result
-        end
-      end
-
-      search_results = url_to_result.values.first(top_k)
-      LOG.info "Combined #{semantic_results.length} semantic + #{keyword_results.length} keyword results into #{search_results.length} unique conversations"
-
-      # Enrich keyword search results with summaries
-      search_results.each do |result|
-        url = result.dig("payload", "url")
-        next unless url
-
-        # Skip if already has a summary (from semantic search)
-        next if result.dig("payload", "summary") && !result.dig("payload", "summary").empty?
-
-        # Get or generate summary for this conversation
-        summary = get_or_generate_summary(
-          url,
-          collection,
-          script_dir,
-          @shared[:executive_summary_prompt_path],
-          @shared[:cache_path]
-        )
-
-        # Update the result with the enriched summary
-        result["payload"]["summary"] = summary
-      end
-
-    elsif tool == :keyword
-      query = search_plan[:query]
-      LOG.info "Running keyword search with query..."
-      search_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(query)}"
-      LOG.debug "Search command: #{search_cmd}"
-
-      search_output = run_cmd(search_cmd)
-      keyword_results = JSON.parse(search_output)
-
-      LOG.debug "Raw keyword search results: #{keyword_results.length} conversations found"
-
-      # Convert keyword search results to match semantic search format
-      search_results = keyword_results.map do |result|
-        {
-          "payload" => {
-            "url" => result["url"],
-            "summary" => "" # No summary available from keyword search - will be enriched later
-          },
-          "score" => 0.0 # No relevance score from keyword search
-        }
-      end
-
-      # Limit results to top_k
-      search_results = search_results.first(top_k)
-
-      # Enrich keyword search results with summaries
-      search_results.each do |result|
-        url = result.dig("payload", "url")
-        next unless url
-
-        # Get or generate summary for this conversation
-        summary = get_or_generate_summary(
-          url,
-          collection,
-          script_dir,
-          @shared[:executive_summary_prompt_path],
-          @shared[:cache_path]
-        )
-
-        # Update the result with the enriched summary
-        result["payload"]["summary"] = summary
-      end
-    else
-      query = search_plan[:query]
-      LOG.info "Running semantic search with query..."
-
-      # Extract qualifiers from the query for semantic search
-      semantic_query_info = build_semantic_query(query)
-      LOG.debug "Extracted semantic query: '#{semantic_query_info[:semantic_query]}'"
-      LOG.debug "Extracted repo filter: #{semantic_query_info[:repo_filter]}" if semantic_query_info[:repo_filter]
-      LOG.debug "Extracted author filter: #{semantic_query_info[:author_filter]}" if semantic_query_info[:author_filter]
-
-      # Build updated search plan with extracted qualifiers
-      updated_search_plan = search_plan.merge(semantic_query_info)
-
-      search_cmd = build_semantic_search_command(updated_search_plan, script_dir, collection, top_k)
-      LOG.debug "Search command: #{search_cmd}"
-
-      search_output = run_cmd(search_cmd)
-      search_results = JSON.parse(search_output)
-
-      LOG.debug "Raw semantic search results: #{search_results.length} conversations found"
-    end
-
-    # Deduplicate URLs we already have
-    existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
-    new_results = search_results.reject { |result| existing_urls.include?(result.dig("payload", "url")) }
-
-    LOG.info "Found #{new_results.length} new conversations after deduplication"
-
-    if new_results.empty?
-      LOG.info "No new results found - all were duplicates"
-      return []
-    end
-
-    LOG.debug do
-      result_details = new_results.map.with_index do |result, i|
-        "  #{i + 1}. URL: #{result.dig('payload', 'url')}\n" \
-        "     Score: #{result['score']}\n" \
-        "     Summary: #{result.dig('payload', 'summary')&.slice(0, 100)}..."
-      end.join("\n\n")
-      "New results found:\n#{result_details}"
-    end
-
-    # Fetch detailed data for new results
-    new_enriched = []
-    new_results.each_with_index do |result, i|
-      url = result.dig("payload", "url")
-      next unless url
-
-      LOG.debug "Fetching details for new result #{i + 1}/#{new_results.length}: #{url}"
-
-      begin
-        fetch_cmd = "#{@shared[:script_dir]}/fetch-github-conversation"
-        if @shared[:cache_path]
-          fetch_cmd += " --cache-path #{Shellwords.escape(@shared[:cache_path])}"
-        end
-        fetch_cmd += " #{Shellwords.escape(url)}"
-
-        conversation_json = Utils.run_cmd_safe(fetch_cmd)
-        conversation_data = JSON.parse(conversation_json)
-
-        metadata = extract_conversation_metadata(conversation_data)
-
-        LOG.debug do
-          "✓ Successfully fetched: #{metadata[:title]}\n" \
-          "  Type: #{metadata[:type]}\n" \
-          "  State: #{metadata[:state]}\n" \
-          "  Comments: #{metadata[:comments_count]}"
-        end
-
-        new_enriched << {
-          url: url,
-          summary: result.dig("payload", "summary") || "",
-          score: result["score"],
-          conversation: conversation_data
-        }
-      rescue => e
-        LOG.warn "Failed to fetch #{url}: #{e.message}"
-      end
-    end
-
-    LOG.info "Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
-
-    # Enrich any conversations that still have empty summaries (from keyword searches)
-    new_enriched.each do |enriched_result|
-      url = enriched_result[:url]
-      next unless url
-
-      # Skip if already has a summary (from semantic search)
-      next if enriched_result[:summary] && !enriched_result[:summary].empty?
-
-      # Get or generate summary for this conversation
-      summary = get_or_generate_summary(
-        url,
-        @shared[:collection],
-        @shared[:script_dir],
-        @shared[:executive_summary_prompt_path],
-        @shared[:cache_path]
-      )
-
-      # Update the result with the enriched summary
-      enriched_result[:summary] = summary
-    end
-
-
-
-    new_enriched
-  end
-
-  def post(shared, prep_res, exec_res)
-    return "final" if prep_res.nil? # No search plan
-
-    # Store the query used for memory tracking
-    query = prep_res[:semantic_query] || prep_res[:query] || "Unknown query"
-
-    # Add new findings to memory
-    shared[:memory][:hits].concat(exec_res)
-    shared[:memory][:search_queries] << query
-
-    # Add research notes
-    if exec_res.any?
-      notes = exec_res.map { |hit| "#{hit[:url]}: #{hit[:summary]}" }.join("\n")
-      shared[:memory][:notes] << "Research iteration: #{notes}"
-      LOG.info "Added #{exec_res.length} new conversations to memory"
-    else
-      LOG.info "No new conversations added this iteration"
-    end
-
-    # Increment depth
-    shared[:current_depth] = (shared[:current_depth] || 0) + 1
-
-    LOG.debug do
-      "Current memory state:\n" \
-      "  Total conversations: #{shared[:memory][:hits].length}\n" \
-      "  Total search queries: #{shared[:memory][:search_queries].length}\n" \
-      "  Current depth: #{shared[:current_depth]}/#{shared[:max_depth]}"
-    end
-
-    # Continue if under max depth, otherwise go to final report
-    if shared[:current_depth] < shared[:max_depth] && exec_res.any?
-      LOG.info "Continuing to next research iteration..."
-      "continue" # Go back to planning for next iteration
-    else
-      LOG.info "Research complete, moving to final report..."
-
-      # Clear unsupported claims if we were researching them (to avoid re-triggering claim verification loop)
-      if shared[:unsupported_claims] && shared[:unsupported_claims].any?
-        LOG.info "Clearing unsupported claims after research attempt"
-        shared[:unsupported_claims] = []
-      end
-
-      "final"
-    end
-  end
-end
-
 # === Main Script ===
 
 # Parse command-line options
@@ -1274,7 +717,7 @@ shared = {
 initial_node = InitialResearchNode.new
 clarify_node = AskClarifyingNode.new
 planner_node = PlannerNode.new
-retriever_node = RetrieverNode.new
+retriever_node = GitHubDeepResearchAgent::RetrieverNode.new
 compaction_node = GitHubDeepResearchAgent::ContextCompactionNode.new
 claim_verifier_node = GitHubDeepResearchAgent::ClaimVerifierNode.new
 final_node = GitHubDeepResearchAgent::FinalReportNode.new
