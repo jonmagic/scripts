@@ -49,6 +49,7 @@
 # For detailed node documentation, see each class in `lib/github_deep_research_agent/`.
 
 require "json"
+require "logger"
 require "open3"
 require "set"
 require "shellwords"
@@ -68,4 +69,89 @@ require_relative "github_deep_research_agent/planner_node"
 require_relative "github_deep_research_agent/retriever_node"
 
 module GitHubDeepResearchAgent
+  # Start the research workflow with the given options
+  #
+  # @param request [String] The research request/question
+  # @param options [Hash] Configuration options
+  # @option options [String] :collection Qdrant collection name (required)
+  # @option options [Integer] :limit Max results per search (default: 5)
+  # @option options [Integer] :max_depth Max deep-research passes (default: 2)
+  # @option options [String] :editor_file Use fixed file instead of Tempfile
+  # @option options [String] :clarifying_qa Path to file with clarifying Q&A
+  # @option options [Boolean] :verbose Show debug logs (default: false)
+  # @option options [Hash] :models LLM model configuration {:fast, :reasoning}
+  # @option options [Array<String>] :search_modes Search modes to use (default: ["semantic", "keyword"])
+  # @option options [String] :cache_path Root path for caching fetched data
+  # @option options [String] :script_dir Directory containing the scripts
+  def self.start(request, options = {})
+    logger = options[:logger] || Log.logger
+
+    # Validate required arguments
+    if request.nil? || request.strip.empty?
+      raise ArgumentError, "Empty request provided"
+    end
+
+    unless options[:collection]
+      raise ArgumentError, "Collection is required"
+    end
+
+    # Set up shared context with defaults
+    shared = {
+      request: request,
+      collection: options[:collection],
+      top_k: options[:limit] || 5,
+      max_depth: options[:max_depth] || 2,
+      editor_file: options[:editor_file],
+      clarifying_qa: options[:clarifying_qa],
+      verbose: options[:verbose] || false,
+      search_modes: options[:search_modes] || ["semantic", "keyword"],
+      cache_path: options[:cache_path],
+      models: options[:models] || {},
+      script_dir: options[:script_dir] || File.expand_path(File.dirname(__FILE__) + "/../bin")
+    }
+
+    # Build the workflow
+    initial_node = GitHubDeepResearchAgent::InitialResearchNode.new(logger: logger)
+    clarify_node = GitHubDeepResearchAgent::AskClarifyingNode.new(logger: logger)
+    planner_node = GitHubDeepResearchAgent::PlannerNode.new(logger: logger)
+    retriever_node = GitHubDeepResearchAgent::RetrieverNode.new(logger: logger)
+    compaction_node = GitHubDeepResearchAgent::ContextCompactionNode.new(logger: logger)
+    claim_verifier_node = GitHubDeepResearchAgent::ClaimVerifierNode.new(logger: logger)
+    final_node = GitHubDeepResearchAgent::FinalReportNode.new(logger: logger)
+    end_node = GitHubDeepResearchAgent::EndNode.new(logger: logger)
+
+    # Link the nodes
+    initial_node.next(clarify_node)
+    clarify_node.next(planner_node)
+    planner_node.next(retriever_node)
+    retriever_node.on("continue", planner_node) # Loop back to planner for next iteration
+    retriever_node.on("final", final_node)
+
+    # Add claim verification flow
+    final_node.on("verify", claim_verifier_node)  # Route to claim verification after draft report
+    final_node.on("complete", end_node)           # Route to clean termination
+    claim_verifier_node.on("ok", final_node)     # Continue to final output after verification
+    claim_verifier_node.on("fix", planner_node)  # Route back to planner to gather evidence for unsupported claims
+
+    # Add compaction handling
+    final_node.on("compact", compaction_node)         # Route to compaction when context too large
+    compaction_node.on("retry", final_node)          # Retry final report after compaction
+    compaction_node.on("proceed_anyway", final_node) # Proceed with minimal context if compaction fails
+
+    # Set end node as the final termination point
+    final_node.next(end_node)
+
+    # Create and run the flow
+    flow = Pocketflow::Flow.new(initial_node)
+
+    logger.info "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
+    logger.info "Request: #{request}"
+    logger.info "Collection: #{options[:collection]}"
+    logger.info "Max results per search: #{shared[:top_k]}"
+    logger.info "Max deep research iterations: #{shared[:max_depth]}"
+    logger.info "Fast model: #{shared[:models][:fast] || 'default'}"
+    logger.info "Reasoning model: #{shared[:models][:reasoning] || 'default'}"
+
+    flow.run(shared)
+  end
 end

@@ -30,9 +30,7 @@ require "logger"
 require "optparse"
 
 require_relative "../lib/github_deep_research_agent"
-
 logger = Log.logger
-logger.level = Logger::INFO
 
 # === Main Script ===
 
@@ -105,9 +103,6 @@ rescue OptionParser::InvalidOption => e
   abort "#{e.message}\n\n#{opt_parser}"
 end
 
-# Set logger level based on verbose flag
-logger.level = options[:verbose] ? Logger::DEBUG : Logger::INFO
-
 # Validate required arguments
 if ARGV.empty?
   abort opt_parser.to_s
@@ -123,13 +118,11 @@ unless options[:collection]
   abort "Error: --collection is required\n\n#{opt_parser}"
 end
 
-# Set up shared context
+# Prepare options for the module
 script_dir = File.expand_path(File.dirname(__FILE__))
-
-shared = {
-  request: request,
+module_options = {
   collection: options[:collection],
-  top_k: options[:limit],
+  limit: options[:limit],
   max_depth: options[:max_depth],
   editor_file: options[:editor_file],
   clarifying_qa: options[:clarifying_qa],
@@ -140,58 +133,18 @@ shared = {
     fast: options[:fast_model],
     reasoning: options[:reasoning_model]
   },
-  script_dir: script_dir
+  script_dir: script_dir,
+  logger: logger,
 }
 
-# Build the workflow
-initial_node = GitHubDeepResearchAgent::InitialResearchNode.new
-clarify_node = GitHubDeepResearchAgent::AskClarifyingNode.new
-planner_node = GitHubDeepResearchAgent::PlannerNode.new
-retriever_node = GitHubDeepResearchAgent::RetrieverNode.new
-compaction_node = GitHubDeepResearchAgent::ContextCompactionNode.new
-claim_verifier_node = GitHubDeepResearchAgent::ClaimVerifierNode.new
-final_node = GitHubDeepResearchAgent::FinalReportNode.new
-end_node = GitHubDeepResearchAgent::EndNode.new
-
-# Link the nodes
-initial_node.next(clarify_node)
-clarify_node.next(planner_node)
-planner_node.next(retriever_node)
-retriever_node.on("continue", planner_node) # Loop back to planner for next iteration
-retriever_node.on("final", final_node)
-
-# Add claim verification flow
-final_node.on("verify", claim_verifier_node)  # Route to claim verification after draft report
-final_node.on("complete", end_node)           # Route to clean termination
-claim_verifier_node.on("ok", final_node)     # Continue to final output after verification
-claim_verifier_node.on("fix", planner_node)  # Route back to planner to gather evidence for unsupported claims
-
-# Add compaction handling
-final_node.on("compact", compaction_node)         # Route to compaction when context too large
-compaction_node.on("retry", final_node)          # Retry final report after compaction
-compaction_node.on("proceed_anyway", final_node) # Proceed with minimal context if compaction fails
-
-# Set end node as the final termination point
-final_node.next(end_node)
-
-# Create and run the flow
-flow = Pocketflow::Flow.new(initial_node)
-
+# Run the research workflow
 begin
-  logger.info "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
-  logger.info "Request: #{request}"
-  logger.info "Collection: #{options[:collection]}"
-  logger.info "Max results per search: #{options[:limit]}"
-  logger.info "Max deep research iterations: #{options[:max_depth]}"
-  logger.info "Fast model: #{shared[:models][:fast] || 'default'}"
-  logger.info "Reasoning model: #{shared[:models][:reasoning] || 'default'}"
-
-  flow.run(shared)
+  GitHubDeepResearchAgent.start(request, module_options)
 rescue Interrupt
   logger.error "\nResearch interrupted by user"
   exit 1
 rescue => e
   logger.error "Error: #{e.message}"
-  logger.debug e.backtrace.join("\n") if shared[:verbose]
+  logger.debug e.backtrace.join("\n") if options[:verbose]
   exit 1
 end

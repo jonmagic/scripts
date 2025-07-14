@@ -8,6 +8,13 @@ module GitHubDeepResearchAgent
   # @note This node intentionally implements only the exec() method since it serves
   #       as a termination point and doesn't require preparation or post-processing.
   class EndNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
+
     # Terminates the workflow by returning nil to the Pocketflow engine.
     #
     # @param * [Any] Accepts any parameters from upstream nodes (ignored)
