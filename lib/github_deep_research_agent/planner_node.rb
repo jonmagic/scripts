@@ -293,197 +293,123 @@ module GitHubDeepResearchAgent
       nil
     end
 
-    # Template for generating semantic search strategies based on research question
+    # Prompt template for generating semantic search strategies.
     #
-    # This template guides the LLM in creating semantic search strategies for GitHub
-    # conversations related to the research question. It focuses on conceptual understanding
-    # and thematic analysis rather than specific keyword matching.
-    #
-    # ## Template Variables
-    # - **{{request}}**: The original research question requiring semantic investigation
-    # - **{{clarifications}}**: User-provided context and clarifying responses
-    # - **{{findings_summary}}**: Current research findings and accumulated knowledge
-    # - **{{previous_queries}}**: Prior search attempts to avoid duplication
-    #
-    # ## Generated Output Format
-    # The template produces structured semantic queries optimized for vector similarity:
-    # - Conceptual terms that capture the essence of the research topic
-    # - Thematic keywords related to problem domains and solutions
-    # - Abstract concepts that may appear across multiple conversation types
-    #
-    # ## Search Strategy Focus
-    # Semantic searches excel at finding conversations that:
-    # - Discuss related concepts using different terminology
-    # - Address similar problems with varied approaches
-    # - Contain thematic overlap without exact keyword matches
-    # - Represent conceptual evolution of ideas over time
-    #
-    # ## JSON Output Structure
-    # Returns structured query with optional temporal constraints:
-    # - **query**: Natural language query optimized for semantic similarity
-    # - **created_after**: Optional ISO date for temporal filtering
-    # - **created_before**: Optional ISO date for temporal filtering
-    # - **order_by**: Optional ordering preference for result chronology
+    # Variables:
+    #   {{request}} - research question
+    #   {{clarifications}} - user clarifications
+    #   {{findings_summary}} - current findings
+    #   {{previous_queries}} - prior queries
+    # Output: JSON object with query, created_after, created_before, order_by
     SEMANTIC_RESEARCH_PROMPT = <<~PROMPT
-You are an expert researcher mining GitHub conversations for actionable evidence.
+      You are an expert researcher mining GitHub conversations for actionable evidence.
 
-## Original Request
-{{request}}
+      ## Original Request
+      {{request}}
 
-## User Clarifications
-{{clarifications}}
+      ## User Clarifications
+      {{clarifications}}
 
-## Findings So Far
-{{findings_summary}}
+      ## Findings So Far
+      {{findings_summary}}
 
-## Prior Search Queries
-{{previous_queries}}
+      ## Prior Search Queries
+      {{previous_queries}}
 
-**Goal**
-Identify the most significant information gaps and craft one new natural-language search query (≤ 2 sentences, no operators) that will surface GitHub conversations to close them.
-Gaps may include — but are not limited to — missing implementation details, unclear project status (Implemented · In Progress · Proposed · Abandoned · Unknown), decisions, trade-offs, or alternative solutions.
+      **Goal**
+      Identify the most significant information gaps and craft one new natural-language search query (≤ 2 sentences, no operators) that will surface GitHub conversations to close them.
+      Gaps may include — but are not limited to — missing implementation details, unclear project status (Implemented · In Progress · Proposed · Abandoned · Unknown), decisions, trade-offs, or alternative solutions.
 
-When project "doneness" is uncertain, bias your query toward finding evidence that proves or disproves implementation (e.g. merged PRs, release notes, deployment comments). Otherwise, target whatever gap is highest-impact.
+      When project "doneness" is uncertain, bias your query toward finding evidence that proves or disproves implementation (e.g. merged PRs, release notes, deployment comments). Otherwise, target whatever gap is highest-impact.
 
-If helpful, suggest date ranges in ISO8601 format (created_after / created_before) to narrow the search.
-If appropriate, specify ordering (order_by: created_at asc|desc).
+      If helpful, suggest date ranges in ISO8601 format (created_after / created_before) to narrow the search.
+      If appropriate, specify ordering (order_by: created_at asc|desc).
 
-Return a JSON object with:
-- "query": the natural language search query
-- "created_after": ISO date string (optional)
-- "created_before": ISO date string (optional)
-- "order_by": "created_at asc" or "created_at desc" (optional)
+      Return a JSON object with:
+      - "query": the natural language search query
+      - "created_after": ISO date string (optional)
+      - "created_before": ISO date string (optional)
+      - "order_by": "created_at asc" or "created_at desc" (optional)
 
-Do not use markdown code blocks - return only the raw JSON object.
+      Do not use markdown code blocks - return only the raw JSON object.
 
-*Examples*
-{"query": "Confirmation that client-side rate limiting is merged and live", "created_after": "2024-01-01"}
-{"query": "Alternative approaches to large-table migration performance", "order_by": "created_at desc"}
-{"query": "Discussion showing why the authentication redesign was abandoned"}
-PROMPT
+      *Examples*
+      {"query": "Confirmation that client-side rate limiting is merged and live", "created_after": "2024-01-01"}
+      {"query": "Alternative approaches to large-table migration performance", "order_by": "created_at desc"}
+      {"query": "Discussion showing why the authentication redesign was abandoned"}
+    PROMPT
 
-    # Template for generating GitHub search queries using operator-based syntax
+    # Prompt template for generating GitHub search queries using operator-based syntax.
     #
-    # This template guides the LLM in creating precise GitHub search queries that leverage
-    # GitHub's advanced search operators for targeted conversation discovery. It emphasizes
-    # structured search syntax and temporal constraints for comprehensive results.
-    #
-    # ## Template Variables
-    # - **{{request}}**: The original research question requiring operator-based search
-    # - **{{clarifications}}**: User-provided context and clarifying responses
-    # - **{{findings_summary}}**: Current research findings for query refinement
-    # - **{{previous_queries}}**: Prior search attempts to avoid duplication
-    #
-    # ## Generated Search Operators
-    # The template produces queries utilizing GitHub's search capabilities:
-    # - **Scope Operators**: `repo:`, `org:`, `user:` for targeted searching
-    # - **Type Operators**: `is:issue`, `is:pr`, `is:discussion` for content filtering
-    # - **Temporal Operators**: `created:`, `updated:`, `closed:` for time-based filtering
-    # - **Status Operators**: `state:open`, `state:closed` for lifecycle filtering
-    # - **Metadata Operators**: `label:`, `assignee:`, `author:` for attribution filtering
-    #
-    # ## Search Strategy Focus
-    # GitHub search queries excel at finding conversations that:
-    # - Match specific repositories, organizations, or user contributions
-    # - Fall within defined time periods or project phases
-    # - Contain specific labels, assignments, or status conditions
-    # - Represent particular types of development discussions
-    #
-    # ## JSON Output Structure
-    # Returns structured query with comprehensive search parameters:
-    # - **query**: GitHub search query with advanced operators
-    # - **created_after**: Optional ISO date for temporal filtering
-    # - **created_before**: Optional ISO date for temporal filtering
-    # - **order_by**: Optional ordering preference for result chronology
+    # Variables:
+    #   {{request}} - research question
+    #   {{clarifications}} - user clarifications
+    #   {{findings_summary}} - current findings
+    #   {{previous_queries}} - prior queries
+    # Output: search string (≤ 5 terms/operators)
     GITHUB_SEARCH_PROMPT = <<~PROMPT
-You are GitHub's top search power-user.
+      You are GitHub's top search power-user.
 
-## Research request
-{{request}}
+      ## Research request
+      {{request}}
 
-## Known clarifications
-{{clarifications}}
+      ## Known clarifications
+      {{clarifications}}
 
-Return **one** GitHub search string that is likely to surface the best discussions.
-• ≤ 5 terms/operators.
-• Prefer operators when obvious (`repo:`, `author:`, `label:`, `is:`, `created:`, `updated:`).
-• Otherwise fall back to 2-3 strong keywords.
-Output only the search string, nothing else.
-PROMPT
+      Return **one** GitHub search string that is likely to surface the best discussions.
+      • ≤ 5 terms/operators.
+      • Prefer operators when obvious (`repo:`, `author:`, `label:`, `is:`, `created:`, `updated:`).
+      • Otherwise fall back to 2-3 strong keywords.
+      Output only the search string, nothing else.
+    PROMPT
 
-    # Template for generating targeted queries to find evidence for unsupported claims
+    # Prompt template for generating queries to find evidence for unsupported claims.
     #
-    # This template specializes in creating search strategies for fact-checking and claim
-    # verification. It focuses on finding concrete evidence, implementation details, and
-    # verifiable information to support or refute specific research claims.
-    #
-    # ## Template Variables
-    # - **{{request}}**: Original research question requiring claim verification
-    # - **{{clarifications}}**: User-provided context and clarifying responses
-    # - **{{unsupported_claims}}**: Specific claims that need evidential support
-    # - **{{findings_summary}}**: Current research findings and evidence gaps
-    # - **{{previous_queries}}**: Prior search attempts to avoid duplication
-    #
-    # ## Evidence Discovery Strategy
-    # The template generates queries optimized for finding:
-    # - **Implementation Evidence**: Direct proof of feature development and deployment
-    # - **Technical Decisions**: Documented choices and their rationales
-    # - **Concrete Examples**: Specific instances, metrics, and measurable outcomes
-    # - **Timeline Information**: Project phases, release schedules, and progress updates
-    # - **Status Verification**: Current implementation state and deployment status
-    #
-    # ## Search Result Structure
-    # Produces structured queries with temporal and ordering constraints:
-    # - Natural language queries optimized for comprehensive evidence discovery
-    # - Optional temporal boundaries for focused historical analysis
-    # - Ordering preferences to prioritize recent or chronological information
-    # - JSON format for consistent parsing and execution by RetrieverNode
-    #
-    # ## Claim Verification Focus
-    # The template emphasizes finding conversations that contain:
-    # - Direct evidence of implementation status and completion
-    # - Specific technical decisions and documented outcomes
-    # - Concrete examples, metrics, and proof points
-    # - Timeline information and project update communications
-    # - Verifiable status indicators (merged PRs, releases, deployments)
+    # Variables:
+    #   {{request}} - research question
+    #   {{clarifications}} - user clarifications
+    #   {{unsupported_claims}} - claims needing evidence
+    #   {{findings_summary}} - current findings
+    #   {{previous_queries}} - prior queries
+    # Output: JSON object with query, created_after, created_before, order_by
     UNSUPPORTED_CLAIMS_RESEARCH_PROMPT = <<~PROMPT
-You are an expert researcher focusing on verifying unsupported claims from a research report.
+      You are an expert researcher focusing on verifying unsupported claims from a research report.
 
-## Original Request
-{{request}}
+      ## Original Request
+      {{request}}
 
-## User Clarifications
-{{clarifications}}
+      ## User Clarifications
+      {{clarifications}}
 
-## Unsupported Claims That Need Verification
-{{unsupported_claims}}
+      ## Unsupported Claims That Need Verification
+      {{unsupported_claims}}
 
-## Previous Findings
-{{findings_summary}}
+      ## Previous Findings
+      {{findings_summary}}
 
-## Prior Search Queries
-{{previous_queries}}
+      ## Prior Search Queries
+      {{previous_queries}}
 
-**Goal**
-Generate a natural-language search query (≤ 2 sentences, no operators) specifically designed to find GitHub conversations that could provide evidence for the unsupported claims listed above.
+      **Goal**
+      Generate a natural-language search query (≤ 2 sentences, no operators) specifically designed to find GitHub conversations that could provide evidence for the unsupported claims listed above.
 
-Focus on finding conversations that contain:
-- Direct evidence of implementation status
-- Specific technical decisions and outcomes
-- Concrete examples or proof points
-- Timeline information and project updates
+      Focus on finding conversations that contain:
+      - Direct evidence of implementation status
+      - Specific technical decisions and outcomes
+      - Concrete examples or proof points
+      - Timeline information and project updates
 
-Return a JSON object with:
-- "query": the natural language search query targeting evidence for unsupported claims
-- "created_after": ISO date string (optional)
-- "created_before": ISO date string (optional)
-- "order_by": "created_at asc" or "created_at desc" (optional)
+      Return a JSON object with:
+      - "query": the natural language search query targeting evidence for unsupported claims
+      - "created_after": ISO date string (optional)
+      - "created_before": ISO date string (optional)
+      - "order_by": "created_at asc" or "created_at desc" (optional)
 
-Do not use markdown code blocks - return only the raw JSON object.
+      Do not use markdown code blocks - return only the raw JSON object.
 
-*Examples*
-{"query": "Evidence of feature implementation and merge status with specific PR numbers", "order_by": "created_at desc"}
-{"query": "Performance measurement results and optimization outcomes with concrete metrics"}
-PROMPT
+      *Examples*
+      {"query": "Evidence of feature implementation and merge status with specific PR numbers", "order_by": "created_at desc"}
+      {"query": "Performance measurement results and optimization outcomes with concrete metrics"}
+    PROMPT
   end
 end

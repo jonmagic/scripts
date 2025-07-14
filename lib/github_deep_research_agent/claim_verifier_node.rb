@@ -278,7 +278,11 @@ module GitHubDeepResearchAgent
       end
     end
 
-    # Prompt for extracting verifiable claims from research reports (see extract_claims_from_report).
+    # Prompt template for extracting verifiable claims from a research report.
+    #
+    # Variables:
+    #   {{report}} - research report text
+    # Output: JSON array of claim strings (max 25)
     EXTRACT_CLAIMS_PROMPT = <<~PROMPT
       You are tasked with extracting factual claims from a research report. Extract specific, verifiable claims that can be fact-checked against evidence.
 
@@ -303,7 +307,12 @@ module GitHubDeepResearchAgent
       ["Claim 1 text here", "Claim 2 text here", "Claim 3 text here"]
     PROMPT
 
-    # Prompt for verifying individual claims against evidence (see verify_claim_against_evidence).
+    # Prompt template for verifying a claim against provided evidence.
+    #
+    # Variables:
+    #   {{claim}} - claim to verify
+    #   {{evidence}} - evidence text
+    # Output: One word, either "SUPPORTED" or "UNSUPPORTED"
     VERIFY_CLAIM_PROMPT = <<~PROMPT
       You are a fact-checker tasked with verifying a claim against provided evidence.
 

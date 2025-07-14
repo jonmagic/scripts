@@ -475,38 +475,11 @@ module GitHubDeepResearchAgent
       end
     end
 
-    # Template for generating executive summaries of GitHub conversations
+    # Prompt template for generating executive summaries of GitHub conversations.
     #
-    # This template provides comprehensive instructions for creating high-quality
-    # executive summaries of GitHub conversations. It emphasizes narrative structure,
-    # complete contextual linking, and professional presentation.
-    #
-    # ## Summary Requirements
-    # The template enforces strict quality standards:
-    # - **Concise Titles**: Clear, informative titles that encapsulate main topics
-    # - **Narrative Structure**: Well-structured paragraphs building logical progression
-    # - **Complete Linking**: Every referenced item must include direct links
-    # - **Professional Tone**: Formal, authoritative writing style throughout
-    # - **Critical Focus**: Only include details that influenced outcomes
-    # - **Comprehensive Coverage**: Include alternatives, status, and next steps
-    #
-    # ## Contextual Linking Strategy
-    # Requires comprehensive linking for all references:
-    # - **Contributor Comments**: Username mentions with separate links to comments
-    # - **Event Records**: Links to specific events, label changes, status updates
-    # - **External Resources**: Embedded links to documentation and guides
-    # - **Decision Points**: Links to authoritative comments containing decisions
-    # - **Alternative Solutions**: Links to discussions of different approaches
-    #
-    # ## Content Filtering Guidelines
-    # Specifies what to include and exclude:
-    # - **Include**: Key debates, decisions, constraints, resolutions, business impact
-    # - **Exclude**: Administrative commentary, routine messages, technical minutiae
-    # - **Ignore**: Automated bot events unless they influenced outcomes
-    # - **Focus**: Critical content that significantly influenced direction
-    #
-    # ## Template Variables
-    # - **{{conversation}}**: Complete GitHub conversation data in JSON format
+    # Variables:
+    #   {{conversation}} - complete GitHub conversation data (JSON)
+    # Output: Formal, narrative summary with contextual links
     EXECUTIVE_SUMMARY_PROMPT = <<~PROMPT
       # Executive summary instructions
       I need help summarizing a conversation from GitHub. Here are the rules I need you to follow:

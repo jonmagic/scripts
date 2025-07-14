@@ -167,7 +167,13 @@ module GitHubDeepResearchAgent
       "complete"
     end
 
-    # Prompt for synthesizing research reports (see prep for usage).
+    # Prompt template for synthesizing research reports into Markdown.
+    #
+    # Variables:
+    #   {{request}} - original research request
+    #   {{clarifications}} - user clarifications
+    #   {{all_findings}} - all research findings
+    # Output: Structured Markdown report with citations
     FINAL_REPORT_PROMPT = <<~PROMPT
       You are an expert analyst preparing a comprehensive Markdown report.
 

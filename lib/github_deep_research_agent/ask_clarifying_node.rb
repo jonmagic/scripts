@@ -93,10 +93,10 @@ module GitHubDeepResearchAgent
       # Prepare editor content with instructions and questions
       # The format provides clear guidance on what the user should do
       editor_content = <<~CONTENT
-Please review the following questions and provide inline answers to help focus the research:
+        Please review the following questions and provide inline answers to help focus the research:
 
-#{clarifying_questions}
-CONTENT
+        #{clarifying_questions}
+      CONTENT
 
       # Open text editor and collect user input
       # Utils.edit_text handles temporary file creation, editor launching, and cleanup
@@ -128,17 +128,17 @@ CONTENT
 
     # Prompt for generating clarifying questions (see prep for usage)
     ASK_CLARIFY_PROMPT = <<~PROMPT
-You are an expert analyst reviewing a research request and initial findings from GitHub conversations.
+      You are an expert analyst reviewing a research request and initial findings from GitHub conversations.
 
-## Research Request
-{{request}}
+      ## Research Request
+      {{request}}
 
-## Initial Findings Summary
-{{initial_findings}}
+      ## Initial Findings Summary
+      {{initial_findings}}
 
-Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the intent of the request, bridge gaps in context to better refine the search (e.g. specifying the search space like a github organization or repository), and understand the expected output format (executive summary, detailed analysis, ADR, etc). If any of these areas are covered in their request or initial findings, do not ask about them.
+      Based on the question and initial findings, generate up to 4 clarifying questions that would help you better understand the intent of the request, bridge gaps in context to better refine the search (e.g. specifying the search space like a github organization or repository), and understand the expected output format (executive summary, detailed analysis, ADR, etc). If any of these areas are covered in their request or initial findings, do not ask about them.
 
-Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number. The instructions should ask for inline answers to these questions.
-PROMPT
+      Format your response as a numbered list with clear, specific questions. Each question should be on its own line starting with a number. The instructions should ask for inline answers to these questions.
+    PROMPT
   end
 end
