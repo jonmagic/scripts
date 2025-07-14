@@ -89,61 +89,42 @@ module GitHubDeepResearchAgent
         "  Research notes accumulated: #{shared[:memory][:notes].length}"
       end
 
-      # Priority 3: Generate queries based on configured search mode
-      search_mode = shared[:search_mode]
+      # Priority 3: Generate queries based on configured search modes
+      search_modes = shared[:search_modes] || ["semantic", "keyword"]
 
-      if search_mode == "semantic"
-        # Generate natural language query for semantic search
-        prompt = Utils.fill_template(SEMANTIC_RESEARCH_PROMPT, {
-          request: shared[:request],
-          clarifications: shared[:clarifications] || "",
-          findings_summary: findings_summary,
-          previous_queries: previous_queries
-        })
+      # Generate queries for each configured search mode
+      queries = {}
 
-        logger.debug "Calling LLM to generate natural language search query..."
-        llm_response = Utils.call_llm(prompt, shared[:models][:fast])
-        refined_query = Utils.parse_semantic_search_response(llm_response)
-        logger.info "Generated semantic search plan: #{refined_query}"
-      elsif search_mode == "keyword"
-        # Generate GitHub search string for keyword search
-        prompt = Utils.fill_template(GITHUB_SEARCH_PROMPT, {
-          request: shared[:request],
-          clarifications: shared[:clarifications] || ""
-        })
+      search_modes.each do |search_mode|
+        case search_mode
+        when "semantic"
+          # Generate natural language query for semantic search
+          prompt = Utils.fill_template(SEMANTIC_RESEARCH_PROMPT, {
+            request: shared[:request],
+            clarifications: shared[:clarifications] || "",
+            findings_summary: findings_summary,
+            previous_queries: previous_queries
+          })
 
-        logger.debug "Calling LLM to generate GitHub search query..."
-        refined_query = Utils.call_llm(prompt, shared[:models][:fast])
-        logger.info "Generated GitHub search query: \"#{refined_query}\""
-      else
-        # Hybrid mode: generate both semantic and keyword queries
-        semantic_prompt = Utils.fill_template(SEMANTIC_RESEARCH_PROMPT, {
-          request: shared[:request],
-          clarifications: shared[:clarifications] || "",
-          findings_summary: findings_summary,
-          previous_queries: previous_queries
-        })
+          logger.debug "Calling LLM to generate natural language search query..."
+          llm_response = Utils.call_llm(prompt, shared[:models][:fast])
+          queries[:semantic] = Utils.parse_semantic_search_response(llm_response)
+          logger.info "Generated semantic search plan: #{queries[:semantic]}"
+        when "keyword"
+          # Generate GitHub search string for keyword search
+          prompt = Utils.fill_template(GITHUB_SEARCH_PROMPT, {
+            request: shared[:request],
+            clarifications: shared[:clarifications] || ""
+          })
 
-        keyword_prompt = Utils.fill_template(GITHUB_SEARCH_PROMPT, {
-          request: shared[:request],
-          clarifications: shared[:clarifications] || ""
-        })
-
-        logger.debug "Calling LLM to generate semantic query..."
-        semantic_response = Utils.call_llm(semantic_prompt, shared[:models][:fast])
-        semantic_query = Utils.parse_semantic_search_response(semantic_response)
-        logger.info "Generated semantic query: #{semantic_query}"
-
-        logger.debug "Calling LLM to generate keyword query..."
-        keyword_query = Utils.call_llm(keyword_prompt, shared[:models][:fast])
-        logger.info "Generated keyword query: \"#{keyword_query}\""
-
-        # Combine both queries into structured hybrid format
-        refined_query = {
-          semantic: semantic_query,
-          keyword: keyword_query
-        }
+          logger.debug "Calling LLM to generate GitHub search query..."
+          queries[:keyword] = Utils.call_llm(prompt, shared[:models][:fast])
+          logger.info "Generated GitHub search query: \"#{queries[:keyword]}\""
+        end
       end
+
+      # Return structured queries for all configured modes
+      refined_query = queries
 
       refined_query
     end
@@ -159,60 +140,45 @@ module GitHubDeepResearchAgent
       # Store the current query for potential access by other workflow components
       @shared[:current_query] = current_query
 
-      # Determine search mode based on configuration and iteration context
-      search_mode = @shared[:search_mode]
-      depth = @shared[:current_depth] || 0
+      # Determine search modes based on configuration
+      search_modes = @shared[:search_modes] || ["semantic", "keyword"]
 
-      # Initial tool selection based on configured search mode
-      if search_mode == "semantic"
-        tool = :semantic
-        logger.info "Forced semantic search mode via --search-mode flag"
-      elsif search_mode == "keyword"
-        tool = :keyword
-        logger.info "Forced keyword search mode via --search-mode flag"
-      else
-        # Default to hybrid mode for comprehensive coverage
-        tool = :hybrid
-        logger.info "Hybrid mode: Running both semantic and keyword searches"
-      end
+      logger.info "Configured search modes: #{search_modes.join(', ')}"
 
-      # Handle hybrid mode with sophisticated query format detection
-      if tool == :hybrid
-        # Check if current_query has separate semantic and keyword components
-        # This distinguishes normal planning from claim verification scenarios
-        if current_query.is_a?(Hash) && current_query[:semantic] && current_query[:keyword]
-          # Normal hybrid mode with separate queries from dual LLM generation
-          semantic_query = current_query[:semantic]
-          search_plan = {
-            tool: :hybrid,
-            semantic_query: semantic_query[:query],
-            keyword_query: current_query[:keyword]
-          }
+      # Transform queries into search plans based on configured modes
+      search_plans = []
 
-          # Add semantic search filters if present in the structured query
-          if semantic_query[:created_after]
-            search_plan[:created_after] = semantic_query[:created_after]
-          end
-          if semantic_query[:created_before]
-            search_plan[:created_before] = semantic_query[:created_before]
-          end
-          if semantic_query[:order_by]
-            search_plan[:order_by] = semantic_query[:order_by]
-          end
-        else
-          # Single query provided (likely from unsupported claims research)
-          # Treat as semantic search since claim verification benefits from vector similarity
-          logger.info "Single query provided, treating as semantic search in hybrid mode"
-          tool = :semantic
+      search_modes.each do |search_mode|
+        case search_mode
+        when "semantic"
+          if current_query.is_a?(Hash) && current_query[:semantic]
+            # Extract semantic query from structured format
+            semantic_query = current_query[:semantic]
+            search_plan = {
+              tool: :semantic,
+              query: semantic_query[:query] || semantic_query
+            }
 
-          # Fall through to semantic search handling below
-          search_plan = {
-            tool: :semantic,
-            query: current_query[:query] || current_query
-          }
+            # Add filters if present in structured format
+            if semantic_query.is_a?(Hash)
+              if semantic_query[:created_after]
+                search_plan[:created_after] = semantic_query[:created_after]
+              end
+              if semantic_query[:created_before]
+                search_plan[:created_before] = semantic_query[:created_before]
+              end
+              if semantic_query[:order_by]
+                search_plan[:order_by] = semantic_query[:order_by]
+              end
+            end
+          elsif current_query.is_a?(Hash) && current_query[:query]
+            # Structured format with single query - use for semantic
+            search_plan = {
+              tool: :semantic,
+              query: current_query[:query]
+            }
 
-          # Add filters if present in structured format
-          if current_query.is_a?(Hash)
+            # Add temporal and ordering filters if present
             if current_query[:created_after]
               search_plan[:created_after] = current_query[:created_after]
             end
@@ -222,71 +188,60 @@ module GitHubDeepResearchAgent
             if current_query[:order_by]
               search_plan[:order_by] = current_query[:order_by]
             end
+          else
+            # Legacy string format or single query fallback
+            search_plan = {
+              tool: :semantic,
+              query: current_query.is_a?(String) ? current_query : (current_query[:query] || current_query)
+            }
           end
+
+          search_plans << search_plan
+
+        when "keyword"
+          if current_query.is_a?(Hash) && current_query[:keyword]
+            # Extract keyword query from structured format
+            search_plan = {
+              tool: :keyword,
+              query: current_query[:keyword]
+            }
+          elsif current_query.is_a?(Hash) && current_query[:query]
+            # Structured format with single query - use for keyword
+            search_plan = {
+              tool: :keyword,
+              query: current_query[:query]
+            }
+          else
+            # Legacy string format or single query fallback
+            search_plan = {
+              tool: :keyword,
+              query: current_query.is_a?(String) ? current_query : (current_query[:query] || current_query)
+            }
+          end
+
+          search_plans << search_plan
         end
       end
 
-      # Handle non-hybrid modes or fall-through from hybrid mode logic
-      if tool != :hybrid
-        # Process both structured and legacy query formats
-        if current_query.is_a?(Hash) && current_query[:query]
-          # New structured format with explicit query and filter fields
-          search_plan = {
-            tool: tool,
-            query: current_query[:query]
-          }
-
-          # Add temporal and ordering filters if present
-          if current_query[:created_after]
-            search_plan[:created_after] = current_query[:created_after]
-          end
-          if current_query[:created_before]
-            search_plan[:created_before] = current_query[:created_before]
-          end
-          if current_query[:order_by]
-            search_plan[:order_by] = current_query[:order_by]
-          end
-        else
-          # Legacy string format - extract potential qualifiers for logging and debugging
-          qualifiers = {}
-          if current_query.is_a?(String)
-            # Parse GitHub search operators from the query string
-            %w[repo author label is created updated].each do |op|
-              if current_query =~ /\b#{op}:(\S+)/i
-                qualifiers[op.to_sym] = $1
-                logger.debug "Extracted #{op} qualifier: #{qualifiers[op.to_sym]}"
-              end
-            end
-          end
-
-          # Create search plan with extracted qualifiers for reference
-          search_plan = {
-            tool: tool,
-            query: current_query,
-            qualifiers: qualifiers
-          }
-        end
-      end
-
-      logger.debug "Search plan: #{search_plan}"
-
-      search_plan
+      # Return the list of search plans for RetrieverNode to execute
+      search_plans
     end
 
-    # Store search plan and coordinate workflow routing.
+    # Store search plans and coordinate workflow routing.
     #
     # @param shared [Hash] Workflow context to update
     # @param prep_res [Hash, String, nil] Query from prep()
-    # @param exec_res [Hash, nil] Search plan from exec()
+    # @param exec_res [Array<Hash>, nil] Search plans from exec()
     # @return [String, nil] "final" if max depth, else nil
     def post(shared, prep_res, exec_res)
       # Handle maximum depth scenario by routing to final report generation
       return "final" if prep_res.nil? # Max depth reached
 
-      # Store the comprehensive search plan for RetrieverNode execution
-      shared[:next_search] = exec_res
+      # Store the search plans for RetrieverNode execution
+      # RetrieverNode will iterate through each plan
+      shared[:next_search_plans] = exec_res
 
-      logger.info "✓ Planning complete, proceeding to retrieval"
+      logger.info "✓ Planning complete, generated #{exec_res.length} search plans"
       logger.debug "Moving to retrieval phase..."
 
       # Return nil to continue workflow with retrieval phase

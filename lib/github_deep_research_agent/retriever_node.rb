@@ -23,171 +23,75 @@ module GitHubDeepResearchAgent
       super(*args, **kwargs)
       @logger = logger
     end
-    # Validate search plan and initialize search execution.
+    # Validate search plans and initialize search execution.
     #
-    # @param shared [Hash] Workflow context with :next_search, :collection, :top_k, :script_dir
-    # @return [Hash, nil] Valid search plan or nil
+    # @param shared [Hash] Workflow context with :next_search_plans, :collection, :top_k, :script_dir
+    # @return [Array<Hash>, nil] Valid search plans or nil
     def prep(shared)
       @shared = shared # Store shared context for access in exec() and post()
-      search_plan = shared[:next_search]
+      search_plans = shared[:next_search_plans]
 
-      # Validate that PlannerNode provided a search plan
-      if search_plan.nil?
-        logger.info "No search plan found from PlannerNode"
+      # Validate that PlannerNode provided search plans
+      if search_plans.nil? || search_plans.empty?
+        logger.info "No search plans found from PlannerNode"
         return nil
       end
 
-      # Announce retrieval phase and preview search operation
+      # Announce retrieval phase and preview search operations
       logger.info "=== RETRIEVAL PHASE ==="
-      logger.info "Executing #{search_plan[:tool]} search with query: \"#{search_plan[:query]}\""
+      logger.info "Executing #{search_plans.length} search operations:"
+      search_plans.each_with_index do |plan, i|
+        logger.info "  #{i + 1}. #{plan[:tool]} search with query: \"#{plan[:query]}\""
+      end
 
-      search_plan
+      search_plans
     end
 
     # Execute search operations and retrieve conversation data.
     #
-    # @param search_plan [Hash] Search plan with tool, query, etc.
+    # @param search_plans [Array<Hash>] Search plans with tool, query, etc.
     # @return [Array<Hash>] Enhanced conversation results
-    def exec(search_plan)
-      return [] if search_plan.nil?
+    def exec(search_plans)
+      return [] if search_plans.nil? || search_plans.empty?
 
-      # Extract search configuration from plan and shared context
-      tool = search_plan[:tool]
+      # Extract search configuration from shared context
       collection = @shared[:collection]
       top_k = @shared[:top_k]
       script_dir = @shared[:script_dir]
 
-      if tool == :hybrid
-        # Execute hybrid search: combine semantic and keyword approaches
-        semantic_query = search_plan[:semantic_query]
-        keyword_query = search_plan[:keyword_query]
+      all_results = []
+      url_to_result = {} # For deduplication across search modes
 
-        logger.info "Running semantic search with query: \"#{semantic_query}\""
-        semantic_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
+      # Execute each search plan separately
+      search_plans.each_with_index do |search_plan, plan_index|
+        tool = search_plan[:tool]
+        logger.info "Executing search plan #{plan_index + 1}/#{search_plans.length}: #{tool} search"
 
-        semantic_output = Utils.run_cmd(semantic_cmd)
-        semantic_results = JSON.parse(semantic_output)
+        search_results = execute_single_search(search_plan, script_dir, collection, top_k)
 
-        logger.info "Running keyword search with query: \"#{keyword_query}\""
-        keyword_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(keyword_query)}"
-
-        keyword_output = Utils.run_cmd(keyword_cmd)
-        keyword_results = JSON.parse(keyword_output)
-
-        # Normalize keyword search results to match semantic search format
-        # Keyword searches don't provide summaries or relevance scores initially
-        keyword_normalized = keyword_results.map do |result|
-          {
-            "payload" => {
-              "url" => result["url"],
-              "summary" => "" # No summary available from keyword search - will be enriched later
-            },
-            "score" => 0.0 # No relevance score from keyword search
-          }
-        end
-
-        # Combine results and deduplicate by URL, preserving highest relevance scores
-        combined_results = semantic_results + keyword_normalized
-        url_to_result = {}
-        # Deduplicate by URL: prefer semantic results over keyword results
-        # Semantic results have relevance scores and summaries, keyword results don't
-        combined_results.each do |result|
+        # Deduplicate and merge results, preserving highest relevance scores
+        search_results.each do |result|
           url = result.dig("payload", "url")
           next unless url
-          # Keep the semantic result if we have both (it has score and summary)
-          if !url_to_result[url] || result["score"] > 0
-            url_to_result[url] = result
+
+          # Keep the result with higher score, or semantic over keyword if scores are equal
+          existing = url_to_result[url]
+          if !existing ||
+             result["score"] > existing["score"] ||
+             (result["score"] == existing["score"] && tool == :semantic)
+            url_to_result[url] = result.merge("search_mode" => tool.to_s)
           end
         end
-
-        # Limit combined results to configured top_k limit
-        search_results = url_to_result.values.first(top_k)
-        logger.info "Combined #{semantic_results.length} semantic + #{keyword_results.length} keyword results into #{search_results.length} unique conversations"
-
-        # Enrich keyword search results with conversation summaries
-        # Keyword searches don't provide summaries, so we need to fetch them
-        search_results.each do |result|
-          url = result.dig("payload", "url")
-          next unless url
-
-          # Skip if already has a summary (from semantic search)
-          next if result.dig("payload", "summary") && !result.dig("payload", "summary").empty?
-
-          # Get or generate summary for this conversation from Qdrant or via summarization
-          summary = get_or_generate_summary(
-            url,
-            collection,
-            script_dir,
-            @shared[:cache_path]
-          )
-
-          # Update the result with the enriched summary
-          result["payload"]["summary"] = summary
-        end
-
-      elsif tool == :keyword
-        # Execute pure keyword search using GitHub API
-        query = search_plan[:query]
-        logger.info "Running keyword search with query..."
-        search_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(query)}"
-
-        search_output = Utils.run_cmd(search_cmd)
-        keyword_results = JSON.parse(search_output)
-
-        # Normalize keyword search results to match semantic search format
-        # Keyword searches return URLs only, need to enrich with summaries
-        search_results = keyword_results.map do |result|
-          {
-            "payload" => {
-              "url" => result["url"],
-              "summary" => "" # No summary available from keyword search - will be enriched later
-            },
-            "score" => 0.0 # No relevance score from keyword search
-          }
-        end
-
-        # Limit results to configured top_k limit
-        search_results = search_results.first(top_k)
-
-        # Enrich keyword search results with conversation summaries
-        # Must retrieve summaries since keyword searches don't provide them
-        search_results.each do |result|
-          url = result.dig("payload", "url")
-          next unless url
-
-          # Get or generate summary for this conversation from Qdrant or via summarization
-          summary = get_or_generate_summary(
-            url,
-            collection,
-            script_dir,
-            @shared[:cache_path]
-          )
-
-          # Update the result with the enriched summary
-          result["payload"]["summary"] = summary
-        end
-      else
-        # Execute pure semantic search using Qdrant vector database
-        query = search_plan[:query]
-        logger.info "Running semantic search with query..."
-
-        # Extract temporal and ordering qualifiers from the query for semantic search
-        semantic_query_info = build_semantic_query(query)
-
-        # Build updated search plan with extracted qualifiers for command construction
-        updated_search_plan = search_plan.merge(semantic_query_info)
-
-        # Build semantic search command with all parameters and constraints
-        search_cmd = build_semantic_search_command(updated_search_plan, script_dir, collection, top_k)
-
-        search_output = Utils.run_cmd(search_cmd)
-        search_results = JSON.parse(search_output)
       end
+
+      # Convert deduplicated results back to array, limited by top_k
+      combined_results = url_to_result.values.first(top_k)
+      logger.info "Combined results from #{search_plans.length} search modes into #{combined_results.length} unique conversations"
 
       # Deduplicate against existing conversations in research memory
       # Prevent re-processing conversations already analyzed in previous iterations
       existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
-      new_results = search_results.reject { |result| existing_urls.include?(result.dig("payload", "url")) }
+      new_results = combined_results.reject { |result| existing_urls.include?(result.dig("payload", "url")) }
 
       logger.info "Found #{new_results.length} new conversations after deduplication"
 
@@ -226,6 +130,7 @@ module GitHubDeepResearchAgent
             url: url,
             summary: result.dig("payload", "summary") || "",
             score: result["score"],
+            search_mode: result["search_mode"],
             conversation: conversation_data
           }
         rescue => e
@@ -236,12 +141,12 @@ module GitHubDeepResearchAgent
       logger.info "Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
 
       # Enrich any conversations that still have empty summaries
-      # This handles keyword search results that don't have summaries initially
+      # This handles search results that don't have summaries initially
       new_enriched.each do |enriched_result|
         url = enriched_result[:url]
         next unless url
 
-        # Skip if already has a summary (from semantic search)
+        # Skip if already has a summary
         next if enriched_result[:summary] && !enriched_result[:summary].empty?
 
         # Get or generate summary for conversations missing summaries
@@ -264,23 +169,25 @@ module GitHubDeepResearchAgent
     # Update research memory and coordinate workflow routing after retrieval.
     #
     # @param shared [Hash] Workflow context to update
-    # @param prep_res [Hash] Search plan from prep()
+    # @param prep_res [Array<Hash>] Search plans from prep()
     # @param exec_res [Array<Hash>] Enriched conversation results from exec()
     # @return [String] "continue" or "final"
     def post(shared, prep_res, exec_res)
-      return "final" if prep_res.nil? # No search plan available
+      return "final" if prep_res.nil? || prep_res.empty? # No search plans available
 
       # Extract query information for memory tracking and research notes
-      query = prep_res[:semantic_query] || prep_res[:query] || "Unknown query"
+      # Create a summary of all search queries executed
+      queries = prep_res.map { |plan| "#{plan[:tool]}: #{plan[:query]}" }
+      query_summary = queries.join("; ")
 
       # Integrate new findings into comprehensive research memory
       shared[:memory][:hits].concat(exec_res)
-      shared[:memory][:search_queries] << query
+      shared[:memory][:search_queries] << query_summary
 
       # Generate research notes for this iteration
       if exec_res.any?
         # Create human-readable summary of iteration findings
-        notes = exec_res.map { |hit| "#{hit[:url]}: #{hit[:summary]}" }.join("\n")
+        notes = exec_res.map { |hit| "#{hit[:url]} (via #{hit[:search_mode]}): #{hit[:summary]}" }.join("\n")
         shared[:memory][:notes] << "Research iteration: #{notes}"
         logger.info "Added #{exec_res.length} new conversations to memory"
       else
@@ -347,19 +254,20 @@ module GitHubDeepResearchAgent
       cmd += " #{Shellwords.escape(search_plan[:query])}"
       cmd += " --collection #{Shellwords.escape(collection)}"
       cmd += " --limit #{top_k}"
+      cmd += " --format json"
 
-      # Add optional temporal constraints for date-based filtering
+      # Add temporal filters for date-based constraints
       if search_plan[:created_after]
-        cmd += " --created-after #{Shellwords.escape(search_plan[:created_after])}"
+        cmd += " --filter created_after:#{Shellwords.escape(search_plan[:created_after])}"
       end
-
       if search_plan[:created_before]
-        cmd += " --created-before #{Shellwords.escape(search_plan[:created_before])}"
+        cmd += " --filter created_before:#{Shellwords.escape(search_plan[:created_before])}"
       end
 
-      # Add optional result ordering preference
+      # Add ordering specification with key and direction
       if search_plan[:order_by]
-        cmd += " --order-by #{Shellwords.escape(search_plan[:order_by])}"
+        order_by_str = "#{search_plan[:order_by][:key]} #{search_plan[:order_by][:direction]}"
+        cmd += " --order-by #{Shellwords.escape(order_by_str)}"
       end
 
       cmd
@@ -719,6 +627,58 @@ module GitHubDeepResearchAgent
       end
 
       cmd
+    end
+
+    # Execute a single search plan and return normalized results.
+    #
+    # @param search_plan [Hash] Search plan with tool, query, etc.
+    # @param script_dir [String] Directory containing search scripts
+    # @param collection [String] Qdrant collection name
+    # @param top_k [Integer] Maximum number of results
+    # @return [Array<Hash>] Search results in normalized format
+    def execute_single_search(search_plan, script_dir, collection, top_k)
+      tool = search_plan[:tool]
+      query = search_plan[:query]
+
+      case tool
+      when :semantic
+        logger.info "Running semantic search with query: \"#{query}\""
+
+        # Extract temporal and ordering qualifiers from the query for semantic search
+        semantic_query_info = build_semantic_query(query)
+
+        # Build updated search plan with extracted qualifiers for command construction
+        updated_search_plan = search_plan.merge(semantic_query_info)
+
+        # Build semantic search command with all parameters and constraints
+        search_cmd = build_semantic_search_command(updated_search_plan, script_dir, collection, top_k)
+
+        search_output = Utils.run_cmd(search_cmd)
+        JSON.parse(search_output)
+
+      when :keyword
+        logger.info "Running keyword search with query: \"#{query}\""
+        search_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(query)}"
+
+        search_output = Utils.run_cmd(search_cmd)
+        keyword_results = JSON.parse(search_output)
+
+        # Normalize keyword search results to match semantic search format
+        # Keyword searches return URLs only, need to enrich with summaries
+        keyword_results.map do |result|
+          {
+            "payload" => {
+              "url" => result["url"],
+              "summary" => "" # No summary available from keyword search - will be enriched later
+            },
+            "score" => 0.0 # No relevance score from keyword search
+          }
+        end.first(top_k)
+
+      else
+        logger.warn "Unknown search tool: #{tool}, skipping"
+        []
+      end
     end
   end
 end

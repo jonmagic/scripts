@@ -13,7 +13,7 @@ module GitHubDeepResearchAgentTest
         models: { fast: "test-model" },
         current_depth: 0,
         max_depth: 2,
-        search_mode: "semantic",
+        search_modes: ["semantic"],
         memory: {
           hits: [],
           notes: ["Initial note 1", "Initial note 2"],
@@ -49,24 +49,24 @@ module GitHubDeepResearchAgentTest
         Utils.stub :call_llm, call_llm_mock do
           Utils.stub :parse_semantic_search_response, { query: "Semantic query" } do
             result = @node.prep(@shared)
-            assert_equal({ query: "Semantic query" }, result)
+            assert_equal({ semantic: { query: "Semantic query" } }, result)
           end
         end
       end
     end
 
     def test_prep_keyword_mode
-      @shared[:search_mode] = "keyword"
+      @shared[:search_modes] = ["keyword"]
       Utils.stub :fill_template, "prompt" do
         Utils.stub :call_llm, "repo:foo is:pr" do
           result = @node.prep(@shared)
-          assert_equal "repo:foo is:pr", result
+          assert_equal({ keyword: "repo:foo is:pr" }, result)
         end
       end
     end
 
-    def test_prep_hybrid_mode
-      @shared[:search_mode] = "hybrid"
+    def test_prep_multiple_modes
+      @shared[:search_modes] = ["semantic", "keyword"]
       Utils.stub :fill_template, "prompt" do
         call_llm_responses = ['{"query": "Semantic query"}', "repo:foo is:pr"]
         call_llm_mock = proc { call_llm_responses.shift }
@@ -84,51 +84,62 @@ module GitHubDeepResearchAgentTest
     end
 
     def test_exec_semantic_mode_structured
-      @shared[:search_mode] = "semantic"
+      @shared[:search_modes] = ["semantic"]
       @shared[:current_depth] = 1
       @node.instance_variable_set(:@shared, @shared)
-      plan = @node.exec({ query: "Semantic query", created_after: "2024-01-01" })
+      plans = @node.exec({ semantic: { query: "Semantic query", created_after: "2024-01-01" } })
+      assert_equal 1, plans.length
+      plan = plans.first
       assert_equal :semantic, plan[:tool]
       assert_equal "Semantic query", plan[:query]
       assert_equal "2024-01-01", plan[:created_after]
     end
 
     def test_exec_keyword_mode_structured
-      @shared[:search_mode] = "keyword"
+      @shared[:search_modes] = ["keyword"]
       @node.instance_variable_set(:@shared, @shared)
-      plan = @node.exec({ query: "repo:foo is:pr", order_by: "created_at desc" })
+      plans = @node.exec({ keyword: "repo:foo is:pr" })
+      assert_equal 1, plans.length
+      plan = plans.first
       assert_equal :keyword, plan[:tool]
       assert_equal "repo:foo is:pr", plan[:query]
-      assert_equal "created_at desc", plan[:order_by]
     end
 
-    def test_exec_hybrid_mode_structured
-      @shared[:search_mode] = "hybrid"
+    def test_exec_multiple_modes_structured
+      @shared[:search_modes] = ["semantic", "keyword"]
       @node.instance_variable_set(:@shared, @shared)
-      plan = @node.exec({ semantic: { query: "Semantic query", created_after: "2024-01-01" }, keyword: "repo:foo is:pr" })
-      assert_equal :hybrid, plan[:tool]
-      assert_equal "Semantic query", plan[:semantic_query]
-      assert_equal "repo:foo is:pr", plan[:keyword_query]
-      assert_equal "2024-01-01", plan[:created_after]
+      plans = @node.exec({ semantic: { query: "Semantic query", created_after: "2024-01-01" }, keyword: "repo:foo is:pr" })
+      assert_equal 2, plans.length
+
+      semantic_plan = plans.find { |p| p[:tool] == :semantic }
+      keyword_plan = plans.find { |p| p[:tool] == :keyword }
+
+      assert_equal "Semantic query", semantic_plan[:query]
+      assert_equal "2024-01-01", semantic_plan[:created_after]
+      assert_equal "repo:foo is:pr", keyword_plan[:query]
     end
 
-    def test_exec_hybrid_mode_single_query
-      @shared[:search_mode] = "hybrid"
+    def test_exec_single_query_fallback
+      @shared[:search_modes] = ["semantic", "keyword"]
       @node.instance_variable_set(:@shared, @shared)
-      plan = @node.exec({ query: "Semantic query only" })
-      assert_equal :semantic, plan[:tool]
-      assert_equal "Semantic query only", plan[:query]
+      plans = @node.exec({ query: "Single query for both modes" })
+      assert_equal 2, plans.length
+
+      semantic_plan = plans.find { |p| p[:tool] == :semantic }
+      keyword_plan = plans.find { |p| p[:tool] == :keyword }
+
+      assert_equal "Single query for both modes", semantic_plan[:query]
+      assert_equal "Single query for both modes", keyword_plan[:query]
     end
 
     def test_exec_legacy_string_query
-      @shared[:search_mode] = "semantic"
+      @shared[:search_modes] = ["semantic"]
       @node.instance_variable_set(:@shared, @shared)
-      plan = @node.exec("repo:foo is:pr")
+      plans = @node.exec("repo:foo is:pr")
+      assert_equal 1, plans.length
+      plan = plans.first
       assert_equal :semantic, plan[:tool]
       assert_equal "repo:foo is:pr", plan[:query]
-      assert plan[:qualifiers].is_a?(Hash)
-      assert_equal "foo", plan[:qualifiers][:repo]
-      assert_equal "pr", plan[:qualifiers][:is]
     end
 
     def test_post_final_at_max_depth
@@ -136,10 +147,10 @@ module GitHubDeepResearchAgentTest
       assert_equal "final", result
     end
 
-    def test_post_sets_next_search
-      plan = { tool: :semantic, query: "Semantic query" }
-      @node.post(@shared, { query: "Semantic query" }, plan)
-      assert_equal plan, @shared[:next_search]
+    def test_post_sets_next_search_plans
+      plans = [{ tool: :semantic, query: "Semantic query" }, { tool: :keyword, query: "Keyword query" }]
+      @node.post(@shared, { semantic: { query: "Semantic query" }, keyword: "Keyword query" }, plans)
+      assert_equal plans, @shared[:next_search_plans]
     end
   end
 end

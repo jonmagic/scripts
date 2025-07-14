@@ -19,7 +19,7 @@
 #   --verbose               Show debug logs
 #   --fast-model MODEL      Fast LLM model for light reasoning
 #   --reasoning-model MODEL Reasoning LLM model for complex analysis
-#   --search-mode MODE      Override search mode (semantic, keyword, or hybrid - default: hybrid)
+#   --search-modes MODE1,MODE2   Search modes to use: semantic, keyword (default: semantic,keyword)
 #   --cache-path PATH       Root path for caching fetched data
 #
 # The script uses the existing bin/semantic-search-github-conversations,
@@ -46,7 +46,7 @@ options = {
   verbose: false,
   fast_model: ENV["FAST_LLM_MODEL"],
   reasoning_model: ENV["LLM_MODEL"],
-  search_mode: "hybrid",
+  search_modes: ["semantic", "keyword"],
   cache_path: nil
 }
 
@@ -85,8 +85,8 @@ opt_parser = OptionParser.new do |opts|
     options[:reasoning_model] = v
   end
 
-  opts.on("--search-mode MODE", ["semantic", "keyword", "hybrid"], "Override search mode (semantic, keyword, or hybrid - default: hybrid)") do |v|
-    options[:search_mode] = v
+  opts.on("--search-modes MODE1,MODE2", Array, "Search modes to use: semantic, keyword (default: semantic,keyword)") do |v|
+    options[:search_modes] = v
   end
 
   opts.on("--cache-path PATH", "Root path for caching fetched data") do |v|
@@ -134,7 +134,7 @@ shared = {
   editor_file: options[:editor_file],
   clarifying_qa: options[:clarifying_qa],
   verbose: options[:verbose],
-  search_mode: options[:search_mode],
+  search_modes: options[:search_modes],
   cache_path: options[:cache_path],
   models: {
     fast: options[:fast_model],
