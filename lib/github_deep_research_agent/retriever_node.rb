@@ -209,7 +209,7 @@ module GitHubDeepResearchAgent
           fetch_cmd += " #{Shellwords.escape(url)}"
 
           # Execute conversation fetch and parse JSON response
-          conversation_json = Utils.Utils.run_cmd_safe(fetch_cmd)
+          conversation_json = Utils.run_cmd_safe(fetch_cmd)
           conversation_data = JSON.parse(conversation_json)
 
           # Extract metadata for additional conversation context
