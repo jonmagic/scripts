@@ -6,7 +6,7 @@ require "github_deep_research_agent"
 module GitHubDeepResearchAgentTest
   class FinalReportNodeTest < Minitest::Test
     def setup
-      @node = GitHubDeepResearchAgent::FinalReportNode.new
+      @node = GitHubDeepResearchAgent::FinalReportNode.new(logger: Log::NULL)
       @shared = {
         memory: {
           hits: [
@@ -92,7 +92,7 @@ module GitHubDeepResearchAgentTest
       Utils.stub :call_llm, proc { raise error } do
         Utils.stub :context_too_large_error?, false do
           Utils.stub :rate_limit_error?, false do
-            LOG.stub :error, nil do
+            @node.logger.stub :error, nil do
               assert_raises(StandardError) { @node.exec(prompt) }
             end
           end
@@ -116,9 +116,9 @@ module GitHubDeepResearchAgentTest
       @shared[:claim_verification_completed] = true
       @shared[:unsupported_claims] = ["Claim 1"]
       @shared[:claim_verification] = { total_claims: 2, supported_claims: ["Claim 2"], unsupported_claims: ["Claim 1"] }
-      # Stub puts and LOG.info to silence output
+      # Stub puts and logger.info to silence output
       @node.stub :puts, nil do
-        LOG.stub :info, nil do
+        @node.logger.stub :info, nil do
           res = @node.post(@shared, "prompt", "Final report text")
           assert_equal "complete", res
         end

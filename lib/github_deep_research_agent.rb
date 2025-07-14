@@ -49,12 +49,12 @@
 # For detailed node documentation, see each class in `lib/github_deep_research_agent/`.
 
 require "json"
-require "logger"
 require "open3"
 require "set"
 require "shellwords"
 require "tempfile"
 
+require_relative "log"
 require_relative "pocketflow"
 require_relative "utils"
 

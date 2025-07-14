@@ -14,7 +14,7 @@ module GitHubDeepResearchAgentTest
         script_dir: "/tmp",
         verification_attempts: 0
       }
-      @node = GitHubDeepResearchAgent::ClaimVerifierNode.new
+      @node = GitHubDeepResearchAgent::ClaimVerifierNode.new(logger: Log::NULL)
     end
 
     def test_prep_extracts_claims

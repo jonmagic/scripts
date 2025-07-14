@@ -6,7 +6,7 @@ require "github_deep_research_agent"
 module GitHubDeepResearchAgentTest
   class InitialResearchNodeTest < Minitest::Test
     def setup
-      @node = GitHubDeepResearchAgent::InitialResearchNode.new
+      @node = GitHubDeepResearchAgent::InitialResearchNode.new(logger: Log::NULL)
       @shared = {
         request: "repo:octocat/Hello-World status update",
         collection: "github-conversations",

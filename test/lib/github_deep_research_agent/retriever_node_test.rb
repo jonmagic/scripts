@@ -6,7 +6,7 @@ require "github_deep_research_agent"
 module GitHubDeepResearchAgentTest
   class RetrieverNodeTest < Minitest::Test
     def setup
-      @node = GitHubDeepResearchAgent::RetrieverNode.new
+      @node = GitHubDeepResearchAgent::RetrieverNode.new(logger: Log::NULL)
       @shared = {
         next_search: { tool: :semantic, query: "status update" },
         collection: "github-conversations",

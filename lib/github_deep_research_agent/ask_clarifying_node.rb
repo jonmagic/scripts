@@ -18,14 +18,21 @@ module GitHubDeepResearchAgent
   #   answers = node.exec(questions)
   #   node.post(shared, questions, answers)
   class AskClarifyingNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
+
     # Generate up to 4 clarifying questions using LLM, based on initial findings and user request.
     #
     # @param shared [Hash] Workflow context with :memory, :request, :models
     # @return [String] Numbered list of clarifying questions
     def prep(shared)
       @shared = shared # Store shared context for use in other methods
-      LOG.info "=== CLARIFYING QUESTIONS PHASE ==="
-      LOG.info "Generating clarifying questions based on initial findings..."
+      logger.info "=== CLARIFYING QUESTIONS PHASE ==="
+      logger.info "Generating clarifying questions based on initial findings..."
 
       # Extract and format initial findings from the shared memory
       # Each hit contains: {url: String, summary: String, other_metadata...}
@@ -33,7 +40,7 @@ module GitHubDeepResearchAgent
         "- #{hit[:url]}: #{hit[:summary]}"
       end.join("\n")
 
-      LOG.debug do
+      logger.debug do
         "Initial findings summary:\n#{initial_findings}"
       end
 
@@ -45,13 +52,13 @@ module GitHubDeepResearchAgent
         initial_findings: initial_findings
       })
 
-      LOG.debug "Calling LLM to generate clarifying questions..."
+      logger.debug "Calling LLM to generate clarifying questions..."
       # Use fast model for clarifying questions - this is light reasoning to generate
       # questions based on initial findings, not heavy analysis
       llm_response = Utils.call_llm(prompt, shared[:models][:fast])
 
-      LOG.info "Generated clarifying questions for user review"
-      LOG.debug do
+      logger.info "Generated clarifying questions for user review"
+      logger.debug do
         "Generated questions:\n#{'=' * 60}\n#{llm_response}\n#{'=' * 60}"
       end
 
@@ -65,7 +72,7 @@ module GitHubDeepResearchAgent
     def exec(clarifying_questions)
       # Branch 1: Use pre-written Q&A file (for automation/testing)
       if @shared[:clarifying_qa]
-        LOG.info "Using pre-written clarifying Q&A from file: #{@shared[:clarifying_qa]}"
+        logger.info "Using pre-written clarifying Q&A from file: #{@shared[:clarifying_qa]}"
 
         # Validate file existence before attempting to read
         unless File.exist?(@shared[:clarifying_qa])
@@ -73,7 +80,7 @@ module GitHubDeepResearchAgent
         end
 
         edited_content = File.read(@shared[:clarifying_qa])
-        LOG.debug do
+        logger.debug do
           "Pre-written clarifications:\n#{'=' * 60}\n#{edited_content}\n#{'=' * 60}"
         end
 
@@ -81,7 +88,7 @@ module GitHubDeepResearchAgent
       end
 
       # Branch 2: Interactive editor session for user input
-      LOG.info "Opening editor for user to answer clarifying questions..."
+      logger.info "Opening editor for user to answer clarifying questions..."
 
       # Prepare editor content with instructions and questions
       # The format provides clear guidance on what the user should do
@@ -95,8 +102,8 @@ CONTENT
       # Utils.edit_text handles temporary file creation, editor launching, and cleanup
       edited_content = Utils.edit_text(editor_content, @shared[:editor_file])
 
-      LOG.info "User provided clarifications"
-      LOG.debug do
+      logger.info "User provided clarifications"
+      logger.debug do
         "User clarifications:\n#{'=' * 60}\n#{edited_content}\n#{'=' * 60}"
       end
 
@@ -112,8 +119,8 @@ CONTENT
     def post(shared, prep_res, exec_res)
       # Store user clarifications in shared context for downstream nodes
       shared[:clarifications] = exec_res
-      LOG.info "✓ Clarifications collected, proceeding to planning phase"
-      LOG.debug "Moving to planning phase..."
+      logger.info "✓ Clarifications collected, proceeding to planning phase"
+      logger.debug "Moving to planning phase..."
 
       # Return nil to indicate completion without additional data flow
       nil

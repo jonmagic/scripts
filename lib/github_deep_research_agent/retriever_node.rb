@@ -17,6 +17,12 @@ module GitHubDeepResearchAgent
   #   results = node.exec(plan)
   #   node.post(shared, plan, results)
   class RetrieverNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
     # Validate search plan and initialize search execution.
     #
     # @param shared [Hash] Workflow context with :next_search, :collection, :top_k, :script_dir
@@ -27,13 +33,13 @@ module GitHubDeepResearchAgent
 
       # Validate that PlannerNode provided a search plan
       if search_plan.nil?
-        puts "No search plan found from PlannerNode"
+        logger.info "No search plan found from PlannerNode"
         return nil
       end
 
       # Announce retrieval phase and preview search operation
-      puts "=== RETRIEVAL PHASE ==="
-      puts "Executing #{search_plan[:tool]} search with query: \"#{search_plan[:query]}\""
+      logger.info "=== RETRIEVAL PHASE ==="
+      logger.info "Executing #{search_plan[:tool]} search with query: \"#{search_plan[:query]}\""
 
       search_plan
     end
@@ -56,13 +62,13 @@ module GitHubDeepResearchAgent
         semantic_query = search_plan[:semantic_query]
         keyword_query = search_plan[:keyword_query]
 
-        puts "Running semantic search with query: \"#{semantic_query}\""
+        logger.info "Running semantic search with query: \"#{semantic_query}\""
         semantic_cmd = build_semantic_search_command(search_plan, script_dir, collection, top_k)
 
         semantic_output = Utils.run_cmd(semantic_cmd)
         semantic_results = JSON.parse(semantic_output)
 
-        puts "Running keyword search with query: \"#{keyword_query}\""
+        logger.info "Running keyword search with query: \"#{keyword_query}\""
         keyword_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(keyword_query)}"
 
         keyword_output = Utils.run_cmd(keyword_cmd)
@@ -96,7 +102,7 @@ module GitHubDeepResearchAgent
 
         # Limit combined results to configured top_k limit
         search_results = url_to_result.values.first(top_k)
-        puts "Combined #{semantic_results.length} semantic + #{keyword_results.length} keyword results into #{search_results.length} unique conversations"
+        logger.info "Combined #{semantic_results.length} semantic + #{keyword_results.length} keyword results into #{search_results.length} unique conversations"
 
         # Enrich keyword search results with conversation summaries
         # Keyword searches don't provide summaries, so we need to fetch them
@@ -122,7 +128,7 @@ module GitHubDeepResearchAgent
       elsif tool == :keyword
         # Execute pure keyword search using GitHub API
         query = search_plan[:query]
-        puts "Running keyword search with query..."
+        logger.info "Running keyword search with query..."
         search_cmd = "#{script_dir}/search-github-conversations #{Shellwords.escape(query)}"
 
         search_output = Utils.run_cmd(search_cmd)
@@ -163,7 +169,7 @@ module GitHubDeepResearchAgent
       else
         # Execute pure semantic search using Qdrant vector database
         query = search_plan[:query]
-        puts "Running semantic search with query..."
+        logger.info "Running semantic search with query..."
 
         # Extract temporal and ordering qualifiers from the query for semantic search
         semantic_query_info = build_semantic_query(query)
@@ -183,11 +189,11 @@ module GitHubDeepResearchAgent
       existing_urls = @shared[:memory][:hits].map { |hit| hit[:url] }.to_set
       new_results = search_results.reject { |result| existing_urls.include?(result.dig("payload", "url")) }
 
-      puts "Found #{new_results.length} new conversations after deduplication"
+      logger.info "Found #{new_results.length} new conversations after deduplication"
 
       # Handle case where all search results are duplicates of previous iterations
       if new_results.empty?
-        puts "No new results found - all were duplicates"
+        logger.info "No new results found - all were duplicates"
         return []
       end
 
@@ -198,7 +204,7 @@ module GitHubDeepResearchAgent
         url = result.dig("payload", "url")
         next unless url
 
-        puts "Fetching details for new result #{i + 1}/#{new_results.length}: #{url}"
+        logger.info "Fetching details for new result #{i + 1}/#{new_results.length}: #{url}"
 
         begin
           # Build conversation fetching command with optional caching
@@ -223,11 +229,11 @@ module GitHubDeepResearchAgent
             conversation: conversation_data
           }
         rescue => e
-          puts "Failed to fetch #{url}: #{e.message}"
+          logger.warn "Failed to fetch #{url}: #{e.message}"
         end
       end
 
-      puts "Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
+      logger.info "Successfully enriched #{new_enriched.length}/#{new_results.length} new conversations"
 
       # Enrich any conversations that still have empty summaries
       # This handles keyword search results that don't have summaries initially
@@ -276,9 +282,9 @@ module GitHubDeepResearchAgent
         # Create human-readable summary of iteration findings
         notes = exec_res.map { |hit| "#{hit[:url]}: #{hit[:summary]}" }.join("\n")
         shared[:memory][:notes] << "Research iteration: #{notes}"
-        puts "Added #{exec_res.length} new conversations to memory"
+        logger.info "Added #{exec_res.length} new conversations to memory"
       else
-        puts "No new conversations added this iteration"
+        logger.info "No new conversations added this iteration"
       end
 
       # Increment research iteration depth counter
@@ -286,15 +292,15 @@ module GitHubDeepResearchAgent
 
       # Determine workflow continuation based on depth and result quality
       if shared[:current_depth] < shared[:max_depth] && exec_res.any?
-        puts "Continuing to next research iteration..."
+        logger.info "Continuing to next research iteration..."
         "continue" # Return to PlannerNode for next research iteration
       else
-        puts "Research complete, moving to final report..."
+        logger.info "Research complete, moving to final report..."
 
         # Clear unsupported claims after research completion
         # Prevents re-triggering claim verification loops in subsequent workflow runs
         if shared[:unsupported_claims] && shared[:unsupported_claims].any?
-          puts "Clearing unsupported claims after research attempt"
+          logger.info "Clearing unsupported claims after research attempt"
           shared[:unsupported_claims] = []
         end
 
@@ -441,7 +447,7 @@ module GitHubDeepResearchAgent
           return summary unless summary.empty?
         end
       rescue => e
-        puts "Failed to search for existing summary for #{url}: #{e.message}"
+        logger.warn "Failed to search for existing summary for #{url}: #{e.message}"
       end
 
       # Generate new summary if none found
@@ -464,7 +470,7 @@ module GitHubDeepResearchAgent
         summary = Utils.llm_call(summary_prompt, model: :fast)
         return summary
       rescue => e
-        puts "Failed to generate summary for #{url}: #{e.message}"
+        logger.warn "Failed to generate summary for #{url}: #{e.message}"
         return url # Fallback to URL if summary generation fails
       end
     end

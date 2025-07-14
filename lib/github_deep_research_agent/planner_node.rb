@@ -17,6 +17,13 @@ module GitHubDeepResearchAgent
   #   plan = node.exec(query)
   #   node.post(shared, query, plan)
   class PlannerNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
+
     # Analyze research context and generate targeted search queries.
     #
     # @param shared [Hash] Workflow context with research state, findings, clarifications, etc.
@@ -26,11 +33,11 @@ module GitHubDeepResearchAgent
       depth = shared[:current_depth] || 0
       max_depth = shared[:max_depth]
 
-      LOG.info "=== PLANNING PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
+      logger.info "=== PLANNING PHASE (Iteration #{depth + 1}/#{max_depth}) ==="
 
       # Priority 1: Handle unsupported claims from verification process
       if shared[:unsupported_claims] && shared[:unsupported_claims].any?
-        LOG.info "Focusing search on gathering evidence for #{shared[:unsupported_claims].length} unsupported claims"
+        logger.info "Focusing search on gathering evidence for #{shared[:unsupported_claims].length} unsupported claims"
 
         # Format unsupported claims for LLM processing
         unsupported_claims_list = shared[:unsupported_claims].map.with_index do |claim, i|
@@ -50,32 +57,32 @@ module GitHubDeepResearchAgent
           previous_queries: previous_queries
         })
 
-        LOG.debug "Calling LLM to generate search query for unsupported claims..."
+        logger.debug "Calling LLM to generate search query for unsupported claims..."
         llm_response = Utils.call_llm(prompt, shared[:models][:fast])
         refined_query = Utils.parse_semantic_search_response(llm_response)
-        LOG.info "Generated claim verification search plan: #{refined_query}"
+        logger.info "Generated claim verification search plan: #{refined_query}"
 
         return refined_query
       end
 
-      LOG.info "Determining search strategy based on query analysis..."
+      logger.info "Determining search strategy based on query analysis..."
 
       # Priority 2: Check iteration depth limits
       if depth >= max_depth
-        LOG.info "Maximum depth reached, moving to final report"
+        logger.info "Maximum depth reached, moving to final report"
         return nil
       end
 
       # Log iteration context for transparency
       if depth == 0
-        LOG.info "First iteration - generating query different from initial research"
+        logger.info "First iteration - generating query different from initial research"
       end
 
       # Compile current research context for gap analysis
       findings_summary = shared[:memory][:notes].join("\n\n")
       previous_queries = shared[:memory][:search_queries].join(", ")
 
-      LOG.debug do
+      logger.debug do
         "Current research context:\n" \
         "  Previous queries: #{previous_queries}\n" \
         "  Total conversations found so far: #{shared[:memory][:hits].length}\n" \
@@ -94,10 +101,10 @@ module GitHubDeepResearchAgent
           previous_queries: previous_queries
         })
 
-        LOG.debug "Calling LLM to generate natural language search query..."
+        logger.debug "Calling LLM to generate natural language search query..."
         llm_response = Utils.call_llm(prompt, shared[:models][:fast])
         refined_query = Utils.parse_semantic_search_response(llm_response)
-        LOG.info "Generated semantic search plan: #{refined_query}"
+        logger.info "Generated semantic search plan: #{refined_query}"
       elsif search_mode == "keyword"
         # Generate GitHub search string for keyword search
         prompt = Utils.fill_template(GITHUB_SEARCH_PROMPT, {
@@ -105,9 +112,9 @@ module GitHubDeepResearchAgent
           clarifications: shared[:clarifications] || ""
         })
 
-        LOG.debug "Calling LLM to generate GitHub search query..."
+        logger.debug "Calling LLM to generate GitHub search query..."
         refined_query = Utils.call_llm(prompt, shared[:models][:fast])
-        LOG.info "Generated GitHub search query: \"#{refined_query}\""
+        logger.info "Generated GitHub search query: \"#{refined_query}\""
       else
         # Hybrid mode: generate both semantic and keyword queries
         semantic_prompt = Utils.fill_template(SEMANTIC_RESEARCH_PROMPT, {
@@ -122,14 +129,14 @@ module GitHubDeepResearchAgent
           clarifications: shared[:clarifications] || ""
         })
 
-        LOG.debug "Calling LLM to generate semantic query..."
+        logger.debug "Calling LLM to generate semantic query..."
         semantic_response = Utils.call_llm(semantic_prompt, shared[:models][:fast])
         semantic_query = Utils.parse_semantic_search_response(semantic_response)
-        LOG.info "Generated semantic query: #{semantic_query}"
+        logger.info "Generated semantic query: #{semantic_query}"
 
-        LOG.debug "Calling LLM to generate keyword query..."
+        logger.debug "Calling LLM to generate keyword query..."
         keyword_query = Utils.call_llm(keyword_prompt, shared[:models][:fast])
-        LOG.info "Generated keyword query: \"#{keyword_query}\""
+        logger.info "Generated keyword query: \"#{keyword_query}\""
 
         # Combine both queries into structured hybrid format
         refined_query = {
@@ -159,14 +166,14 @@ module GitHubDeepResearchAgent
       # Initial tool selection based on configured search mode
       if search_mode == "semantic"
         tool = :semantic
-        LOG.info "Forced semantic search mode via --search-mode flag"
+        logger.info "Forced semantic search mode via --search-mode flag"
       elsif search_mode == "keyword"
         tool = :keyword
-        LOG.info "Forced keyword search mode via --search-mode flag"
+        logger.info "Forced keyword search mode via --search-mode flag"
       else
         # Default to hybrid mode for comprehensive coverage
         tool = :hybrid
-        LOG.info "Hybrid mode: Running both semantic and keyword searches"
+        logger.info "Hybrid mode: Running both semantic and keyword searches"
       end
 
       # Handle hybrid mode with sophisticated query format detection
@@ -195,7 +202,7 @@ module GitHubDeepResearchAgent
         else
           # Single query provided (likely from unsupported claims research)
           # Treat as semantic search since claim verification benefits from vector similarity
-          LOG.info "Single query provided, treating as semantic search in hybrid mode"
+          logger.info "Single query provided, treating as semantic search in hybrid mode"
           tool = :semantic
 
           # Fall through to semantic search handling below
@@ -247,7 +254,7 @@ module GitHubDeepResearchAgent
             %w[repo author label is created updated].each do |op|
               if current_query =~ /\b#{op}:(\S+)/i
                 qualifiers[op.to_sym] = $1
-                LOG.debug "Extracted #{op} qualifier: #{qualifiers[op.to_sym]}"
+                logger.debug "Extracted #{op} qualifier: #{qualifiers[op.to_sym]}"
               end
             end
           end
@@ -261,7 +268,7 @@ module GitHubDeepResearchAgent
         end
       end
 
-      LOG.debug "Search plan: #{search_plan}"
+      logger.debug "Search plan: #{search_plan}"
 
       search_plan
     end
@@ -279,8 +286,8 @@ module GitHubDeepResearchAgent
       # Store the comprehensive search plan for RetrieverNode execution
       shared[:next_search] = exec_res
 
-      LOG.info "✓ Planning complete, proceeding to retrieval"
-      LOG.debug "Moving to retrieval phase..."
+      logger.info "✓ Planning complete, proceeding to retrieval"
+      logger.debug "Moving to retrieval phase..."
 
       # Return nil to continue workflow with retrieval phase
       nil

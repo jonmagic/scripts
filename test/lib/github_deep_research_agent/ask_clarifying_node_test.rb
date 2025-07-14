@@ -6,7 +6,7 @@ require "github_deep_research_agent"
 module GitHubDeepResearchAgentTest
   class AskClarifyingNodeTest < Minitest::Test
     def setup
-      @node = GitHubDeepResearchAgent::AskClarifyingNode.new
+      @node = GitHubDeepResearchAgent::AskClarifyingNode.new(logger: Log::NULL)
       @shared = {
         memory: { hits: [{ url: "https://github.com/foo/bar", summary: "Test summary" }] },
         request: "What is the impact of X?",

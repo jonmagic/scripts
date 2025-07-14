@@ -18,14 +18,21 @@ module GitHubDeepResearchAgent
   #   report = node.exec(prompt)
   #   status = node.post(shared, prompt, report)
   class FinalReportNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
+
     # Compile all research data and clarifications into a prompt for LLM report generation.
     #
     # @param shared [Hash] Workflow context with :memory, :request, :clarifications, etc.
     # @return [String] Formatted prompt for LLM
     def prep(shared)
       @shared = shared # Store shared context for access in exec() and post()
-      LOG.info "=== FINAL REPORT PHASE ==="
-      LOG.info "Generating final report from all gathered data..."
+      logger.info "=== FINAL REPORT PHASE ==="
+      logger.info "Generating final report from all gathered data..."
 
       # Generate compaction transparency note for process visibility
       compaction_note = ""
@@ -34,10 +41,10 @@ module GitHubDeepResearchAgent
       end
 
       # Provide comprehensive research process summary
-      LOG.info "Research summary: #{shared[:memory][:hits].length} conversations analyzed#{compaction_note}, #{shared[:memory][:search_queries].length} queries used, #{shared[:current_depth] || 0} deep research iterations"
+      logger.info "Research summary: #{shared[:memory][:hits].length} conversations analyzed#{compaction_note}, #{shared[:memory][:search_queries].length} queries used, #{shared[:current_depth] || 0} deep research iterations"
 
       # Generate detailed source listing for debugging and transparency
-      LOG.debug do
+      logger.debug do
         sources_list = shared[:memory][:hits].map.with_index do |hit, i|
           "  #{i + 1}. #{hit[:url]} (score: #{hit[:score]})"
         end.join("\n")
@@ -64,7 +71,7 @@ module GitHubDeepResearchAgent
         all_findings: all_findings
       })
 
-      LOG.debug "Calling LLM to generate final report..."
+      logger.debug "Calling LLM to generate final report..."
       prompt
     end
 
@@ -87,11 +94,11 @@ module GitHubDeepResearchAgent
         # Handle context size and rate limiting errors with recovery strategies
         if Utils.context_too_large_error?(e.message) || Utils.rate_limit_error?(e.message)
           if Utils.rate_limit_error?(e.message)
-            LOG.warn "Rate limit encountered: #{e.message}"
-            LOG.info "Will attempt to compact context to reduce token usage and retry..."
+            logger.warn "Rate limit encountered: #{e.message}"
+            logger.info "Will attempt to compact context to reduce token usage and retry..."
           else
-            LOG.warn "Context too large for model: #{e.message}"
-            LOG.info "Will attempt to compact context and retry..."
+            logger.warn "Context too large for model: #{e.message}"
+            logger.info "Will attempt to compact context and retry..."
           end
 
           # Store the error details for reference and debugging
@@ -102,7 +109,7 @@ module GitHubDeepResearchAgent
           return :context_too_large
         else
           # Re-raise unexpected errors for proper debugging and handling
-          LOG.error "Unexpected error during final report generation: #{e.message}"
+          logger.error "Unexpected error during final report generation: #{e.message}"
           raise e
         end
       end
@@ -117,20 +124,20 @@ module GitHubDeepResearchAgent
     def post(shared, prep_res, exec_res)
       # Handle context size issues by routing to compaction
       if exec_res == :context_too_large
-        LOG.info "Context too large, routing to compaction..."
+        logger.info "Context too large, routing to compaction..."
         return "compact"
       end
 
       # Route to claim verification for first-time report generation
       # This ensures all reports undergo fact-checking before final output
       unless shared[:claim_verification_completed]
-        LOG.info "Routing to claim verification before final output"
+        logger.info "Routing to claim verification before final output"
         shared[:claim_verification_completed] = true
         return "verify"
       end
 
       # Generate final report output with all enhancements
-      LOG.info "=== FINAL REPORT ===\n\n"
+      logger.info "=== FINAL REPORT ===\n\n"
       puts exec_res
 
       # Add transparency note about unsupported claims if verification found issues
@@ -154,7 +161,7 @@ module GitHubDeepResearchAgent
       end
 
       # Provide final workflow completion summary with comprehensive metrics
-      LOG.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}#{compaction_note}#{verification_note}"
+      logger.info "\n\n✓ Research complete! Total conversations analyzed: #{shared[:memory][:hits].length}#{compaction_note}#{verification_note}"
 
       # Signal successful workflow completion
       "complete"

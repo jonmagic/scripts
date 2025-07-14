@@ -18,22 +18,29 @@ module GitHubDeepResearchAgent
   #   results = node.exec(claims)
   #   status = node.post(shared, claims, results)
   class ClaimVerifierNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
+
     # Extract verifiable claims from draft research report using LLM.
     #
     # @param shared [Hash] Workflow context with :draft_answer, :models
     # @return [Array<String>, Symbol, nil] List of claims, :no_claims, or nil
     def prep(shared)
       @shared = shared # Store shared context for downstream method access
-      puts "=== CLAIM VERIFICATION PHASE ==="
+      logger.info "=== CLAIM VERIFICATION PHASE ==="
 
       # Validate that we have a draft report to analyze
       # Without a draft, there's nothing to fact-check
       unless shared[:draft_answer]
-        puts "No draft answer found for claim verification"
+        logger.info "No draft answer found for claim verification"
         return nil
       end
 
-      puts "Extracting factual claims from draft answer for verification..."
+      logger.info "Extracting factual claims from draft answer for verification..."
 
       # Extract claims using LLM analysis
       # The fast model is sufficient for this extraction task
@@ -42,11 +49,11 @@ module GitHubDeepResearchAgent
       # Handle edge case where no verifiable claims are found
       # This can happen with opinion-heavy or recommendation-focused reports
       if claims.empty?
-        puts "No factual claims found in draft answer, proceeding to final report"
+        logger.info "No factual claims found in draft answer, proceeding to final report"
         return :no_claims
       end
 
-      puts "Found #{claims.length} claims to verify"
+      logger.info "Found #{claims.length} claims to verify"
       claims
     end
 
@@ -58,7 +65,7 @@ module GitHubDeepResearchAgent
       # Handle edge cases where no claims need verification
       return :no_claims if claims == :no_claims || claims.nil?
 
-      puts "Verifying #{claims.length} claims against available evidence..."
+      logger.info "Verifying #{claims.length} claims against available evidence..."
 
       # Extract configuration from shared context
       collection = @shared[:collection]    # Qdrant collection name
@@ -71,7 +78,7 @@ module GitHubDeepResearchAgent
 
       # Process each claim individually with progress tracking
       claims.each_with_index do |claim, i|
-        puts "Verifying claim #{i + 1}/#{claims.length}: #{claim.slice(0, 100)}..."
+        logger.info "Verifying claim #{i + 1}/#{claims.length}: #{claim.slice(0, 100)}..."
 
         # Search for evidence related to this specific claim
         # Limit to 3 results to focus on most relevant evidence
@@ -84,21 +91,21 @@ module GitHubDeepResearchAgent
         # Classify and track the claim based on verification result
         if is_supported
           supported_claims << claim
-          puts "✓ Claim #{i + 1} SUPPORTED"
+          logger.info "\u2713 Claim #{i + 1} SUPPORTED"
         else
           unsupported_claims << claim
-          puts "✗ Claim #{i + 1} UNSUPPORTED"
+          logger.info "\u2717 Claim #{i + 1} UNSUPPORTED"
         end
       end
 
       # Provide summary statistics for verification process
-      puts "Verification complete: #{supported_claims.length} supported, #{unsupported_claims.length} unsupported"
+      logger.info "Verification complete: #{supported_claims.length} supported, #{unsupported_claims.length} unsupported"
 
       # Log unsupported claims for transparency and debugging
       if unsupported_claims.any?
-        puts "Found unsupported claims:"
+        logger.info "Found unsupported claims:"
         unsupported_claims.each_with_index do |claim, i|
-          puts "  #{i + 1}. #{claim}"
+          logger.info "  #{i + 1}. #{claim}"
         end
       end
 
@@ -129,19 +136,19 @@ module GitHubDeepResearchAgent
 
       # Check if all claims were successfully verified
       if exec_res[:unsupported_claims].empty?
-        puts "✓ All claims verified successfully, proceeding to final report"
+        logger.info "\u2713 All claims verified successfully, proceeding to final report"
         return "ok"
       else
-        puts "Found #{exec_res[:unsupported_claims].length} unsupported claims"
+        logger.info "Found #{exec_res[:unsupported_claims].length} unsupported claims"
 
         # Implement retry logic with maximum attempt limit
         # Allow only one retry to gather better evidence
         if verification_attempts < 1
           shared[:verification_attempts] = verification_attempts + 1
-          puts "Routing back to planner to gather better evidence for unsupported claims (attempt #{verification_attempts + 1}/1)"
+          logger.info "Routing back to planner to gather better evidence for unsupported claims (attempt #{verification_attempts + 1}/1)"
           return "fix"
         else
-          puts "Maximum verification attempts reached, proceeding with unsupported claims noted"
+          logger.info "Maximum verification attempts reached, proceeding with unsupported claims noted"
           return "ok"
         end
       end

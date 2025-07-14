@@ -6,7 +6,7 @@ require "github_deep_research_agent"
 module GitHubDeepResearchAgentTest
   class PlannerNodeTest < Minitest::Test
     def setup
-      @node = GitHubDeepResearchAgent::PlannerNode.new
+      @node = GitHubDeepResearchAgent::PlannerNode.new(logger: Log::NULL)
       @shared = {
         request: "What is the status of X?",
         clarifications: "Please focus on recent activity.",

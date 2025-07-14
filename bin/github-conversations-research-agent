@@ -31,9 +31,8 @@ require "optparse"
 
 require_relative "../lib/github_deep_research_agent"
 
-# Set up global logger
-LOG = Logger.new($stdout)
-LOG.level = Logger::INFO  # Default level, will be changed to DEBUG with --verbose
+logger = Log.logger
+logger.level = Logger::INFO
 
 # === Main Script ===
 
@@ -107,7 +106,7 @@ rescue OptionParser::InvalidOption => e
 end
 
 # Set logger level based on verbose flag
-LOG.level = options[:verbose] ? Logger::DEBUG : Logger::INFO
+logger.level = options[:verbose] ? Logger::DEBUG : Logger::INFO
 
 # Validate required arguments
 if ARGV.empty?
@@ -179,20 +178,20 @@ final_node.next(end_node)
 flow = Pocketflow::Flow.new(initial_node)
 
 begin
-  LOG.info "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
-  LOG.info "Request: #{request}"
-  LOG.info "Collection: #{options[:collection]}"
-  LOG.info "Max results per search: #{options[:limit]}"
-  LOG.info "Max deep research iterations: #{options[:max_depth]}"
-  LOG.info "Fast model: #{shared[:models][:fast] || 'default'}"
-  LOG.info "Reasoning model: #{shared[:models][:reasoning] || 'default'}"
+  logger.info "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
+  logger.info "Request: #{request}"
+  logger.info "Collection: #{options[:collection]}"
+  logger.info "Max results per search: #{options[:limit]}"
+  logger.info "Max deep research iterations: #{options[:max_depth]}"
+  logger.info "Fast model: #{shared[:models][:fast] || 'default'}"
+  logger.info "Reasoning model: #{shared[:models][:reasoning] || 'default'}"
 
   flow.run(shared)
 rescue Interrupt
-  LOG.error "\nResearch interrupted by user"
+  logger.error "\nResearch interrupted by user"
   exit 1
 rescue => e
-  LOG.error "Error: #{e.message}"
-  LOG.debug e.backtrace.join("\n") if shared[:verbose]
+  logger.error "Error: #{e.message}"
+  logger.debug e.backtrace.join("\n") if shared[:verbose]
   exit 1
 end

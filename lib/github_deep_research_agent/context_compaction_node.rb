@@ -18,13 +18,20 @@ module GitHubDeepResearchAgent
   #   info = node.exec(result)
   #   status = node.post(shared, result, info)
   class ContextCompactionNode < Pocketflow::Node
+    attr_accessor :logger
+
+    def initialize(*args, logger: Log.logger, **kwargs)
+      super(*args, **kwargs)
+      @logger = logger
+    end
+
     # Analyze context size and apply compaction strategy if needed.
     #
     # @param shared [Hash] Workflow context with :memory, :compaction_attempts
     # @return [Hash, String, nil] Compaction info, "proceed_anyway", or nil
     def prep(shared)
       @shared = shared # Store shared context for downstream methods
-      puts "=== CONTEXT COMPACTION PHASE ==="
+      logger.info "=== CONTEXT COMPACTION PHASE ==="
 
       # Track compaction attempts to prevent infinite loops
       compaction_attempts = shared[:compaction_attempts] || 0
@@ -32,7 +39,7 @@ module GitHubDeepResearchAgent
 
       # Safety check: Stop if we've reached maximum compaction attempts
       if compaction_attempts >= max_compaction_attempts
-        puts "Maximum compaction attempts (#{max_compaction_attempts}) reached. Cannot reduce context further."
+        logger.info "Maximum compaction attempts (#{max_compaction_attempts}) reached. Cannot reduce context further."
         return nil
       end
 
@@ -41,13 +48,13 @@ module GitHubDeepResearchAgent
 
       # Safety check: Don't compact if we already have minimal conversations
       if hits.length <= 3
-        puts "Cannot compact further—only #{hits.length} conversations remain."
-        puts "Proceeding with minimal context and hoping for the best..."
+        logger.info "Cannot compact further—only #{hits.length} conversations remain."
+        logger.info "Proceeding with minimal context and hoping for the best..."
         return "proceed_anyway"
       end
 
-      puts "Attempt #{compaction_attempts + 1}/#{max_compaction_attempts}: Compacting research context to fit model limits"
-      puts "Starting with #{hits.length} conversations"
+      logger.info "Attempt #{compaction_attempts + 1}/#{max_compaction_attempts}: Compacting research context to fit model limits"
+      logger.info "Starting with #{hits.length} conversations"
 
       # Sort conversations by priority using composite scoring strategy
       # This ensures we remove the least valuable conversations first
@@ -69,15 +76,15 @@ module GitHubDeepResearchAgent
         strategy = "Keep only top 25% with minimal data"
       end
 
-      puts "Strategy: #{strategy}"
-      puts "Will remove #{removal_count} conversations, keeping #{hits.length - removal_count}"
+      logger.info "Strategy: #{strategy}"
+      logger.info "Will remove #{removal_count} conversations, keeping #{hits.length - removal_count}"
 
       # Remove lower-priority conversations from the end of sorted array
       removed_conversations = hits.pop(removal_count)
 
       # For second and third attempts, also strip conversation details to save space
       if compaction_attempts >= 1
-        puts "Stripping conversation details to reduce context size..."
+        logger.info "Stripping conversation details to reduce context size..."
 
         hits.each do |hit|
           if hit[:conversation]
@@ -149,9 +156,9 @@ module GitHubDeepResearchAgent
       return "proceed_anyway" if compaction_info == "proceed_anyway"
 
       # Log successful compaction results for user feedback and debugging
-      puts "Applied compaction strategy: #{compaction_info[:strategy]}"
-      puts "Removed #{compaction_info[:removed_count]} conversations"
-      puts "#{compaction_info[:remaining_count]} conversations remaining"
+      logger.info "Applied compaction strategy: #{compaction_info[:strategy]}"
+      logger.info "Removed #{compaction_info[:removed_count]} conversations"
+      logger.info "#{compaction_info[:remaining_count]} conversations remaining"
 
       # Return compaction info unchanged for post-processing
       compaction_info
@@ -171,7 +178,7 @@ module GitHubDeepResearchAgent
       compaction_attempts = (shared[:compaction_attempts] || 0) + 1
       shared[:compaction_attempts] = compaction_attempts
 
-      puts "✓ Context compaction attempt #{compaction_attempts} completed"
+      logger.info "\u2713 Context compaction attempt #{compaction_attempts} completed"
 
       # Implement rate limiting delay to prevent immediate retry failures
       # This is crucial because:
@@ -180,7 +187,7 @@ module GitHubDeepResearchAgent
       # 3. Memory cleanup after compaction takes time
       # 4. Immediate retries often hit the same limits that triggered compaction
       sleep_duration = 60
-      puts "Waiting #{sleep_duration} seconds after compaction before retrying..."
+      logger.info "Waiting #{sleep_duration} seconds after compaction before retrying..."
       sleep(sleep_duration)
 
       # Signal workflow to retry the operation that triggered compaction

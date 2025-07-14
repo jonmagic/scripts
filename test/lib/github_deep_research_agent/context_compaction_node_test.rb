@@ -6,7 +6,7 @@ require "github_deep_research_agent"
 module GitHubDeepResearchAgentTest
   class ContextCompactionNodeTest < Minitest::Test
     def setup
-      @node = GitHubDeepResearchAgent::ContextCompactionNode.new
+      @node = GitHubDeepResearchAgent::ContextCompactionNode.new(logger: Log::NULL)
       @base_hits = Array.new(10) { |i|
         {
           summary: (i.even? ? "Summary #{i}" : nil),
