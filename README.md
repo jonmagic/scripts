@@ -223,7 +223,7 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `--max-depth N`: Max deep-research passes (default: 2)
 - `--editor-file PATH`: Use fixed file instead of Tempfile for clarifying questions
 - `--clarifying-qa PATH`: Path to file with clarifying Q&A to bypass interactive step
-- `--search-mode MODE`: Override search mode (semantic, keyword, or hybrid - default: hybrid)
+- `--search-modes MODE1,MODE2`: Search modes to use: semantic, keyword (default: semantic,keyword)
 - `--cache-path PATH`: Root path for caching fetched data
 - `--verbose`: Show debug logs and progress information
 - `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: ENV['FAST_LLM_MODEL'] or llm default)
@@ -238,15 +238,13 @@ AI workflow that answers a question by semantically searching your GitHub conver
 
 **Search Modes:**
 
-- **hybrid** (default): Automatically selects search strategy based on query analysis
-  - Uses keyword search for queries with GitHub operators (repo:, author:, label:, is:, created:, updated:)
-  - Uses semantic search for natural language queries
-- **semantic**: Forces semantic search using vector similarity against indexed conversation summaries
-- **keyword**: Forces keyword search using GitHub's search API via `bin/search-github-conversations`
+- **semantic**: Uses semantic search with vector similarity against indexed conversation summaries
+- **keyword**: Uses keyword search via GitHub's search API through `bin/search-github-conversations`
+- **Combined modes**: When both are specified (default), the agent uses both search strategies and combines results
 
 **Workflow:**
 
-1. **Initial Research**: Performs semantic search against your collection to find relevant conversations
+1. **Initial Research**: Performs search against your collection using configured search modes to find relevant conversations
 2. **Clarifying Questions**: Generates up to 4 clarifying questions and opens them in your editor
 3. **Deep Research**: Based on your answers, performs iterative searches up to `--max-depth` times
 4. **Final Report**: Generates a comprehensive Markdown report citing all GitHub conversations used
@@ -280,19 +278,25 @@ Research with pre-written clarifying questions (bypassing interactive step):
 Dual-model research with gpt-4.1 for fast reasoning and o3 for complex analysis:
 
 ```sh
-./path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3
+/path/to/github-conversations-research-agent "What are the main challenges with our CI/CD pipeline?" --collection github-conversations --fast-model gpt-4.1 --reasoning-model o3
 ```
 
-Force keyword search for repository-specific queries:
+Use only semantic search:
 
 ```sh
-./path/to/github-conversations-research-agent "repo:owner/repo is:issue label:bug" --collection github-conversations --search-mode keyword
+/path/to/github-conversations-research-agent "authentication issues" --collection github-conversations --search-modes semantic
 ```
 
-Force semantic search even with GitHub operators:
+Use only keyword search:
 
 ```sh
-./path/to/github-conversations-research-agent "repo:owner/repo authentication issues" --collection github-conversations --search-mode semantic
+/path/to/github-conversations-research-agent "repo:owner/repo is:issue label:bug" --collection github-conversations --search-modes keyword
+```
+
+Research with caching enabled:
+
+```sh
+/path/to/github-conversations-research-agent "database performance optimization" --collection github-conversations --cache-path ./data
 ```
 
 **Sample Output:**
@@ -329,7 +333,7 @@ The script uses structured logging with two levels:
 - **Default (INFO level)**: Shows high-level progress and milestones. Typically ≤20 lines for a 2-iteration query.
 - **Verbose mode (`--verbose`)**: Enables DEBUG level logging with detailed search results, conversation metadata, and command execution details. Expect ≥100 lines of output.
 
-The semantic search is performed by `bin/semantic-search-github-conversations` rather than direct API calls to Qdrant, ensuring consistency with other tools in this repository.
+The search operations are performed by `bin/semantic-search-github-conversations` and `bin/search-github-conversations` rather than direct API calls, ensuring consistency with other tools in this repository.
 
 ### Summarize GitHub Conversation
 
