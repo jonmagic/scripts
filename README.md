@@ -228,6 +228,7 @@ AI workflow that answers a question by semantically searching your GitHub conver
 - `--verbose`: Show debug logs and progress information
 - `--fast-model MODEL`: Fast LLM model for light reasoning tasks like generating clarifying questions and search queries (default: ENV['FAST_LLM_MODEL'] or llm default)
 - `--reasoning-model MODEL`: Reasoning LLM model for complex analysis like final report generation (default: ENV['LLM_MODEL'] or llm default)
+- `--parallel`: Use parallel processing for better performance (default: false)
 
 **Prerequisites:**
 

@@ -1,2 +1,3 @@
 # gitignore these paths
-/data
+/data*
+/work*
