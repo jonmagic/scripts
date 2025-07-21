@@ -67,6 +67,9 @@ require_relative "github_deep_research_agent/final_report_node"
 require_relative "github_deep_research_agent/initial_research_node"
 require_relative "github_deep_research_agent/planner_node"
 require_relative "github_deep_research_agent/retriever_node"
+require_relative "github_deep_research_agent/parallel_retriever_node"
+require_relative "github_deep_research_agent/parallel_claim_verifier_node"
+require_relative "github_deep_research_agent/parallel_research_flow"
 
 module GitHubDeepResearchAgent
   # Start the research workflow with the given options
@@ -83,6 +86,7 @@ module GitHubDeepResearchAgent
   # @option options [Array<String>] :search_modes Search modes to use (default: ["semantic", "keyword"])
   # @option options [String] :cache_path Root path for caching fetched data
   # @option options [String] :script_dir Directory containing the scripts
+  # @option options [Boolean] :parallel Use parallel nodes for better performance (default: false)
   def self.start(request, options = {})
     logger = options[:logger] || Log.logger
 
@@ -107,16 +111,33 @@ module GitHubDeepResearchAgent
       search_modes: options[:search_modes] || ["semantic", "keyword"],
       cache_path: options[:cache_path],
       models: options[:models] || {},
-      script_dir: options[:script_dir] || File.expand_path(File.dirname(__FILE__) + "/../bin")
+      script_dir: options[:script_dir] || File.expand_path(File.dirname(__FILE__) + "/../bin"),
+      parallel: options[:parallel] || false
     }
 
-    # Build the workflow
+    # Build the workflow with optional parallel nodes
     initial_node = GitHubDeepResearchAgent::InitialResearchNode.new(logger: logger)
     clarify_node = GitHubDeepResearchAgent::AskClarifyingNode.new(logger: logger)
     planner_node = GitHubDeepResearchAgent::PlannerNode.new(logger: logger)
-    retriever_node = GitHubDeepResearchAgent::RetrieverNode.new(logger: logger)
+
+    # Choose retriever node based on parallel option
+    retriever_node = if shared[:parallel]
+      logger.info "Using parallel retriever for concurrent search execution"
+      GitHubDeepResearchAgent::ParallelRetrieverNode.new(logger: logger)
+    else
+      GitHubDeepResearchAgent::RetrieverNode.new(logger: logger)
+    end
+
     compaction_node = GitHubDeepResearchAgent::ContextCompactionNode.new(logger: logger)
-    claim_verifier_node = GitHubDeepResearchAgent::ClaimVerifierNode.new(logger: logger)
+
+    # Choose claim verifier based on parallel option
+    claim_verifier_node = if shared[:parallel]
+      logger.info "Using parallel claim verifier for concurrent verification"
+      GitHubDeepResearchAgent::ParallelClaimVerifierNode.new(logger: logger)
+    else
+      GitHubDeepResearchAgent::ClaimVerifierNode.new(logger: logger)
+    end
+
     final_node = GitHubDeepResearchAgent::FinalReportNode.new(logger: logger)
     end_node = GitHubDeepResearchAgent::EndNode.new(logger: logger)
 
@@ -144,7 +165,8 @@ module GitHubDeepResearchAgent
     # Create and run the flow
     flow = Pocketflow::Flow.new(initial_node)
 
-    logger.info "=== GITHUB CONVERSATIONS RESEARCH AGENT ==="
+    parallel_mode = shared[:parallel] ? " (parallel mode)" : ""
+    logger.info "=== GITHUB CONVERSATIONS RESEARCH AGENT#{parallel_mode} ==="
     logger.info "Request: #{request}"
     logger.info "Collection: #{options[:collection]}"
     logger.info "Max results per search: #{shared[:top_k]}"

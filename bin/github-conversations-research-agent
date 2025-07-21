@@ -21,6 +21,7 @@
 #   --reasoning-model MODEL Reasoning LLM model for complex analysis
 #   --search-modes MODE1,MODE2   Search modes to use: semantic, keyword (default: semantic,keyword)
 #   --cache-path PATH       Root path for caching fetched data
+#   --parallel              Use parallel processing for better performance
 #
 # The script uses the existing bin/semantic-search-github-conversations,
 # bin/search-github-conversations and bin/fetch-github-conversation scripts
@@ -45,7 +46,8 @@ options = {
   fast_model: ENV["FAST_LLM_MODEL"],
   reasoning_model: ENV["LLM_MODEL"],
   search_modes: ["semantic", "keyword"],
-  cache_path: nil
+  cache_path: nil,
+  parallel: false
 }
 
 opt_parser = OptionParser.new do |opts|
@@ -91,6 +93,10 @@ opt_parser = OptionParser.new do |opts|
     options[:cache_path] = v
   end
 
+  opts.on("--parallel", "Use parallel processing for better performance") do
+    options[:parallel] = true
+  end
+
   opts.on("-h", "--help", "Show this help message") do
     puts opts
     exit
@@ -129,6 +135,7 @@ module_options = {
   verbose: options[:verbose],
   search_modes: options[:search_modes],
   cache_path: options[:cache_path],
+  parallel: options[:parallel],
   models: {
     fast: options[:fast_model],
     reasoning: options[:reasoning_model]
