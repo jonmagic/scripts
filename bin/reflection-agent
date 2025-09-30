@@ -1,0 +1,184 @@
+#!/usr/bin/env ruby
+
+# reflection-agent - Generate personal work reflections using hierarchical summarization
+#
+# This script orchestrates a multi-stage workflow that creates comprehensive reflections
+# by analyzing weekly snippets and referenced GitHub conversations. It uses a hierarchical
+# summarization approach to scale from 1 week to 2+ years of reflection.
+#
+# Usage:
+#   bin/reflection-agent [OPTIONS]
+#
+# Examples:
+#   # Two week catch-up (default)
+#   bin/reflection-agent
+#
+#   # Custom date range
+#   bin/reflection-agent --start-date 2025-04-01 --end-date 2025-09-30
+#
+#   # Six month reflection
+#   bin/reflection-agent --start-date 2025-01-01 --end-date 2025-06-30 \
+#                        --purpose "H1 2025 Reflection" \
+#                        --name "h1-2025"
+#
+#   # Resume from existing reflection
+#   bin/reflection-agent --resume-from ~/brain/Reflections/bromine-semester
+#
+# Prerequisites:
+#   - Qdrant vector database running at localhost:6333
+#   - GitHub conversation cache at ~/code/jonmagic/scripts/data
+#   - Brain folder with Snippets/ at ~/brain
+#   - Vector index up-to-date (run update script first)
+
+require "optparse"
+require "date"
+require_relative "../lib/reflection_agent"
+require_relative "../lib/log"
+
+# Default paths
+DEFAULT_CACHE_PATH = File.expand_path("~/code/jonmagic/scripts/data")
+DEFAULT_COLLECTION = "github-conversations"
+DEFAULT_BRAIN_PATH = File.expand_path("~/brain")
+
+# Parse command line options
+options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: bin/reflection-agent [OPTIONS]"
+  opts.separator ""
+  opts.separator "Generate personal work reflections using hierarchical summarization"
+  opts.separator ""
+  opts.separator "Options:"
+
+  opts.on("--cache-path PATH", "Path to GitHub conversation cache (default: #{DEFAULT_CACHE_PATH})") do |v|
+    options[:cache_path] = v
+  end
+
+  opts.on("--collection NAME", "Qdrant collection name (default: #{DEFAULT_COLLECTION})") do |v|
+    options[:collection] = v
+  end
+
+  opts.on("--brain-path PATH", "Path to brain folder (default: #{DEFAULT_BRAIN_PATH})") do |v|
+    options[:brain_path] = v
+  end
+
+  opts.on("--start-date DATE", "Start date YYYY-MM-DD (default: 14 days ago)") do |v|
+    options[:start_date] = v
+  end
+
+  opts.on("--end-date DATE", "End date YYYY-MM-DD (default: today)") do |v|
+    options[:end_date] = v
+  end
+
+  opts.on("--purpose PURPOSE", "Purpose of reflection (default: catch-up)") do |v|
+    options[:purpose] = v
+  end
+
+  opts.on("--name NAME", "Reflection name (default: catch-up-YYYY-MM-DD)") do |v|
+    options[:reflection_name] = v
+  end
+
+  opts.on("--resume-from PATH", "Resume from existing reflection directory") do |v|
+    options[:resume_from] = v
+  end
+
+  opts.on("--llm-model MODEL", "LLM model for summaries (default: ENV['LLM_MODEL'])") do |v|
+    options[:llm_model] = v
+  end
+
+  opts.on("--executive-summary-prompt PATH", "Path to executive summary prompt") do |v|
+    options[:executive_summary_prompt_path] = v
+  end
+
+  opts.on("--topics-prompt PATH", "Path to topics extraction prompt") do |v|
+    options[:topics_prompt_path] = v
+  end
+
+  opts.on("-v", "--verbose", "Show debug logs") do
+    options[:verbose] = true
+  end
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end.parse!
+
+# Apply defaults
+options[:cache_path] ||= DEFAULT_CACHE_PATH
+options[:collection] ||= DEFAULT_COLLECTION
+options[:brain_path] ||= DEFAULT_BRAIN_PATH
+options[:executive_summary_prompt_path] ||= File.expand_path("~/code/jonmagic/prompts/summarize/github-conversation-executive-summary.md")
+options[:topics_prompt_path] ||= File.expand_path("~/code/jonmagic/prompts/generate/topics.md")
+
+# Validate paths exist
+unless File.directory?(options[:cache_path])
+  abort "Error: cache_path does not exist: #{options[:cache_path]}"
+end
+
+unless File.directory?(options[:brain_path])
+  abort "Error: brain_path does not exist: #{options[:brain_path]}"
+end
+
+snippets_path = File.join(options[:brain_path], "Snippets")
+unless File.directory?(snippets_path)
+  abort "Error: Snippets folder not found: #{snippets_path}"
+end
+
+# Validate prompt files exist
+unless File.exist?(options[:executive_summary_prompt_path])
+  abort "Error: Executive summary prompt not found: #{options[:executive_summary_prompt_path]}"
+end
+
+unless File.exist?(options[:topics_prompt_path])
+  abort "Error: Topics prompt not found: #{options[:topics_prompt_path]}"
+end
+
+# Setup logging
+if options[:verbose]
+  Log.logger.level = Logger::DEBUG
+end
+
+# Display banner
+puts ""
+puts "=" * 70
+puts "  PERSONAL WORK REFLECTION AGENT v2"
+puts "  Hierarchical Summarization: Snippets → Clusters → Synthesis"
+puts "=" * 70
+puts ""
+puts "Configuration:"
+puts "  Cache:      #{options[:cache_path]}"
+puts "  Collection: #{options[:collection]}"
+puts "  Brain:      #{options[:brain_path]}"
+puts "  LLM Model:  #{options[:llm_model] || ENV['LLM_MODEL'] || 'default'}"
+puts ""
+
+if options[:resume_from]
+  puts "  Resuming:   #{options[:resume_from]}"
+  puts ""
+else
+  start_date = options[:start_date] || (Date.today - 14).to_s
+  end_date = options[:end_date] || Date.today.to_s
+  puts "  Date Range: #{start_date} to #{end_date}"
+  puts "  Purpose:    #{options[:purpose] || 'catch-up'}"
+  puts ""
+end
+
+puts "⚠️  IMPORTANT: Ensure your vector index is up-to-date before running!"
+puts "   This agent loads conversation summaries from Qdrant."
+puts ""
+puts "Press Ctrl+C to cancel, or wait 3 seconds to continue..."
+sleep 3
+puts ""
+
+# Run the workflow
+begin
+  ReflectionAgent.start(options)
+rescue Interrupt
+  puts ""
+  puts "Interrupted by user"
+  exit 1
+rescue => e
+  Log.logger.error "Fatal error: #{e.message}"
+  Log.logger.error e.backtrace.join("\n") if options[:verbose]
+  exit 1
+end

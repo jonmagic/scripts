@@ -38,6 +38,7 @@ This repo uses the terms **porcelain** and **plumbing** to describe its scripts,
   - [GitHub Conversations Research Agent](#github-conversations-research-agent)
   - [Index Summary](#index-summary)
   - [Index Summaries](#index-summaries)
+  - [Reflection Agent](#reflection-agent)
   - [Summarize GitHub Conversation](#summarize-github-conversation)
   - [Prepare Commit](#prepare-commit)
   - [Prepare Pull Request](#prepare-pull-request)
@@ -561,6 +562,170 @@ For each successfully indexed conversation, outputs a JSON object:
 ```
 
 The script continues processing even if individual URLs fail and outputs error messages to stderr for any failures.
+
+### Reflection Agent
+
+Generate comprehensive personal work reflections using hierarchical summarization of weekly snippets and GitHub conversations. This script orchestrates a multi-stage workflow that analyzes your work over any time period (from 2 weeks to 2+ years) by clustering snippets temporally, summarizing them, loading referenced GitHub conversations from a vector database, and synthesizing everything into a final reflection document.
+
+**Architecture:**
+
+The agent uses a hierarchical summarization approach with 7 stages:
+1. **Initialize**: Create reflection directory and metadata
+2. **Load Snippets**: Gather all snippet files from your brain's Snippets folder
+3. **Cluster Snippets**: Group snippets into 4-6 temporal clusters
+4. **Summarize Clusters**: Generate AI summaries for each cluster's snippets (parallel processing)
+5. **Load Conversations**: Fetch GitHub conversation summaries from Qdrant vector database
+6. **Summarize Conversations**: Generate AI summaries of conversations per cluster (parallel processing)
+7. **Final Synthesis**: Combine all cluster summaries into a comprehensive reflection
+
+**Usage:**
+
+```sh
+/path/to/reflection-agent [OPTIONS]
+```
+
+**Required Options:**
+
+- `--executive-summary-prompt PATH`: Path to prompt file for generating conversation summaries
+- `--topics-prompt PATH`: Path to prompt file for extracting topics from conversations
+
+**Optional Options:**
+
+- `--cache-path PATH`: Path to GitHub conversation cache (default: ~/code/jonmagic/scripts/data)
+- `--collection NAME`: Qdrant collection name (default: github-conversations)
+- `--brain-path PATH`: Path to brain folder containing Snippets/ (default: ~/brain)
+- `--start-date DATE`: Start date YYYY-MM-DD (default: 14 days ago)
+- `--end-date DATE`: End date YYYY-MM-DD (default: today)
+- `--purpose PURPOSE`: Purpose of reflection (default: "catch-up")
+- `--name NAME`: Reflection name for directory (default: catch-up-YYYY-MM-DD)
+- `--resume-from PATH`: Resume from existing reflection directory
+- `--llm-model MODEL`: LLM model for summaries (default: ENV['LLM_MODEL'])
+- `-v, --verbose`: Show debug logs
+- `-h, --help`: Show help message
+
+**Prerequisites:**
+
+- Qdrant vector database running at localhost:6333
+- GitHub conversation summaries indexed in Qdrant (use `index-summaries`)
+- Brain folder with weekly snippets in `Snippets/` directory
+- Snippet naming conventions: `YYYY-MM-DD-to-YYYY-MM-DD` or `YYYY-MM-DD-to-YYYY-MM-DD/snippets.md`
+- Executive summary and topics prompt files
+
+**Examples:**
+
+Two week catch-up (default):
+
+```sh
+/path/to/reflection-agent \
+  --executive-summary-prompt ~/prompts/summarize/github-conversation-executive-summary.md \
+  --topics-prompt ~/prompts/generate/topics.md
+```
+
+Six month semester reflection:
+
+```sh
+/path/to/reflection-agent \
+  --start-date 2025-04-01 \
+  --end-date 2025-09-30 \
+  --purpose "Bromine semester reflection" \
+  --name bromine-semester \
+  --executive-summary-prompt ~/prompts/summarize/github-conversation-executive-summary.md \
+  --topics-prompt ~/prompts/generate/topics.md
+```
+
+Full year reflection with custom paths:
+
+```sh
+/path/to/reflection-agent \
+  --cache-path ~/code/scripts/data \
+  --collection github-conversation-summaries \
+  --brain-path ~/brain \
+  --start-date 2025-01-01 \
+  --end-date 2025-12-31 \
+  --purpose "Year in review" \
+  --name year-2025 \
+  --executive-summary-prompt ~/prompts/summarize/github-conversation-executive-summary.md \
+  --topics-prompt ~/prompts/generate/topics.md
+```
+
+Resume from existing reflection (to regenerate final synthesis):
+
+```sh
+/path/to/reflection-agent \
+  --resume-from ~/brain/Reflections/2025-04-01__to__2025-09-30__bromine-semester \
+  --executive-summary-prompt ~/prompts/summarize/github-conversation-executive-summary.md \
+  --topics-prompt ~/prompts/generate/topics.md
+```
+
+**Output Structure:**
+
+The agent creates a reflection directory with the following structure:
+
+```
+Reflections/YYYY-MM-DD__to__YYYY-MM-DD__name/
+├── 00-session-metadata.json         # Run metadata and configuration
+├── 01-snippets.json                 # All loaded snippets with content
+├── 02-clusters.json                 # Temporal cluster definitions
+├── 03-cluster-snippet-summaries.json # Snippet summaries per cluster
+├── 04-conversations-all.json        # All GitHub conversations referenced
+├── 04-conversations-by-cluster.json # Conversations grouped by cluster
+├── 05-cluster-conversation-summaries.json # Conversation summaries per cluster
+├── final-reflection.md              # ★ Final comprehensive reflection
+└── clusters/
+    ├── period-1-snippet-summary.md
+    ├── period-1-conversation-summary.md
+    ├── period-2-snippet-summary.md
+    ├── period-2-conversation-summary.md
+    └── ... (5-6 clusters typically)
+```
+
+**Resume Functionality:**
+
+The agent automatically detects completed stages and resumes from where it left off:
+- Stages 0-2: Fast, always regenerated
+- Stages 3-6: Expensive (LLM calls), automatically resumed if output files exist
+- Stage 7: Final synthesis, can be regenerated without re-running expensive stages
+
+This makes it efficient to iterate on the final synthesis or recover from errors without reprocessing everything.
+
+**Workflow Integration:**
+
+Before running the reflection agent, ensure your GitHub conversations are indexed:
+
+```sh
+# Step 1: Index recent conversations
+/path/to/search-github-conversations 'repo:owner/repo created:>2025-04-01' | \
+  /path/to/index-summaries \
+    --executive-summary-prompt ~/prompts/summarize/github-conversation-executive-summary.md \
+    --topics-prompt ~/prompts/generate/topics.md \
+    --collection github-conversations \
+    --cache-path ~/code/scripts/data \
+    --skip-if-up-to-date
+
+# Step 2: Generate reflection
+/path/to/reflection-agent \
+  --start-date 2025-04-01 \
+  --end-date 2025-09-30 \
+  --purpose "Q2 2025 Reflection" \
+  --name q2-2025 \
+  --executive-summary-prompt ~/prompts/summarize/github-conversation-executive-summary.md \
+  --topics-prompt ~/prompts/generate/topics.md
+```
+
+**Performance:**
+
+- **Snippet processing**: ~1 second per cluster (5-6 clusters typical)
+- **Conversation loading**: ~100ms per conversation from vector DB
+- **Conversation summarization**: ~5-10 seconds per cluster (parallel processing)
+- **Final synthesis**: ~10-20 seconds depending on model
+- **Total time**: 2-5 minutes for a 6-month reflection
+
+**Limitations:**
+
+- Requires snippets to follow naming conventions for date range parsing
+- Maximum ~1000 conversations can be loaded from vector DB per reflection
+- Cluster count is fixed at 4-6 based on date range
+- Conversations must be pre-indexed in Qdrant (not fetched on-demand)
 
 ### Prepare Commit
 
