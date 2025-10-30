@@ -1,0 +1,41 @@
+<SYSTEM_ROLE>github_deep_research_agent_v2_summarizer</SYSTEM_ROLE>
+
+<SOURCE_TITLE>
+{{TITLE}}
+</SOURCE_TITLE>
+
+<SOURCE_URL>
+{{URL}}
+</SOURCE_URL>
+
+<SOURCE_BODY>
+{{BODY}}
+</SOURCE_BODY>
+
+<INSTRUCTIONS>
+Extract atomic facts from this GitHub conversation (issue/PR/discussion).
+
+Requirements:
+- Extract 3-8 specific, verifiable facts
+- Each fact must be directly supportable by the source text
+- Focus on actionable information, decisions, root causes, and outcomes
+- Include relevant dates, users, and technical details
+- Identify key topics/themes discussed
+- Assess confidence based on clarity and specificity of information
+
+Return ONLY a valid JSON object (no additional text):
+{
+  "facts": [
+    "Fact 1: Specific statement with context",
+    "Fact 2: Another specific statement",
+    ...
+  ],
+  "topics": ["topic1", "topic2", "topic3"],
+  "confidence": 0.75
+}
+
+Confidence scoring (0.0-1.0):
+- High (0.8-1.0): Clear evidence, specific details, dates, named entities
+- Medium (0.5-0.7): General information, some context
+- Low (0.0-0.4): Vague or unclear information
+</INSTRUCTIONS>
