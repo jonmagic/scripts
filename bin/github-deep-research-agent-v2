@@ -1,0 +1,255 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# bin/github-deep-research-agent-v2
+#
+# Next-generation deep research agent for GitHub conversations
+#
+# Usage: github-deep-research-agent-v2 "RESEARCH QUESTION" --collection NAME [options]
+#
+# This agent implements:
+# - Dynamic multi-aspect planning with verification
+# - Parallel search and summarization
+# - External memory management with relevance ranking
+# - Budget-aware execution with policy-driven decisions
+# - Comprehensive Markdown reports with source citations
+
+require "optparse"
+require "logger"
+require_relative "../lib/github_deep_research_agent_v2"
+
+# Parse command-line options
+options = {
+  collection: nil,
+  max_depth: 3,
+  breadth_limit: 5,
+  max_aspects: 8,
+  token_budget: 60_000,
+  parallel_agents: 4,
+  max_summaries_per_branch: 6,
+  stop_if_confidence: 0.85,
+  min_coverage: 0.75,
+  replan_max: 2,
+  relevance_top_k: 40,
+  report_style: "detailed",
+  cache_path: nil,
+  output_path: nil,
+  json_artifacts_path: nil,
+  search_modes: ["semantic", "keyword"],
+  log_level: "info",
+  fast_model: ENV["FAST_LLM_MODEL"],
+  reasoning_model: ENV["LLM_MODEL"],
+  summary_model: ENV["FAST_LLM_MODEL"]
+}
+
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: #{File.basename($0)} \"RESEARCH QUESTION\" --collection NAME [options]"
+
+  opts.separator ""
+  opts.separator "Required Options:"
+
+  opts.on("--collection NAME", "Qdrant collection name (required)") do |v|
+    options[:collection] = v
+  end
+
+  opts.separator ""
+  opts.separator "Search & Execution Options:"
+
+  opts.on("--max-depth N", Integer, "Maximum depth of research iterations (default: 3)") do |v|
+    options[:max_depth] = v
+  end
+
+  opts.on("--breadth N", Integer, "Maximum number of aspects to investigate (default: 5)") do |v|
+    options[:breadth_limit] = v
+  end
+
+  opts.on("--token-budget N", Integer, "Token budget for entire research session (default: 60000)") do |v|
+    options[:token_budget] = v
+  end
+
+  opts.on("--parallel-agents N", Integer, "Number of parallel research agents (default: 4)") do |v|
+    options[:parallel_agents] = v
+  end
+
+  opts.on("--max-summaries-per-branch N", Integer, "Max summaries per search query (default: 6)") do |v|
+    options[:max_summaries_per_branch] = v
+  end
+
+  opts.on("--search-modes MODE1,MODE2", Array, "Search modes: semantic,keyword (default: both)") do |v|
+    options[:search_modes] = v
+  end
+
+  opts.separator ""
+  opts.separator "Policy & Thresholds:"
+
+  opts.on("--stop-if-confidence SCORE", Float, "Stop if confidence >= this score (default: 0.85)") do |v|
+    options[:stop_if_confidence] = v
+  end
+
+  opts.on("--min-coverage SCORE", Float, "Minimum required coverage score (default: 0.75)") do |v|
+    options[:min_coverage] = v
+  end
+
+  opts.on("--replan-max N", Integer, "Maximum number of replans (default: 2)") do |v|
+    options[:replan_max] = v
+  end
+
+  opts.on("--relevance-top-k N", Integer, "Top K relevant facts for report (default: 40)") do |v|
+    options[:relevance_top_k] = v
+  end
+
+  opts.separator ""
+  opts.separator "Model Configuration:"
+
+  opts.on("--fast-model MODEL", "Fast LLM for light reasoning (default: ENV['FAST_LLM_MODEL'])") do |v|
+    options[:fast_model] = v
+  end
+
+  opts.on("--reasoning-model MODEL", "Reasoning LLM for complex analysis (default: ENV['LLM_MODEL'])") do |v|
+    options[:reasoning_model] = v
+  end
+
+  opts.on("--summary-model MODEL", "LLM for summarization (default: ENV['FAST_LLM_MODEL'])") do |v|
+    options[:summary_model] = v
+  end
+
+  opts.separator ""
+  opts.separator "Output Options:"
+
+  opts.on("--report-style STYLE", ["detailed", "concise"], "Report style: detailed or concise (default: detailed)") do |v|
+    options[:report_style] = v
+  end
+
+  opts.on("--cache-path PATH", "Root path for caching data (default: ./cache/deep_research_v2)") do |v|
+    options[:cache_path] = v
+  end
+
+  opts.on("--output-path PATH", "Path for final report markdown file") do |v|
+    options[:output_path] = v
+  end
+
+  opts.on("--json-artifacts-path PATH", "Path for JSON artifacts directory") do |v|
+    options[:json_artifacts_path] = v
+  end
+
+  opts.separator ""
+  opts.separator "Logging:"
+
+  opts.on("--log-level LEVEL", ["debug", "info", "warn", "error"], "Log level (default: info)") do |v|
+    options[:log_level] = v
+  end
+
+  opts.separator ""
+  opts.separator "Other:"
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+    exit
+  end
+end
+
+begin
+  opt_parser.parse!
+rescue OptionParser::InvalidOption => e
+  abort "#{e.message}\n\n#{opt_parser}"
+end
+
+# Validate required arguments
+if ARGV.empty?
+  abort "Error: Research question is required\n\n#{opt_parser}"
+end
+
+question = ARGV.join(" ")
+
+if question.strip.empty?
+  abort "Error: Empty research question provided"
+end
+
+unless options[:collection]
+  abort "Error: --collection is required\n\n#{opt_parser}"
+end
+
+# Setup logger
+log_level = GitHubDeepResearchAgentV2::Util::Logging.parse_level(options[:log_level])
+logger = GitHubDeepResearchAgentV2::Util::Logging.create_logger(level: log_level)
+
+# Prepare configuration
+script_dir = File.expand_path(File.dirname(__FILE__))
+config = {
+  collection: options[:collection],
+  max_depth: options[:max_depth],
+  breadth_limit: options[:breadth_limit],
+  max_aspects: options[:max_aspects],
+  token_budget: options[:token_budget],
+  parallel_agents: options[:parallel_agents],
+  max_summaries_per_branch: options[:max_summaries_per_branch],
+  stop_if_confidence: options[:stop_if_confidence],
+  min_coverage: options[:min_coverage],
+  replan_max: options[:replan_max],
+  relevance_top_k: options[:relevance_top_k],
+  report_style: options[:report_style],
+  cache_path: options[:cache_path],
+  output_path: options[:output_path],
+  json_artifacts_path: options[:json_artifacts_path],
+  search_modes: options[:search_modes],
+  script_dir: script_dir,
+  logger: logger,
+  models: {
+    fast: options[:fast_model],
+    reasoning: options[:reasoning_model],
+    summary: options[:summary_model]
+  }
+}
+
+# Display configuration
+logger.info "=== GitHub Deep Research Agent V2 ==="
+logger.info "Question: #{question}"
+logger.info "Collection: #{config[:collection]}"
+logger.info "Max depth: #{config[:max_depth]}"
+logger.info "Breadth limit: #{config[:breadth_limit]}"
+logger.info "Token budget: #{config[:token_budget]}"
+logger.info "Search modes: #{config[:search_modes].join(', ')}"
+logger.info "Fast model: #{config[:models][:fast] || 'default'}"
+logger.info "Reasoning model: #{config[:models][:reasoning] || 'default'}"
+logger.info ""
+
+# Execute research
+begin
+  result = GitHubDeepResearchAgentV2.start(question, config)
+
+  if result[:success]
+    logger.info "\n=== RESEARCH COMPLETE ==="
+    logger.info "Run ID: #{result[:run_id]}"
+    logger.info "Report length: #{result[:report].length} characters"
+    
+    # Display budget summary
+    budget = result[:budget]
+    logger.info "\nToken Usage:"
+    budget[:breakdown].each do |stage, tokens|
+      logger.info "  #{stage}: #{tokens}"
+    end
+    logger.info "  Total: #{budget[:total]} / #{budget[:budget]} (#{budget[:usage_percentage]}%)"
+
+    # Save or display report
+    if options[:output_path]
+      File.write(options[:output_path], result[:report])
+      logger.info "\nReport saved to: #{options[:output_path]}"
+    else
+      puts "\n" + "="*80
+      puts result[:report]
+      puts "="*80
+    end
+
+    exit 0
+  else
+    logger.error "Research failed: #{result[:error]}"
+    exit 1
+  end
+rescue Interrupt
+  logger.warn "\nResearch interrupted by user"
+  exit 130
+rescue => e
+  logger.error "Fatal error: #{e.message}"
+  logger.debug e.backtrace.join("\n") if log_level == Logger::DEBUG
+  exit 1
+end
