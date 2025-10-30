@@ -291,10 +291,10 @@ To add a new agent type:
 
 ## Future Enhancements
 
-- True parallel execution with thread pools
-- Semantic similarity with embeddings for relevance ranking
+- True parallel execution with thread pools (currently sequential despite `--parallel-agents` config)
+- Semantic similarity with embeddings for enhanced relevance ranking
 - SQLite backend option for artifact storage
-- Replan implementation for gap filling
+- Full replan implementation with delta plans for gap filling (basic hooks exist but not fully implemented)
 - Code analysis agent for stack traces
 - Metrics agent for performance timelines
 - Self-critique evaluation pass
