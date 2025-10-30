@@ -1,6 +1,6 @@
 #!/bin/bash
 
-script/bootstrap
+bin/bootstrap
 
 # ensure docker is running and if not recommend orbstack or docker desktop
 if ! docker ps &> /dev/null; then
