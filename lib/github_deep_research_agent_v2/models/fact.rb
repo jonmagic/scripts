@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "time"
 
 module GitHubDeepResearchAgentV2
   module Models

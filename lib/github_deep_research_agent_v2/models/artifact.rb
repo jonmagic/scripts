@@ -2,6 +2,7 @@
 
 require "digest"
 require "json"
+require "time"
 
 module GitHubDeepResearchAgentV2
   module Models
