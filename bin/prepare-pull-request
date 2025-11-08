@@ -92,15 +92,6 @@ def generate_pr_content(prompt_path, context, llm_model)
   end
 end
 
-# Copies the given text to the macOS clipboard using pbcopy.
-#
-# text - The String to copy.
-#
-# Returns nothing.
-def copy_to_clipboard(text)
-  IO.popen("pbcopy", "w") { |f| f << text }
-end
-
 # Edit the provided text using the editor configured in git.
 #
 # text - The String text to edit.
@@ -123,14 +114,6 @@ def edit_text(text)
 
     return File.read(tmp.path)
   end
-end
-
-# Checks if the current branch has a remote tracking branch.
-#
-# Returns a Boolean indicating if the branch has a remote.
-def has_remote_branch?
-  output, status = Open3.capture2("git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null")
-  status.success? && !output.strip.empty?
 end
 
 # Pushes the current branch to origin and sets up tracking.
@@ -156,22 +139,8 @@ end
 #
 # Returns nothing.
 def create_pull_request(title, body, base)
-  # Check if branch has remote tracking
-  remote_exists = has_remote_branch?
-
-  # Ask to push only if there's no remote branch
-  if !remote_exists
-    print "Current branch is not pushed to remote. Push branch now? (y/n): "
-    yn = gets.strip.downcase
-    if yn.downcase != "y"
-      error_exit("Cannot create pull request without pushing branch.")
-    end
-  else
-    # If remote already exists, always push to ensure latest commits are there
-    puts "Ensuring remote branch is up-to-date..."
-  end
-
-  # Push the branch with tracking
+  # Always push the branch to ensure it's up-to-date
+  puts "Pushing branch to remote..."
   unless push_branch
     error_exit("Cannot create pull request without pushing branch.")
   end
@@ -229,54 +198,15 @@ context = get_commit_context(options[:base_branch])
 # Step 5: Generate PR title and body using LLM
 puts "Generating PR content using LLM..."
 pr_content = generate_pr_content(prompt_path, context, options[:llm_model])
-puts "Generated PR title: #{pr_content[:title]}"
-puts "\nGenerated PR body:\n\n#{pr_content[:body]}"
 
-# Step 6: Let user review and edit the title
-loop do
-  print "\nDo you want to edit the PR title? (y/n): "
-  yn = gets.strip.downcase
-  if yn == "y"
-    print "Enter a new PR title: "
-    pr_content[:title] = gets.strip
-    puts "New PR title: #{pr_content[:title]}"
-  elsif yn == "n"
-    break
-  else
-    puts "Please answer y or n."
-  end
+# Step 6: Edit the title
+puts "Opening editor for PR title..."
+pr_content[:title] = edit_text(pr_content[:title]).strip
 
-  print "Are you satisfied with the PR title? (y/n): "
-  yn = gets.strip.downcase
-  break if yn == "y"
-end
+# Step 7: Edit the PR body
+puts "Opening editor for PR body..."
+pr_content[:body] = edit_text(pr_content[:body]).strip
+puts "PR body updated."
 
-# Step 7: Let user review and edit the PR body
-loop do
-  print "Do you want to edit the PR body? (y/n): "
-  yn = gets.strip.downcase
-  if yn == "y"
-    puts "Opening editor to edit PR body..."
-    pr_content[:body] = edit_text(pr_content[:body])
-    puts "PR body updated."
-  elsif yn == "n"
-    break
-  else
-    puts "Please answer y or n."
-  end
-
-  print "Are you satisfied with the PR body? (y/n): "
-  yn = gets.strip.downcase
-  break if yn == "y"
-end
-
-# Step 8: Ask whether to create the PR now
-print "Do you want to create the PR now? (y/n): "
-yn = gets.strip.downcase
-if yn == "y"
-  create_pull_request(pr_content[:title], pr_content[:body], options[:base_branch])
-else
-  puts "PR content has been prepared but not submitted. You can create the PR manually."
-  puts "Title and body have been copied to clipboard."
-  copy_to_clipboard("#{pr_content[:title]}\n\n#{pr_content[:body]}")
-end
+# Step 8: Push branch and create the PR
+create_pull_request(pr_content[:title], pr_content[:body], options[:base_branch])
