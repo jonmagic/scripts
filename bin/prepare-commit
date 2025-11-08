@@ -1,9 +1,9 @@
 #!/usr/bin/env ruby
 
-# bin/prepare-commit: Prepare a commit message using staged changes and LLM, following semantic commit guidelines.
+# bin/prepare-commit: Prepare a commit message using staged changes and LLM.
 #
-# It allows the user to select a semantic commit type, optionally enter a scope, and generates a
-# commit message that can be copied to the clipboard or used directly in a git commit.
+# Generates a commit message from staged changes using the provided prompt template
+# and opens the git commit editor for final review.
 #
 # Usage: prepare-commit --commit-message-prompt-path PATH [--llm-model MODEL]
 
@@ -33,28 +33,6 @@ def check_dependency(cmd)
   system("which #{cmd} > /dev/null 2>&1") || error_exit("Required dependency '#{cmd}' not found in PATH.")
 end
 
-# Prompts the user to select a commit type using fzf.
-#
-# types - An Array of String commit types.
-#
-# Returns the selected commit type as a String.
-def prompt_for_commit_type(types)
-  fzf_input = types.join("\n")
-  selected_type, _ = Open3.capture2("fzf --prompt='Select commit type: '", stdin_data: fzf_input)
-  type = selected_type.strip
-  error_exit("No commit type selected, exiting.") if type.empty?
-  type
-end
-
-# Prompts the user to enter an optional commit scope.
-#
-# Returns the entered scope as a String (may be empty).
-def prompt_for_scope
-  print "Enter an optional scope (or leave blank): "
-  gets.strip
-end
-
-
 # Gets the staged git diff as a String.
 #
 # Returns the diff output as a String.
@@ -72,29 +50,22 @@ def llm_model_flag(llm_model)
   llm_model && !llm_model.strip.empty? ? "-m #{Shellwords.escape(llm_model)}" : ""
 end
 
-# Generates a commit message using the LLM, given the prompt, diff, type, and scope.
+# Generates a commit message using the LLM, given the prompt and diff.
 #
 # prompt_path - The String path to the commit message prompt template.
 # diff        - The String staged diff to provide as input.
-# commit_type - The String selected commit type.
-# scope       - The String optional scope.
 # llm_model   - The String model name or nil.
 #
 # Returns the generated commit message as a String.
-def generate_commit_msg(prompt_path, diff, commit_type, scope, llm_model)
+def generate_commit_msg(prompt_path, diff, llm_model)
   prompt_content = File.read(prompt_path)
   # Look for commit-message-guidelines.txt in the current directory
   guidelines_path = File.join(Dir.pwd, "commit-message-guidelines.txt")
   guidelines_content = File.exist?(guidelines_path) ? File.read(guidelines_path) : nil
-  header_line = if scope.empty?
-    "Commit type: #{commit_type}"
-  else
-    "Commit type: #{commit_type}, Scope: #{scope}"
-  end
+
   Tempfile.create(["llm_commit_prompt", ".txt"]) do |tmp|
     tmp.puts prompt_content
     tmp.puts guidelines_content if guidelines_content
-    tmp.puts header_line
     tmp.flush
     model_flag = llm_model_flag(llm_model)
     cmd = "llm #{model_flag} -f #{tmp.path}"
@@ -103,14 +74,7 @@ def generate_commit_msg(prompt_path, diff, commit_type, scope, llm_model)
   end
 end
 
-# Copies the given text to the macOS clipboard using pbcopy.
-#
-# text - The String to copy.
-#
-# Returns nothing.
-def copy_to_clipboard(text)
-  IO.popen("pbcopy", "w") { |f| f << text }
-end
+
 
 # === Main Script ===
 
@@ -134,48 +98,17 @@ if prompt_path.nil? || prompt_path.strip.empty? || !File.exist?(prompt_path)
   error_exit("You must provide a valid path to the commit message prompt template using --commit-message-prompt-path.")
 end
 
-# Step 3: Prompt for commit type and scope
-commit_types = %w[feat fix docs style refactor test chore build ci perf revert]
-commit_type = prompt_for_commit_type(commit_types)
-scope = prompt_for_scope
-
-# Step 4: Get staged diff and validate
+# Step 3: Get staged diff and validate
 diff = staged_diff
 if diff.strip.empty?
   error_exit("No staged changes found. Please stage your changes before running this script.")
 end
 
-# Step 5: Copy diff to clipboard for user reference
-copy_to_clipboard(diff)
-puts "Staged diff copied to clipboard."
-puts "Generating commit message using LLM..."
+# Step 4: Generate commit message using LLM
+puts "Generating commit message..."
+commit_msg = generate_commit_msg(prompt_path, diff, options[:llm_model])
 
-# Step 6: Generate commit message using LLM
-commit_msg = generate_commit_msg(prompt_path, diff, commit_type, scope, options[:llm_model])
-puts "Generated commit message:\n\n"
-puts commit_msg
-
-# Step 7: Confirm or regenerate commit message
-loop do
-  print "Use this commit message? (y/n): "
-  yn = gets.strip.downcase
-  if yn == "y"
-    break
-  elsif yn == "n"
-    puts "Re-generating commit message..."
-    commit_msg = generate_commit_msg(prompt_path, diff, commit_type, scope, options[:llm_model])
-    puts "\nGenerated commit message:\n"
-    puts commit_msg
-  else
-    puts "Please answer y or n."
-  end
-end
-
-# Step 8: Copy final commit message to clipboard
-copy_to_clipboard(commit_msg)
-puts "\nFinal commit message copied to clipboard."
-
-# Step 9: Optionally, open git commit editor with message pre-filled
+# Step 5: Open git commit editor with message pre-filled
 unless system("git", "commit", "--edit", "-m", commit_msg)
   error_exit("Git commit failed.")
 end
