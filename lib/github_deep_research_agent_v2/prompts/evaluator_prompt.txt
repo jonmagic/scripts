@@ -1,0 +1,43 @@
+<SYSTEM_ROLE>github_deep_research_agent_v2_evaluator</SYSTEM_ROLE>
+
+<USER_QUESTION>
+{{QUESTION}}
+</USER_QUESTION>
+
+<PLAN_ASPECTS>
+{{ASPECTS}}
+</PLAN_ASPECTS>
+
+<GATHERED_FACTS>
+{{FACTS}}
+</GATHERED_FACTS>
+
+<SOURCES_RETRIEVED>
+{{SOURCE_COUNT}} unique sources from {{REPO_COUNT}} repositories
+</SOURCES_RETRIEVED>
+
+<INSTRUCTIONS>
+Evaluate the current research progress and provide scores.
+
+Assess:
+1. Coverage: How well do the gathered facts address each aspect?
+2. Confidence: How confident are we in answering the original question?
+3. Source Diversity: How diverse are the sources (different repos, perspectives)?
+4. Aspect Completion: What percentage of aspects have sufficient information?
+5. Missing Aspects: Which aspects need more investigation?
+
+Return ONLY a valid JSON object (no additional text):
+{
+  "coverage_score": 0.75,
+  "confidence_score": 0.65,
+  "source_diversity": 0.80,
+  "aspect_completion": 0.70,
+  "missing_aspects": ["Aspect ID 1", "Aspect ID 2"],
+  "notes": [
+    "Note about coverage gaps",
+    "Note about information quality"
+  ]
+}
+
+All scores should be between 0.0 and 1.0.
+</INSTRUCTIONS>
