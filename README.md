@@ -73,6 +73,7 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 - [Bun](https://bun.sh) - JavaScript runtime (installed by setup)
 - [gh](https://cli.github.com) - GitHub CLI
 - [copilot](https://githubnext.com/projects/copilot-cli) - GitHub Copilot CLI
+- [fzf](https://github.com/junegunn/fzf) - Fuzzy finder (for interactive selection)
 
 ### Available Commands
 

@@ -30,7 +30,7 @@ Usage: archive-meeting [options]
 
 Options:
   --brain-dir DIR                      Path to Brain directory (required)
-  --input PATH                         Path to input (VTT file or Zoom folder) (required)
+  --input PATH                         Path to input (VTT file or Zoom folder) (optional, uses fzf if omitted)
   --meeting-notes-target TARGET        Meeting Notes target basename (required)
   --executive-summary-prompt-path PATH Path to prompt file for executive summary (required)
   --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes (required)
@@ -43,7 +43,6 @@ Options:
 
 if (
   !values["brain-dir"] ||
-  !values["input"] ||
   !values["meeting-notes-target"] ||
   !values["executive-summary-prompt-path"] ||
   !values["detailed-notes-prompt-path"]

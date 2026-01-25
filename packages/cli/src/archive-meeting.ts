@@ -23,7 +23,7 @@ import {
 
 export interface ArchiveMeetingOptions {
   brainDir: string
-  input: string
+  input?: string
   meetingNotesTarget: string
   date?: string
   executiveSummaryPromptPath: string
@@ -44,6 +44,65 @@ export interface MeetingCandidate {
   mtimeIso: string
   date: string
   hint: string
+}
+
+/**
+ * Run fzf to select from a list of options
+ */
+async function fzfSelect(
+  options: string[],
+  prompt: string
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("fzf", ["--prompt", prompt], {
+      stdio: ["pipe", "pipe", "inherit"],
+    })
+
+    let result = ""
+
+    proc.stdout.on("data", (data: Buffer) => {
+      result += data.toString()
+    })
+
+    proc.on("close", (code) => {
+      if (code === 0) {
+        resolve(result.trim())
+      } else {
+        reject(new Error("fzf selection cancelled"))
+      }
+    })
+
+    proc.stdin.write(options.join("\n"))
+    proc.stdin.end()
+  })
+}
+
+/**
+ * Select a meeting input interactively using fzf
+ */
+export async function selectMeetingInput(
+  options: ListRecentMeetingsOptions = {}
+): Promise<string> {
+  const meetings = listRecentMeetings({ ...options, merge: true }) as MeetingCandidate[]
+
+  if (meetings.length === 0) {
+    throw new Error("No recent meetings found")
+  }
+
+  // Format options for display: "date | type | hint"
+  const displayOptions = meetings.map(
+    (m) => `${m.date} | ${m.type.padEnd(9)} | ${m.hint}`
+  )
+
+  const selection = await fzfSelect(displayOptions, "Select meeting: ")
+
+  // Find the matching meeting
+  const idx = displayOptions.indexOf(selection)
+  if (idx === -1) {
+    throw new Error("Selection not found")
+  }
+
+  return meetings[idx]!.path
 }
 
 /**
@@ -489,7 +548,6 @@ export async function archiveMeeting(
 ): Promise<void> {
   const {
     brainDir,
-    input,
     meetingNotesTarget,
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
@@ -498,6 +556,13 @@ export async function archiveMeeting(
 
   if (!fs.existsSync(brainDir)) {
     throw new Error(`Brain directory does not exist: ${brainDir}`)
+  }
+
+  // Select input interactively if not provided
+  let input = options.input
+  if (!input) {
+    console.log("No input specified, selecting from recent meetings...")
+    input = await selectMeetingInput()
   }
 
   if (!fs.existsSync(input)) {
