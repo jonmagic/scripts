@@ -5,8 +5,7 @@
  *
  * Usage:
  *   archive-meeting --transcripts-dir DIR --target-dir DIR \
- *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
- *     [--llm-model MODEL]
+ *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH
  */
 
 import { parseArgs } from "node:util"
@@ -18,7 +17,6 @@ const { values } = parseArgs({
     "target-dir": { type: "string" },
     "executive-summary-prompt-path": { type: "string" },
     "detailed-notes-prompt-path": { type: "string" },
-    "llm-model": { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 })
@@ -30,9 +28,8 @@ Usage: archive-meeting [options]
 Options:
   --transcripts-dir DIR                Path to Zoom meetings folder
   --target-dir DIR                     Path to notes folder
-  --executive-summary-prompt-path PATH Path to LLM prompt file for executive summary
-  --detailed-notes-prompt-path PATH    Path to LLM prompt file for detailed notes
-  --llm-model MODEL                    Model alias to use for llm -m (optional)
+  --executive-summary-prompt-path PATH Path to prompt file for executive summary
+  --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes
   -h, --help                           Show this help message
 `)
   process.exit(0)
@@ -53,5 +50,4 @@ await archiveMeeting({
   targetDir: values["target-dir"],
   executiveSummaryPromptPath: values["executive-summary-prompt-path"],
   detailedNotesPromptPath: values["detailed-notes-prompt-path"],
-  llmModel: values["llm-model"],
 })

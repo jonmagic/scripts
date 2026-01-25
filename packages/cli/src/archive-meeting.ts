@@ -20,7 +20,6 @@ export interface ArchiveMeetingOptions {
   targetDir: string
   executiveSummaryPromptPath: string
   detailedNotesPromptPath: string
-  llmModel?: string
 }
 
 /**
@@ -166,48 +165,36 @@ function writeCombinedTranscript(
 }
 
 /**
- * Get LLM model flag
- */
-function llmModelFlag(llmModel?: string): string[] {
-  if (llmModel && llmModel.trim()) {
-    return ["-m", llmModel]
-  }
-  return []
-}
-
-/**
- * Generate executive summary using LLM
+ * Generate executive summary using copilot CLI
  */
 async function generateExecutiveSummary(
   transcriptFile: string,
   summaryFile: string,
-  promptPath: string,
-  llmModel?: string
+  promptPath: string
 ): Promise<void> {
   const transcript = fs.readFileSync(transcriptFile, "utf-8")
-  const modelFlag = llmModelFlag(llmModel)
-  const args = [...modelFlag, "-f", promptPath]
+  const promptContent = fs.readFileSync(promptPath, "utf-8")
+  const input = `${promptContent}\n\n${transcript}`
 
-  console.log("Generating executive summary with llm...")
-  const summary = await runCommand("llm", args, transcript)
+  console.log("Generating executive summary with copilot...")
+  const summary = await runCommand("copilot", ["-q"], input)
   fs.writeFileSync(summaryFile, summary)
   console.log(`Executive summary saved to: ${summaryFile}`)
 }
 
 /**
- * Generate detailed notes using LLM
+ * Generate detailed notes using copilot CLI
  */
 async function generateDetailedNotes(
   transcriptFile: string,
-  promptPath: string,
-  llmModel?: string
+  promptPath: string
 ): Promise<string> {
   const transcript = fs.readFileSync(transcriptFile, "utf-8")
-  const modelFlag = llmModelFlag(llmModel)
-  const args = [...modelFlag, "-f", promptPath]
+  const promptContent = fs.readFileSync(promptPath, "utf-8")
+  const input = `${promptContent}\n\n${transcript}`
 
-  console.log("Generating detailed notes with llm...")
-  return await runCommand("llm", args, transcript)
+  console.log("Generating detailed notes with copilot...")
+  return await runCommand("copilot", ["-q"], input)
 }
 
 /**
@@ -230,12 +217,11 @@ function findLatestWeeklyNotes(targetDir: string): string {
 }
 
 /**
- * Select meeting notes section using LLM and fzf
+ * Select meeting notes section using copilot CLI and fzf
  */
 async function selectMeetingNotesSection(
   weeklyNotesFile: string,
-  executiveSummary: string,
-  llmModel?: string
+  executiveSummary: string
 ): Promise<string> {
   const content = fs.readFileSync(weeklyNotesFile, "utf-8")
 
@@ -254,7 +240,7 @@ async function selectMeetingNotesSection(
     throw new Error("No entries found in '## Schedule' section")
   }
 
-  // Use LLM to sort options by relevance
+  // Use copilot to sort options by relevance
   const prompt = `Given the following list of people or groups from my schedule and the executive summary of a meeting, sort the list from most likely to least likely to be the correct person or group to attach this transcript to. Do not remove or filter any options. Output only the sorted list, one per line, with no extra commentary.
 
 SCHEDULE OPTIONS:
@@ -263,9 +249,8 @@ ${options.join("\n")}
 EXECUTIVE SUMMARY:
 ${executiveSummary}`
 
-  const modelFlag = llmModelFlag(llmModel)
-  console.log("Suggesting Meeting Notes section with LLM...")
-  const sorted = await runCommand("llm", modelFlag, prompt)
+  console.log("Suggesting Meeting Notes section with copilot...")
+  const sorted = await runCommand("copilot", ["-q"], prompt)
 
   const sortedOptions = sorted
     .split("\n")
@@ -361,7 +346,6 @@ export async function archiveMeeting(
     targetDir,
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
-    llmModel,
   } = options
 
   // Step 1: Ensure required subfolders exist
@@ -398,8 +382,7 @@ export async function archiveMeeting(
   await generateExecutiveSummary(
     destFile,
     summaryFile,
-    executiveSummaryPromptPath,
-    llmModel
+    executiveSummaryPromptPath
   )
 
   // Step 7: Find latest weekly notes
@@ -409,15 +392,13 @@ export async function archiveMeeting(
   const executiveSummaryContent = fs.readFileSync(summaryFile, "utf-8")
   const selection = await selectMeetingNotesSection(
     latestWeeklyNotes,
-    executiveSummaryContent,
-    llmModel
+    executiveSummaryContent
   )
 
   // Step 9: Generate detailed notes
   const detailedNotes = await generateDetailedNotes(
     destFile,
-    detailedNotesPromptPath,
-    llmModel
+    detailedNotesPromptPath
   )
 
   // Step 10: Update meeting notes file
