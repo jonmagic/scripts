@@ -24,7 +24,7 @@ import {
 export interface ArchiveMeetingOptions {
   brainDir: string
   input?: string
-  meetingNotesTarget: string
+  meetingNotesTarget?: string
   date?: string
   executiveSummaryPromptPath: string
   detailedNotesPromptPath: string
@@ -103,6 +103,73 @@ export async function selectMeetingInput(
   }
 
   return meetings[idx]!.path
+}
+
+/**
+ * Find the latest weekly notes file
+ */
+function findLatestWeeklyNotes(brainDir: string): string | null {
+  const weeklyNotesDir = path.join(brainDir, "Weekly Notes")
+  if (!fs.existsSync(weeklyNotesDir)) return null
+
+  const weeklyNoteRe = /^Week of (\d{4}-\d{2}-\d{2})\.md$/
+  const files: { date: string; path: string }[] = []
+
+  for (const entry of fs.readdirSync(weeklyNotesDir)) {
+    const match = weeklyNoteRe.exec(entry)
+    if (match) {
+      files.push({
+        date: match[1]!,
+        path: path.join(weeklyNotesDir, entry),
+      })
+    }
+  }
+
+  if (files.length === 0) return null
+
+  files.sort((a, b) => b.date.localeCompare(a.date))
+  return files[0]!.path
+}
+
+/**
+ * Extract meeting note targets from weekly notes
+ */
+function extractMeetingTargets(weeklyNotesPath: string): string[] {
+  const content = fs.readFileSync(weeklyNotesPath, "utf-8")
+
+  // Match wikilinks like [[Meeting Notes/briangreenhill/2026-01-20/01]]
+  // Extract just the target name (e.g., "briangreenhill")
+  const wikiLinkRe = /\[\[Meeting Notes\/([^/\]]+)/g
+  const targets = new Set<string>()
+
+  let match
+  while ((match = wikiLinkRe.exec(content)) !== null) {
+    targets.add(match[1]!)
+  }
+
+  return Array.from(targets).sort()
+}
+
+/**
+ * Select a meeting notes target interactively using fzf
+ */
+export async function selectMeetingNotesTarget(
+  brainDir: string
+): Promise<string> {
+  const weeklyNotesPath = findLatestWeeklyNotes(brainDir)
+
+  if (!weeklyNotesPath) {
+    throw new Error("No weekly notes found")
+  }
+
+  const targets = extractMeetingTargets(weeklyNotesPath)
+
+  if (targets.length === 0) {
+    throw new Error("No meeting note targets found in weekly notes")
+  }
+
+  console.log(`Found ${targets.length} meeting targets in ${path.basename(weeklyNotesPath)}`)
+  return await fzfSelect(targets, "Select meeting notes target: ")
 }
 
 /**
@@ -548,7 +615,6 @@ export async function archiveMeeting(
 ): Promise<void> {
   const {
     brainDir,
-    meetingNotesTarget,
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
     dryRun = false,
@@ -567,6 +633,13 @@ export async function archiveMeeting(
 
   if (!fs.existsSync(input)) {
     throw new Error(`Input path does not exist: ${input}`)
+  }
+
+  // Select target interactively if not provided
+  let meetingNotesTarget = options.meetingNotesTarget
+  if (!meetingNotesTarget) {
+    console.log("No target specified, selecting from weekly notes...")
+    meetingNotesTarget = await selectMeetingNotesTarget(brainDir)
   }
 
   // Determine date

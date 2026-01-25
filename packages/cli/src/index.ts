@@ -1,4 +1,4 @@
-export { archiveMeeting, listRecentMeetings, selectMeetingInput } from "./archive-meeting.js"
+export { archiveMeeting, listRecentMeetings, selectMeetingInput, selectMeetingNotesTarget } from "./archive-meeting.js"
 export type {
   ArchiveMeetingOptions,
   ListRecentMeetingsOptions,
