@@ -532,6 +532,55 @@ function checkOffWeeklyNote(
 }
 
 /**
+ * Replace pending meeting placeholders in Weekly Notes
+ * Converts {{Meeting Notes/<target>}} to [[Meeting Notes/<target>/<date>/<number>]]
+ */
+function replacePendingPlaceholders(
+  brainDir: string,
+  target: string,
+  meetingDate: string,
+  fileNumber: string
+): string {
+  const weeklyNotesDir = path.join(brainDir, "Weekly Notes")
+  if (!fs.existsSync(weeklyNotesDir)) {
+    return "Weekly Notes directory not found"
+  }
+
+  // Find all weekly notes files
+  const weeklyNoteRe = /^Week of \d{4}-\d{2}-\d{2}\.md$/
+  const results: string[] = []
+
+  for (const entry of fs.readdirSync(weeklyNotesDir)) {
+    if (!weeklyNoteRe.test(entry)) continue
+
+    const filePath = path.join(weeklyNotesDir, entry)
+    let content = fs.readFileSync(filePath, "utf-8")
+
+    // Match {{Meeting Notes/<target>}} - case insensitive for target
+    const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    const pattern = new RegExp(
+      `\\{\\{Meeting Notes\\/${escapedTarget}\\}\\}`,
+      "gi"
+    )
+
+    const newWikilink = `[[Meeting Notes/${target}/${meetingDate}/${fileNumber}]]`
+    let count = 0
+
+    content = content.replace(pattern, () => {
+      count++
+      return newWikilink
+    })
+
+    if (count > 0) {
+      fs.writeFileSync(filePath, content, "utf-8")
+      results.push(`Replaced ${count} placeholder(s) in ${entry}`)
+    }
+  }
+
+  return results.length > 0 ? results.join("\n") : "No pending placeholders found"
+}
+
+/**
  * List recent Zoom folders
  */
 function listZoomFolders(zoomDir: string, limit: number): MeetingCandidate[] {
@@ -732,6 +781,17 @@ export async function archiveMeeting(
   const weeklyResult = checkOffWeeklyNote(brainDir, meetingNotesTarget, meetingDate)
   if (weeklyResult) {
     console.log(`\n${weeklyResult}`)
+  }
+
+  // Step 8: Replace pending placeholders
+  const placeholderResult = replacePendingPlaceholders(
+    brainDir,
+    meetingNotesTarget,
+    meetingDate,
+    nextNumStr
+  )
+  if (placeholderResult && !placeholderResult.includes("No pending")) {
+    console.log(`\n${placeholderResult}`)
   }
 
   // Output summary

@@ -1,35 +1,55 @@
 // CompletionProvider for wikilink autocompletion.
 // Triggers on [[ and provides a list of files to link to.
+// Also triggers on {{ for pending meeting placeholders.
 // Shows 10 most recently modified files first, then all files filtered by input.
-// Inserts full path-based links: [[Full/Path/To/File]]
+// Inserts full path-based links: [[Full/Path/To/File]] or {{Meeting Notes/Target}}
 
 import * as vscode from "vscode"
 import * as fs from "node:fs"
 import { pathToDisplayPath } from "@jonmagic/scripts-core"
 import { getWorkspaceCache, type CachedFile } from "../cache/workspaceCache"
 
+type LinkStyle = "wikilink" | "pending"
+
 export class WikilinkCompletionProvider implements vscode.CompletionItemProvider {
   provideCompletionItems(
     document: vscode.TextDocument,
     position: vscode.Position
   ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
-    // Check if we're inside a wikilink (after [[)
     const linePrefix = document.lineAt(position).text.substring(0, position.character)
 
-    // Find the last [[ that isn't closed
-    const lastOpenBracket = linePrefix.lastIndexOf("[[")
-    if (lastOpenBracket === -1) {
-      return undefined
+    // Determine if we're in a wikilink [[ or pending placeholder {{
+    let linkStyle: LinkStyle | null = null
+    let openIndex = -1
+    let typedText = ""
+
+    // Check for pending placeholder {{ first (more specific)
+    const lastOpenBrace = linePrefix.lastIndexOf("{{")
+    if (lastOpenBrace !== -1) {
+      const afterBrace = linePrefix.substring(lastOpenBrace + 2)
+      if (!afterBrace.includes("}}")) {
+        linkStyle = "pending"
+        openIndex = lastOpenBrace
+        typedText = afterBrace.toLowerCase()
+      }
     }
 
-    // Check there's no ]] between [[ and cursor
-    const afterBracket = linePrefix.substring(lastOpenBracket + 2)
-    if (afterBracket.includes("]]")) {
-      return undefined
+    // Check for wikilink [[
+    if (!linkStyle) {
+      const lastOpenBracket = linePrefix.lastIndexOf("[[")
+      if (lastOpenBracket !== -1) {
+        const afterBracket = linePrefix.substring(lastOpenBracket + 2)
+        if (!afterBracket.includes("]]")) {
+          linkStyle = "wikilink"
+          openIndex = lastOpenBracket
+          typedText = afterBracket.toLowerCase()
+        }
+      }
     }
 
-    // Get what the user has typed after [[
-    const typedText = afterBracket.toLowerCase()
+    if (!linkStyle || openIndex === -1) {
+      return undefined
+    }
 
     const cache = getWorkspaceCache()
     if (!cache.isReady()) {
@@ -39,11 +59,63 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
     const allFiles = cache.getAllFiles()
     const items: vscode.CompletionItem[] = []
 
+    // For pending placeholders, only show Meeting Notes targets
+    const isPending = linkStyle === "pending"
+
     // Get recent files for MRU ordering
     const recentFiles = cache.getRecentFiles(10)
     const recentPaths = new Set(recentFiles.map((f) => f.relativePath))
 
-    // Sort files: recent first, then alphabetically
+    // For pending placeholders, extract unique Meeting Notes targets
+    if (isPending) {
+      const meetingTargets = new Set<string>()
+
+      for (const file of allFiles) {
+        // Match Meeting Notes/<target>/... paths
+        const match = file.relativePath.match(/^Meeting Notes\/([^/]+)\//)
+        if (match) {
+          meetingTargets.add(match[1]!)
+        }
+      }
+
+      const sortedTargets = Array.from(meetingTargets).sort()
+
+      for (let i = 0; i < sortedTargets.length; i++) {
+        const target = sortedTargets[i]!
+        const displayPath = `Meeting Notes/${target}`
+
+        // Filter by typed text
+        if (typedText && !displayPath.toLowerCase().includes(typedText)) {
+          continue
+        }
+
+        const item = new vscode.CompletionItem(
+          displayPath,
+          vscode.CompletionItemKind.Reference
+        )
+
+        // Calculate replace range
+        const lineText = document.lineAt(position.line).text
+        const replaceStart = new vscode.Position(position.line, openIndex)
+        const afterCursor = lineText.substring(position.character)
+        const hasClosing = afterCursor.startsWith("}}")
+        const replaceEnd = hasClosing
+          ? new vscode.Position(position.line, position.character + 2)
+          : position
+
+        item.insertText = `{{${displayPath}}}`
+        item.range = new vscode.Range(replaceStart, replaceEnd)
+        item.sortText = String(i).padStart(6, "0")
+        item.filterText = `{{${displayPath}`
+        item.detail = "Pending meeting placeholder"
+
+        items.push(item)
+      }
+
+      return items
+    }
+
+    // Standard wikilink completion
     const sortedFiles = [...allFiles].sort((a, b) => {
       const aIsRecent = recentPaths.has(a.relativePath)
       const bIsRecent = recentPaths.has(b.relativePath)
@@ -51,7 +123,6 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
       if (aIsRecent && !bIsRecent) return -1
       if (!aIsRecent && bIsRecent) return 1
 
-      // Both recent or both not - sort by mtime for recent, alpha for rest
       if (aIsRecent && bIsRecent) {
         return b.mtime - a.mtime
       }
@@ -65,7 +136,6 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
 
       const displayPath = pathToDisplayPath(file.relativePath)
 
-      // Filter by typed text if any
       if (typedText && !displayPath.toLowerCase().includes(typedText)) {
         continue
       }
@@ -75,14 +145,8 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
         vscode.CompletionItemKind.File
       )
 
-      // Calculate the range to replace - from [[ to cursor, plus any trailing ]]
       const lineText = document.lineAt(position.line).text
-      const replaceStart = new vscode.Position(
-        position.line,
-        linePrefix.lastIndexOf("[[")
-      )
-
-      // Check if there's ]] after the cursor
+      const replaceStart = new vscode.Position(position.line, openIndex)
       const afterCursor = lineText.substring(position.character)
       const hasClosingBrackets = afterCursor.startsWith("]]")
       const replaceEnd = hasClosingBrackets
@@ -91,22 +155,14 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
 
       const replaceRange = new vscode.Range(replaceStart, replaceEnd)
 
-      // Insert full path-based wikilink (no UID prefix)
       item.insertText = `[[${displayPath}]]`
       item.range = replaceRange
 
-      // Sort text: pad with zeros to maintain order
-      // Recent files get 0-prefixed numbers, others get 1-prefixed
       const isRecent = recentPaths.has(file.relativePath)
       const sortPrefix = isRecent ? "0" : "1"
       item.sortText = `${sortPrefix}${String(i).padStart(6, "0")}`
-
-      // Filter text: match on path
       item.filterText = `[[${displayPath}`
 
-      // Documentation will be filled in by resolveCompletionItem (leave unset)
-
-      // Store file info for resolution
       ;(item as CompletionItemWithFile).cachedFile = file
 
       items.push(item)
@@ -122,10 +178,7 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
     if (!file) return item
 
     try {
-      // Read file content for preview
       const content = fs.readFileSync(file.absolutePath, "utf-8")
-
-      // Limit preview to first ~500 chars
       const preview = content.slice(0, 500)
       const truncated = content.length > 500 ? preview + "\n\n..." : preview
 

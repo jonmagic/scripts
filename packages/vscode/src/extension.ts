@@ -22,13 +22,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     )
   )
 
-  // Register completion provider for wikilinks (triggers on [)
+  // Register completion provider for wikilinks (triggers on [ and {)
   const completionProvider = new WikilinkCompletionProvider()
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider(
       { language: "markdown" },
       completionProvider,
-      "[" // Trigger on [
+      "[", // Trigger on [ for [[wikilinks]]
+      "{"  // Trigger on { for {{pending placeholders}}
     )
   )
 
