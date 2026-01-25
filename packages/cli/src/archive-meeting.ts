@@ -1,25 +1,49 @@
 /**
  * Archive Meeting
  *
- * Archives a meeting by:
- * 1. Ensuring required subfolders exist in your notes directory
- * 2. Prompting to select a meeting folder
- * 3. Finding transcript and chat log files
- * 4. Combining files into a single transcript
- * 5. Generating an executive summary using LLM
- * 6. Generating detailed meeting notes using LLM
- * 7. Updating the appropriate Meeting Notes file
+ * Archives a single meeting by:
+ * 1. Processing input (VTT file or Zoom folder) into markdown transcript
+ * 2. Adding frontmatter with uid, type, created
+ * 3. Generating executive summary using copilot CLI
+ * 4. Generating detailed meeting notes using copilot CLI
+ * 5. Updating the appropriate Meeting Notes file
+ * 6. Checking off the meeting in Weekly Notes (if found)
+ *
+ * This mirrors the Ruby archive_single_meeting.rb script from the skill.
  */
 
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { spawn } from "node:child_process"
+import {
+  generateTid,
+  serializeFrontmatter,
+  type FrontmatterData,
+} from "@jonmagic/scripts-core"
 
 export interface ArchiveMeetingOptions {
-  transcriptsDir: string
-  targetDir: string
+  brainDir: string
+  input: string
+  meetingNotesTarget: string
+  date?: string
   executiveSummaryPromptPath: string
   detailedNotesPromptPath: string
+  dryRun?: boolean
+}
+
+export interface ListRecentMeetingsOptions {
+  zoomDir?: string
+  downloadsDir?: string
+  limit?: number
+  merge?: boolean
+}
+
+export interface MeetingCandidate {
+  type: "zoom" | "teams_vtt"
+  path: string
+  mtimeIso: string
+  date: string
+  hint: string
 }
 
 /**
@@ -57,282 +81,404 @@ async function runCommand(
     if (input) {
       proc.stdin.write(input)
       proc.stdin.end()
+    } else {
+      proc.stdin.end()
     }
   })
 }
 
 /**
- * Run fzf to select from a list of options
+ * Get existing file numbers in a directory (e.g., 01.md, 02.md)
  */
-async function fzfSelect(
-  options: string[],
-  prompt: string
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("fzf", ["--prompt", prompt], {
-      stdio: ["pipe", "pipe", "inherit"],
-    })
+function getExistingNumbers(directory: string): Set<number> {
+  const numbers = new Set<number>()
+  if (!fs.existsSync(directory)) return numbers
 
-    let result = ""
+  for (const file of fs.readdirSync(directory)) {
+    const match = file.match(/^(\d+)\.md$/)
+    if (match) {
+      numbers.add(parseInt(match[1]!, 10))
+    }
+  }
+  return numbers
+}
 
-    proc.stdout.on("data", (data: Buffer) => {
-      result += data.toString()
-    })
+/**
+ * Find next available file number across Transcripts and Executive Summaries
+ */
+function findNextNumber(brainDir: string, date: string): number {
+  const transcriptsDir = path.join(brainDir, "Transcripts", date)
+  const execSummariesDir = path.join(brainDir, "Executive Summaries", date)
 
-    proc.on("close", (code) => {
-      if (code === 0) {
-        resolve(result.trim())
+  const transcriptNums = getExistingNumbers(transcriptsDir)
+  const execSummaryNums = getExistingNumbers(execSummariesDir)
+
+  const allNums = new Set([...transcriptNums, ...execSummaryNums])
+  if (allNums.size === 0) return 1
+
+  return Math.max(...allNums) + 1
+}
+
+/**
+ * Get date from file mtime
+ */
+function getDateFromFile(filePath: string): string {
+  const stat = fs.statSync(filePath)
+  return stat.mtime.toISOString().slice(0, 10)
+}
+
+/**
+ * Convert VTT to markdown
+ */
+function convertVttToMarkdown(vttPath: string): string {
+  const vttText = fs.readFileSync(vttPath, "utf-8")
+  const lines = vttText.split("\n")
+  const out: string[] = []
+
+  const cueRe = /^(\d{2}:\d{2}:\d{2})(?:\.\d{3})?\s+-->\s+\d{2}:\d{2}:\d{2}/
+  const voiceTagRe = /<v\s+([^>]+)>(.*)(?:<\/v>)?/
+
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i]!.trim()
+
+    // Skip headers and blank lines
+    if (!line || line.toUpperCase().startsWith("WEBVTT") || line.startsWith("NOTE")) {
+      i++
+      continue
+    }
+
+    const cueMatch = cueRe.exec(line)
+    if (!cueMatch) {
+      i++
+      continue
+    }
+
+    const start = cueMatch[1]!
+
+    // Consume cue payload lines until blank
+    i++
+    const payload: string[] = []
+    while (i < lines.length && lines[i]!.trim()) {
+      payload.push(lines[i]!.trim())
+      i++
+    }
+
+    let speaker: string | null = null
+    const textParts: string[] = []
+
+    for (const p of payload) {
+      const voiceMatch = voiceTagRe.exec(p)
+      if (voiceMatch) {
+        speaker = voiceMatch[1]!.trim()
+        const text = voiceMatch[2]!.replace(/<\/v>/, "").trim()
+        if (text) textParts.push(text)
+      } else if (p.includes(":") && p.split(":")[0]!.length <= 60) {
+        const [maybeSpeaker, ...rest] = p.split(":")
+        const restText = rest.join(":").trim()
+        if (maybeSpeaker && restText) {
+          speaker = speaker || maybeSpeaker.trim()
+          textParts.push(restText)
+        } else {
+          textParts.push(p)
+        }
       } else {
-        reject(new Error("fzf selection cancelled"))
+        textParts.push(p)
       }
-    })
+    }
 
-    proc.stdin.write(options.join("\n"))
-    proc.stdin.end()
-  })
-}
+    const text = textParts.filter(Boolean).join(" ").trim()
+    if (!text) {
+      i++
+      continue
+    }
 
-/**
- * Select a folder from the transcripts directory using fzf
- */
-async function selectMeetingFolder(transcriptsDir: string): Promise<string> {
-  const folders = fs
-    .readdirSync(transcriptsDir)
-    .filter((f) => fs.statSync(path.join(transcriptsDir, f)).isDirectory())
-    .sort()
-    .reverse()
-
-  if (folders.length === 0) {
-    throw new Error(`No folders found in ${transcriptsDir}`)
+    if (speaker) {
+      out.push(`- [${start}] ${speaker}: ${text}`)
+    } else {
+      out.push(`- [${start}] ${text}`)
+    }
+    i++
   }
 
-  const selection = await fzfSelect(folders, "Select meeting folder: ")
-  return path.join(transcriptsDir, selection)
+  return out.join("\n") + "\n"
 }
 
 /**
- * Ensure required subfolders exist
+ * Process Zoom folder into markdown
  */
-function ensureSubfolders(targetDir: string): void {
-  const subfolders = ["Executive Summaries", "Meeting Notes", "Transcripts"]
-  for (const subfolder of subfolders) {
-    const dirPath = path.join(targetDir, subfolder)
-    if (!fs.existsSync(dirPath)) {
-      fs.mkdirSync(dirPath, { recursive: true })
+function processZoomFolder(zoomPath: string): string {
+  const parts: string[] = []
+  const patterns = ["*.vtt", "*.txt"]
+
+  for (const pattern of patterns) {
+    const ext = pattern.slice(1) // .vtt or .txt
+    const files = fs
+      .readdirSync(zoomPath)
+      .filter((f) => f.toLowerCase().endsWith(ext) && !f.startsWith("."))
+      .sort()
+
+    for (const file of files) {
+      const filePath = path.join(zoomPath, file)
+      let content = fs.readFileSync(filePath, "utf-8")
+
+      // If it's a VTT, convert it
+      if (file.toLowerCase().endsWith(".vtt")) {
+        content = convertVttToMarkdown(filePath)
+      }
+
+      parts.push(`<!-- START: ${file} -->\n${content}\n<!-- END: ${file} -->`)
     }
   }
-}
 
-/**
- * Find transcript files in a folder
- */
-function findTranscriptFiles(folder: string): string[] {
-  return fs
-    .readdirSync(folder)
-    .filter((f) => f.endsWith(".txt") || f.endsWith(".vtt"))
-    .map((f) => path.join(folder, f))
-}
-
-/**
- * Get the next available transcript filename
- */
-function nextTranscriptFilename(destDir: string): string {
-  const existing = fs
-    .readdirSync(destDir)
-    .filter((f) => /^\d{2}\.md$/.test(f))
-    .map((f) => parseInt(f.slice(0, 2), 10))
-
-  const nextNum = (Math.max(0, ...existing) || 0) + 1
-  return `${nextNum.toString().padStart(2, "0")}.md`
-}
-
-/**
- * Write combined transcript file
- */
-function writeCombinedTranscript(
-  destFile: string,
-  transcriptFiles: string[]
-): void {
-  let content = ""
-  for (const file of transcriptFiles) {
-    const basename = path.basename(file)
-    const fileContent = fs.readFileSync(file, "utf-8")
-    content += `===== START: ${basename} =====\n`
-    content += fileContent
-    content += `\n===== END: ${basename} =====\n\n`
+  if (parts.length === 0) {
+    throw new Error(`No transcript files found in ${zoomPath}`)
   }
-  fs.writeFileSync(destFile, content)
+
+  return parts.join("\n\n")
 }
 
 /**
- * Generate executive summary using copilot CLI
+ * Call copilot CLI with a system prompt and input
  */
-async function generateExecutiveSummary(
-  transcriptFile: string,
-  summaryFile: string,
-  promptPath: string
-): Promise<void> {
-  const transcript = fs.readFileSync(transcriptFile, "utf-8")
-  const promptContent = fs.readFileSync(promptPath, "utf-8")
-  const input = `${promptContent}\n\n${transcript}`
-
-  console.log("Generating executive summary with copilot...")
-  const summary = await runCommand("copilot", ["-p", input, "--allow-all-tools"])
-  fs.writeFileSync(summaryFile, summary)
-  console.log(`Executive summary saved to: ${summaryFile}`)
-}
-
-/**
- * Generate detailed notes using copilot CLI
- */
-async function generateDetailedNotes(
-  transcriptFile: string,
+async function callCopilot(
+  transcript: string,
   promptPath: string
 ): Promise<string> {
-  const transcript = fs.readFileSync(transcriptFile, "utf-8")
-  const promptContent = fs.readFileSync(promptPath, "utf-8")
-  const input = `${promptContent}\n\n${transcript}`
+  if (!fs.existsSync(promptPath)) {
+    throw new Error(`Prompt file not found: ${promptPath}`)
+  }
 
-  console.log("Generating detailed notes with copilot...")
-  return await runCommand("copilot", ["-p", input, "--allow-all-tools"])
+  const systemPrompt = fs.readFileSync(promptPath, "utf-8")
+  const fullPrompt = `${systemPrompt}\n\n${transcript}`
+
+  const result = await runCommand("copilot", ["-p", fullPrompt, "--allow-all-tools"])
+  return result.trim()
 }
 
 /**
- * Find latest weekly notes file
+ * Create frontmatter for a file
  */
-function findLatestWeeklyNotes(targetDir: string): string {
-  const weeklyNotesDir = path.join(targetDir, "Weekly Notes")
-  const files = fs
-    .readdirSync(weeklyNotesDir)
-    .filter((f) => f.startsWith("Week of ") && f.endsWith(".md"))
-    .sort()
-
-  if (files.length === 0) {
-    throw new Error(`No weekly notes files found in ${weeklyNotesDir}`)
+function createFrontmatter(type: string, date: string): string {
+  const fm: FrontmatterData = {
+    uid: generateTid(),
+    type,
+    created: `${date}T00:00:00.000Z`,
   }
-
-  const latest = files[files.length - 1]!
-  console.log(`Latest weekly notes file: ${path.join(weeklyNotesDir, latest)}`)
-  return path.join(weeklyNotesDir, latest)
+  return serializeFrontmatter(fm)
 }
 
 /**
- * Select meeting notes section using copilot CLI and fzf
+ * Ensure bullets format for notes
  */
-async function selectMeetingNotesSection(
-  weeklyNotesFile: string,
-  executiveSummary: string
-): Promise<string> {
-  const content = fs.readFileSync(weeklyNotesFile, "utf-8")
-
-  // Extract Schedule section
-  const scheduleMatch = content.match(/^## Schedule\n([\s\S]*?)(?=^## |$)/m)
-  if (!scheduleMatch?.[1]) {
-    throw new Error("Could not find '## Schedule' section in Weekly Notes")
-  }
-
-  const options = scheduleMatch[1]
+function ensureBullets(text: string): string {
+  return text
     .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#"))
-
-  if (options.length === 0) {
-    throw new Error("No entries found in '## Schedule' section")
-  }
-
-  // Use copilot to sort options by relevance
-  const prompt = `Given the following list of people or groups from my schedule and the executive summary of a meeting, sort the list from most likely to least likely to be the correct person or group to attach this transcript to. Do not remove or filter any options. Output only the sorted list, one per line, with no extra commentary.
-
-SCHEDULE OPTIONS:
-${options.join("\n")}
-
-EXECUTIVE SUMMARY:
-${executiveSummary}`
-
-  console.log("Suggesting Meeting Notes section with copilot...")
-  const sorted = await runCommand("copilot", ["-p", prompt, "--allow-all-tools"])
-
-  const sortedOptions = sorted
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l)
-
-  const selection = await fzfSelect(
-    sortedOptions,
-    "Select Meeting Notes group/person: "
-  )
-  console.log(`You selected: ${selection}`)
-  return selection
+    .map((ln) => ln.trimEnd())
+    .filter((ln) => ln)
+    .map((ln) => (ln.trimStart().startsWith("-") ? ln : `- ${ln.trim()}`))
+    .join("\n")
 }
 
 /**
- * Update meeting notes file with links and detailed notes
+ * Update Meeting Notes file
  */
-function updateMeetingNotesFile(options: {
-  meetingNotesFile: string
-  meetingDate: string
+function updateMeetingNotes(options: {
+  brainDir: string
+  target: string
+  date: string
   transcriptLink: string
   summaryLink: string
   detailedNotes: string
-}): void {
-  const { meetingNotesFile, meetingDate, transcriptLink, summaryLink, detailedNotes } =
+}): string {
+  const { brainDir, target, date, transcriptLink, summaryLink, detailedNotes } =
     options
 
-  const dateSectionHeader = `## ${meetingDate}`
+  const meetingNotesFile = path.join(brainDir, "Meeting Notes", `${target}.md`)
+  const header = `## ${date}`
 
-  // Format detailed notes as list items
-  const detailedNotesItems = detailedNotes
-    .split("\n")
-    .map((l) => l.trimEnd())
-    .filter((l) => l)
-    .map((l) => (l.trimStart().startsWith("-") ? l : `- ${l}`))
-    .join("\n")
+  const detailed = ensureBullets(detailedNotes)
+  let block = `- ${transcriptLink}\n- ${summaryLink}\n`
+  if (detailed) block += `${detailed}\n`
+  block += "\n"
 
-  const newContentBlock =
-    `- ${transcriptLink}\n- ${summaryLink}\n` +
-    (detailedNotesItems ? `${detailedNotesItems}\n` : "") +
-    "\n"
-
-  if (fs.existsSync(meetingNotesFile)) {
-    let content = fs.readFileSync(meetingNotesFile, "utf-8")
-
-    // Check if date section exists
-    if (content.includes(dateSectionHeader)) {
-      // Find the section and append to it
-      const regex = new RegExp(
-        `(${dateSectionHeader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n)`,
-        "g"
-      )
-      content = content.replace(regex, `$1\n${newContentBlock}`)
-    } else {
-      // Prepend new section
-      content = `${dateSectionHeader}\n\n${newContentBlock}${content}`
-    }
-
-    fs.writeFileSync(meetingNotesFile, content)
-    console.log(`Updated existing Meeting Notes file: ${meetingNotesFile}`)
-  } else {
-    // Create new file
-    const newContent = `${dateSectionHeader}\n\n${newContentBlock}`
-    fs.writeFileSync(meetingNotesFile, newContent)
-    console.log(`Created new Meeting Notes file: ${meetingNotesFile}`)
+  if (!fs.existsSync(meetingNotesFile)) {
+    fs.mkdirSync(path.dirname(meetingNotesFile), { recursive: true })
+    fs.writeFileSync(meetingNotesFile, `${header}\n\n${block}`, "utf-8")
+    return `Created: ${meetingNotesFile}`
   }
+
+  let text = fs.readFileSync(meetingNotesFile, "utf-8")
+
+  // Find all date headers
+  const dateHeaderRe = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/gm
+  const matches: { date: string; start: number }[] = []
+  let match
+  while ((match = dateHeaderRe.exec(text)) !== null) {
+    matches.push({ date: match[1]!, start: match.index })
+  }
+
+  const targetIdx = matches.findIndex((m) => m.date === date)
+
+  if (targetIdx === -1) {
+    // Prepend new section
+    text = `${header}\n\n${block}${text}`
+  } else {
+    // Insert at end of target section (before next header or end)
+    const nextHeaderStart =
+      targetIdx + 1 < matches.length ? matches[targetIdx + 1]!.start : text.length
+
+    const before = text.slice(0, nextHeaderStart)
+    const after = text.slice(nextHeaderStart)
+
+    const beforeWithNewline = before.endsWith("\n") ? before : before + "\n"
+    text = beforeWithNewline + block + after
+  }
+
+  fs.writeFileSync(meetingNotesFile, text, "utf-8")
+  return `Updated: ${meetingNotesFile}`
 }
 
 /**
- * Extract canonical name from selection
+ * Check off meeting in Weekly Notes
  */
-function extractCanonicalName(selection: string): string {
-  const cleaned = selection.replace(/^Meeting Notes\//, "")
-
-  // Handle wikilinks
-  const wikilinkMatch = cleaned.match(/\[\[(.+?)(?:\|.+?)?\]\]/)
-  if (wikilinkMatch?.[1]) {
-    return wikilinkMatch[1].replace(/^Meeting Notes\//, "")
+function checkOffWeeklyNote(
+  brainDir: string,
+  target: string,
+  meetingDate: string
+): string {
+  const weeklyNotesDir = path.join(brainDir, "Weekly Notes")
+  if (!fs.existsSync(weeklyNotesDir)) {
+    return "Weekly Notes directory not found"
   }
 
-  // Fallback: get last word
-  return cleaned.trim().split(/\s+/).pop()?.replace(/[^\w-]/g, "") || cleaned
+  const meetingDt = new Date(meetingDate)
+  const weeklyNoteRe = /^Week of (\d{4}-\d{2}-\d{2})\.md$/
+
+  const candidates: { weekStart: Date; path: string }[] = []
+  for (const entry of fs.readdirSync(weeklyNotesDir)) {
+    const match = weeklyNoteRe.exec(entry)
+    if (match) {
+      candidates.push({
+        weekStart: new Date(match[1]!),
+        path: path.join(weeklyNotesDir, entry),
+      })
+    }
+  }
+
+  if (candidates.length === 0) {
+    return "No Weekly Notes found"
+  }
+
+  candidates.sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime())
+
+  let weeklyNote: string | null = null
+  for (const { weekStart, path: notePath } of candidates) {
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekEnd.getDate() + 6)
+    if (meetingDt >= weekStart && meetingDt <= weekEnd) {
+      weeklyNote = notePath
+      break
+    }
+  }
+
+  if (!weeklyNote) {
+    return `No Weekly Note found containing date ${meetingDate}`
+  }
+
+  let content = fs.readFileSync(weeklyNote, "utf-8")
+  const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const pattern = new RegExp(
+    `^(\\s*- \\[) (\\] \\d{4} \\[\\[Meeting Notes\\/${escapedTarget}(?:\\|[^\\]]+)?\\]\\].*?)$`,
+    "gim"
+  )
+
+  let count = 0
+  content = content.replace(pattern, (_, prefix, suffix) => {
+    count++
+    return `${prefix}x${suffix}`
+  })
+
+  if (count > 0) {
+    fs.writeFileSync(weeklyNote, content, "utf-8")
+    return `Checked off ${count} item(s) in ${path.basename(weeklyNote)}`
+  }
+
+  return `No matching checklist item found in ${path.basename(weeklyNote)}`
+}
+
+/**
+ * List recent Zoom folders
+ */
+function listZoomFolders(zoomDir: string, limit: number): MeetingCandidate[] {
+  if (!fs.existsSync(zoomDir)) return []
+
+  const candidates: MeetingCandidate[] = []
+  for (const entry of fs.readdirSync(zoomDir)) {
+    if (entry.startsWith(".")) continue
+    const entryPath = path.join(zoomDir, entry)
+    const stat = fs.statSync(entryPath)
+    if (stat.isDirectory()) {
+      candidates.push({
+        type: "zoom",
+        path: entryPath,
+        mtimeIso: stat.mtime.toISOString(),
+        date: stat.mtime.toISOString().slice(0, 10),
+        hint: entry,
+      })
+    }
+  }
+
+  return candidates
+    .sort((a, b) => b.mtimeIso.localeCompare(a.mtimeIso))
+    .slice(0, limit)
+}
+
+/**
+ * List recent Teams VTT files
+ */
+function listTeamsVtts(downloadsDir: string, limit: number): MeetingCandidate[] {
+  if (!fs.existsSync(downloadsDir)) return []
+
+  const candidates: MeetingCandidate[] = []
+  for (const entry of fs.readdirSync(downloadsDir)) {
+    if (entry.startsWith(".") || !entry.toLowerCase().endsWith(".vtt")) continue
+    const entryPath = path.join(downloadsDir, entry)
+    const stat = fs.statSync(entryPath)
+    if (stat.isFile()) {
+      candidates.push({
+        type: "teams_vtt",
+        path: entryPath,
+        mtimeIso: stat.mtime.toISOString(),
+        date: stat.mtime.toISOString().slice(0, 10),
+        hint: entry,
+      })
+    }
+  }
+
+  return candidates
+    .sort((a, b) => b.mtimeIso.localeCompare(a.mtimeIso))
+    .slice(0, limit)
+}
+
+/**
+ * List recent meetings from Zoom and Teams
+ */
+export function listRecentMeetings(
+  options: ListRecentMeetingsOptions = {}
+): { zoom: MeetingCandidate[]; teams_vtt: MeetingCandidate[] } | MeetingCandidate[] {
+  const zoomDir = options.zoomDir || path.join(process.env.HOME || "", "Documents/Zoom")
+  const downloadsDir = options.downloadsDir || path.join(process.env.HOME || "", "Downloads")
+  const limit = options.limit || 10
+
+  const zoom = listZoomFolders(zoomDir, limit)
+  const teams = listTeamsVtts(downloadsDir, limit)
+
+  if (options.merge) {
+    return [...zoom, ...teams].sort((a, b) => b.mtimeIso.localeCompare(a.mtimeIso))
+  }
+
+  return { zoom, teams_vtt: teams }
 }
 
 /**
@@ -342,77 +488,119 @@ export async function archiveMeeting(
   options: ArchiveMeetingOptions
 ): Promise<void> {
   const {
-    transcriptsDir,
-    targetDir,
+    brainDir,
+    input,
+    meetingNotesTarget,
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
+    dryRun = false,
   } = options
 
-  // Step 1: Ensure required subfolders exist
-  ensureSubfolders(targetDir)
-
-  // Step 2: Select meeting folder
-  const selectedFolder = await selectMeetingFolder(transcriptsDir)
-  console.log(`Selected meeting folder: ${selectedFolder}`)
-
-  // Step 3: Find transcript files
-  const transcriptFiles = findTranscriptFiles(selectedFolder)
-  if (transcriptFiles.length === 0) {
-    throw new Error(`No transcript files found in ${selectedFolder}`)
+  if (!fs.existsSync(brainDir)) {
+    throw new Error(`Brain directory does not exist: ${brainDir}`)
   }
 
-  // Step 4: Prepare output directory and file
-  const stat = fs.statSync(selectedFolder)
-  const meetingDate = stat.mtime.toISOString().slice(0, 10)
-  const transcriptsBase = path.join(targetDir, "Transcripts")
-  const destDir = path.join(transcriptsBase, meetingDate)
-  fs.mkdirSync(destDir, { recursive: true })
-  const filename = nextTranscriptFilename(destDir)
-  const destFile = path.join(destDir, filename)
+  if (!fs.existsSync(input)) {
+    throw new Error(`Input path does not exist: ${input}`)
+  }
 
-  // Step 5: Write combined transcript
-  writeCombinedTranscript(destFile, transcriptFiles)
-  console.log(`Transcript saved to: ${destFile}`)
+  // Determine date
+  let meetingDate: string
+  if (options.date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(options.date)) {
+      throw new Error(`Invalid date format '${options.date}', expected YYYY-MM-DD`)
+    }
+    meetingDate = options.date
+  } else {
+    meetingDate = getDateFromFile(input)
+  }
 
-  // Step 6: Generate executive summary
-  const execSummariesBase = path.join(targetDir, "Executive Summaries")
-  const execDir = path.join(execSummariesBase, meetingDate)
-  fs.mkdirSync(execDir, { recursive: true })
-  const summaryFile = path.join(execDir, filename)
-  await generateExecutiveSummary(
-    destFile,
-    summaryFile,
-    executiveSummaryPromptPath
+  console.log(`Processing: ${input}`)
+  console.log(`Date: ${meetingDate}`)
+  console.log(`Target: Meeting Notes/${meetingNotesTarget}.md`)
+
+  // Step 1: Get next file number
+  const nextNum = findNextNumber(brainDir, meetingDate)
+  const nextNumStr = nextNum.toString().padStart(2, "0")
+  console.log(`File number: ${nextNumStr}`)
+
+  const transcriptsDir = path.join(brainDir, "Transcripts", meetingDate)
+  const execSummariesDir = path.join(brainDir, "Executive Summaries", meetingDate)
+  const transcriptPath = path.join(transcriptsDir, `${nextNumStr}.md`)
+  const execSummaryPath = path.join(execSummariesDir, `${nextNumStr}.md`)
+
+  if (dryRun) {
+    console.log("\n[DRY RUN] Would create:")
+    console.log(`  - ${transcriptPath}`)
+    console.log(`  - ${execSummaryPath}`)
+    console.log(`  - Update Meeting Notes/${meetingNotesTarget}.md`)
+    return
+  }
+
+  // Step 2: Convert input to markdown transcript
+  console.log("\nConverting transcript...")
+  let transcriptMd: string
+  const stat = fs.statSync(input)
+  if (stat.isDirectory()) {
+    transcriptMd = processZoomFolder(input)
+  } else if (input.toLowerCase().endsWith(".vtt")) {
+    transcriptMd = convertVttToMarkdown(input)
+  } else {
+    transcriptMd = fs.readFileSync(input, "utf-8")
+  }
+
+  // Step 3: Write transcript with frontmatter
+  fs.mkdirSync(transcriptsDir, { recursive: true })
+  const transcriptFrontmatter = createFrontmatter("transcript", meetingDate)
+  fs.writeFileSync(
+    transcriptPath,
+    `${transcriptFrontmatter}\n\n${transcriptMd}`,
+    "utf-8"
   )
+  console.log(`Created: ${transcriptPath}`)
 
-  // Step 7: Find latest weekly notes
-  const latestWeeklyNotes = findLatestWeeklyNotes(targetDir)
+  // Step 4: Generate executive summary via copilot
+  console.log("\nGenerating executive summary...")
+  const execSummary = await callCopilot(transcriptMd, executiveSummaryPromptPath)
 
-  // Step 8: Select meeting notes section
-  const executiveSummaryContent = fs.readFileSync(summaryFile, "utf-8")
-  const selection = await selectMeetingNotesSection(
-    latestWeeklyNotes,
-    executiveSummaryContent
+  fs.mkdirSync(execSummariesDir, { recursive: true })
+  const summaryFrontmatter = createFrontmatter("executive.summary", meetingDate)
+  fs.writeFileSync(
+    execSummaryPath,
+    `${summaryFrontmatter}\n\n${execSummary}\n`,
+    "utf-8"
   )
+  console.log(`Created: ${execSummaryPath}`)
 
-  // Step 9: Generate detailed notes
-  const detailedNotes = await generateDetailedNotes(
-    destFile,
-    detailedNotesPromptPath
-  )
+  // Step 5: Generate meeting notes via copilot
+  console.log("\nGenerating meeting notes...")
+  const meetingNotes = await callCopilot(transcriptMd, detailedNotesPromptPath)
 
-  // Step 10: Update meeting notes file
-  const canonical = extractCanonicalName(selection)
-  const meetingNotesFile = path.join(targetDir, "Meeting Notes", `${canonical}.md`)
-  const wikilinkName = path.basename(filename, ".md")
-  const transcriptLink = `[[Transcripts/${meetingDate}/${wikilinkName}|Transcript]]`
-  const summaryLink = `[[Executive Summaries/${meetingDate}/${wikilinkName}|Executive Summary]]`
+  // Step 6: Update meeting notes file
+  console.log("\nUpdating meeting notes...")
+  const transcriptLink = `[[Transcripts/${meetingDate}/${nextNumStr}|Transcript]]`
+  const summaryLink = `[[Executive Summaries/${meetingDate}/${nextNumStr}|Executive Summary]]`
 
-  updateMeetingNotesFile({
-    meetingNotesFile,
-    meetingDate,
+  const result = updateMeetingNotes({
+    brainDir,
+    target: meetingNotesTarget,
+    date: meetingDate,
     transcriptLink,
     summaryLink,
-    detailedNotes,
+    detailedNotes: meetingNotes,
   })
+  console.log(result)
+
+  // Step 7: Check off in weekly notes
+  const weeklyResult = checkOffWeeklyNote(brainDir, meetingNotesTarget, meetingDate)
+  if (weeklyResult) {
+    console.log(`\n${weeklyResult}`)
+  }
+
+  // Output summary
+  console.log("\n" + "=".repeat(60))
+  console.log("Archive complete!")
+  console.log(`  Transcript:        ${transcriptPath}`)
+  console.log(`  Executive Summary: ${execSummaryPath}`)
+  console.log(`  Meeting Notes:     Meeting Notes/${meetingNotesTarget}.md`)
 }

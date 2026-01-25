@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * archive-meeting: Archive a meeting by combining transcripts and chat logs,
- * generating an executive summary, detailed notes, and updating notes.
+ * archive-meeting: Archive a single meeting into the brain repo.
  *
  * Usage:
- *   archive-meeting --transcripts-dir DIR --target-dir DIR \
- *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH
+ *   archive-meeting --brain-dir DIR --input PATH --meeting-notes-target TARGET \
+ *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
+ *     [--date YYYY-MM-DD] [--dry-run]
  */
 
 import { parseArgs } from "node:util"
@@ -13,10 +13,13 @@ import { archiveMeeting } from "../src/archive-meeting.js"
 
 const { values } = parseArgs({
   options: {
-    "transcripts-dir": { type: "string" },
-    "target-dir": { type: "string" },
+    "brain-dir": { type: "string" },
+    input: { type: "string" },
+    "meeting-notes-target": { type: "string" },
     "executive-summary-prompt-path": { type: "string" },
     "detailed-notes-prompt-path": { type: "string" },
+    date: { type: "string" },
+    "dry-run": { type: "boolean" },
     help: { type: "boolean", short: "h" },
   },
 })
@@ -26,18 +29,22 @@ if (values.help) {
 Usage: archive-meeting [options]
 
 Options:
-  --transcripts-dir DIR                Path to Zoom meetings folder
-  --target-dir DIR                     Path to notes folder
-  --executive-summary-prompt-path PATH Path to prompt file for executive summary
-  --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes
+  --brain-dir DIR                      Path to Brain directory (required)
+  --input PATH                         Path to input (VTT file or Zoom folder) (required)
+  --meeting-notes-target TARGET        Meeting Notes target basename (required)
+  --executive-summary-prompt-path PATH Path to prompt file for executive summary (required)
+  --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes (required)
+  --date YYYY-MM-DD                    Override meeting date (defaults to file mtime)
+  --dry-run                            Show what would be done without writing files
   -h, --help                           Show this help message
 `)
   process.exit(0)
 }
 
 if (
-  !values["transcripts-dir"] ||
-  !values["target-dir"] ||
+  !values["brain-dir"] ||
+  !values["input"] ||
+  !values["meeting-notes-target"] ||
   !values["executive-summary-prompt-path"] ||
   !values["detailed-notes-prompt-path"]
 ) {
@@ -46,8 +53,11 @@ if (
 }
 
 await archiveMeeting({
-  transcriptsDir: values["transcripts-dir"],
-  targetDir: values["target-dir"],
+  brainDir: values["brain-dir"],
+  input: values["input"],
+  meetingNotesTarget: values["meeting-notes-target"],
   executiveSummaryPromptPath: values["executive-summary-prompt-path"],
   detailedNotesPromptPath: values["detailed-notes-prompt-path"],
+  date: values["date"],
+  dryRun: values["dry-run"],
 })
