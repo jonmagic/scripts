@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# fetch-github-conversation: Unified wrapper for fetching GitHub issues, PRs, and discussions as JSON
+#
+# Usage: fetch-github-conversation <url>
+#
+# Examples:
+#   fetch-github-conversation https://github.com/owner/repo/issues/42
+#   fetch-github-conversation https://github.com/owner/repo/pull/123
+#   fetch-github-conversation https://github.com/owner/repo/discussions/456
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: fetch-github-conversation <github-url>" >&2
+  exit 1
+fi
+
+url="$1"
+
+# Extract type from URL
+if [[ "$url" =~ /issues/([0-9]+) ]]; then
+  gh issue view "$url" --json number,title,body,author,state,labels,assignees,comments,createdAt,updatedAt,closedAt
+elif [[ "$url" =~ /pull/([0-9]+) ]]; then
+  gh pr view "$url" --json number,title,body,author,state,labels,assignees,comments,reviews,files,commits,additions,deletions,changedFiles,baseRefName,headRefName,isDraft,mergedAt,mergedBy,createdAt,updatedAt,closedAt
+elif [[ "$url" =~ /discussions/([0-9]+) ]]; then
+  # Extract owner/repo and number for GraphQL query
+  if [[ "$url" =~ github\.com/([^/]+)/([^/]+)/discussions/([0-9]+) ]]; then
+    owner="${BASH_REMATCH[1]}"
+    repo="${BASH_REMATCH[2]}"
+    number="${BASH_REMATCH[3]}"
+    gh api graphql -f query="
+      query {
+        repository(owner: \"$owner\", name: \"$repo\") {
+          discussion(number: $number) {
+            number
+            title
+            body
+            author { login }
+            category { name }
+            createdAt
+            updatedAt
+            url
+            comments(first: 100) {
+              nodes {
+                author { login }
+                body
+                createdAt
+                updatedAt
+                replies(first: 100) {
+                  nodes {
+                    author { login }
+                    body
+                    createdAt
+                    updatedAt
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    "
+  else
+    echo "Error: Could not parse discussion URL" >&2
+    exit 1
+  fi
+else
+  echo "Error: URL must be a GitHub issue, pull request, or discussion" >&2
+  exit 1
+fi
