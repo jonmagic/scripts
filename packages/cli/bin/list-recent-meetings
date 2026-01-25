@@ -1,0 +1,43 @@
+#!/usr/bin/env bun
+/**
+ * list-recent-meetings: List recent meeting inputs from Zoom and Teams.
+ *
+ * Usage:
+ *   list-recent-meetings [--zoom-dir DIR] [--downloads-dir DIR] [--limit N] [--merge]
+ */
+
+import { parseArgs } from "node:util"
+import { listRecentMeetings } from "../src/archive-meeting.js"
+
+const { values } = parseArgs({
+  options: {
+    "zoom-dir": { type: "string" },
+    "downloads-dir": { type: "string" },
+    limit: { type: "string" },
+    merge: { type: "boolean" },
+    help: { type: "boolean", short: "h" },
+  },
+})
+
+if (values.help) {
+  console.log(`
+Usage: list-recent-meetings [options]
+
+Options:
+  --zoom-dir DIR       Zoom meetings directory (default: ~/Documents/Zoom)
+  --downloads-dir DIR  Downloads directory for Teams VTT (default: ~/Downloads)
+  --limit N            Max items per source (default: 10)
+  --merge              Merge both sources and sort globally by mtime desc
+  -h, --help           Show this help message
+`)
+  process.exit(0)
+}
+
+const result = listRecentMeetings({
+  zoomDir: values["zoom-dir"],
+  downloadsDir: values["downloads-dir"],
+  limit: values["limit"] ? parseInt(values["limit"], 10) : undefined,
+  merge: values["merge"],
+})
+
+console.log(JSON.stringify(result, null, 2))

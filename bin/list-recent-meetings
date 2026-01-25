@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper for list-recent-meetings CLI
+exec "$(dirname "$0")/../packages/cli/bin/list-recent-meetings" "$@"

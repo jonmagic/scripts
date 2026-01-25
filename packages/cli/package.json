@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "archive-meeting": "./bin/archive-meeting"
+    "archive-meeting": "./bin/archive-meeting",
+    "list-recent-meetings": "./bin/list-recent-meetings"
   },
   "scripts": {
     "build": "bun tsc -p tsconfig.json",
