@@ -65,11 +65,24 @@ bin/install-raycast-extension
 After running `bin/setup`, add the CLI to your PATH:
 
 ```bash
-export PATH="$HOME/code/jonmagic/scripts/packages/cli/bin:$PATH"
+export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 ```
 
-Available commands:
-- `archive-meeting` - Archive meeting transcripts with AI-generated summaries
+### Requirements
+
+- [Bun](https://bun.sh) - JavaScript runtime (installed by setup)
+- [gh](https://cli.github.com) - GitHub CLI
+- [copilot](https://githubnext.com/projects/copilot-cli) - GitHub Copilot CLI
+- [llm](https://llm.datasette.io) - LLM CLI tool
+- [fzf](https://github.com/junegunn/fzf) - Fuzzy finder
+
+### Available Commands
+
+| Command | Description | Requirements |
+|---------|-------------|--------------|
+| `archive-meeting` | Archive meeting transcripts with AI-generated summaries | bun, llm, fzf |
+| `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |
+| `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
 
 ## License
 
