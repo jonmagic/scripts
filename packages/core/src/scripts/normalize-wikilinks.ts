@@ -135,7 +135,7 @@ function normalizeFileLinks(
         // UID not found, try to resolve the label as a short ref
         const labelLower = link.label.toLowerCase()
         const matches = filenameIndex.get(labelLower)
-        if (matches && matches.length === 1) {
+        if (matches && matches.length === 1 && matches[0]) {
           newTarget = matches[0]
         } else {
           console.warn(
@@ -149,7 +149,7 @@ function normalizeFileLinks(
       const filename = link.target.toLowerCase()
       const matches = filenameIndex.get(filename)
 
-      if (matches && matches.length === 1) {
+      if (matches && matches.length === 1 && matches[0]) {
         // Unambiguous match
         newTarget = matches[0]
       } else if (matches && matches.length > 1) {

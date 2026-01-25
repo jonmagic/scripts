@@ -224,7 +224,7 @@ function findLatestWeeklyNotes(targetDir: string): string {
     throw new Error(`No weekly notes files found in ${weeklyNotesDir}`)
   }
 
-  const latest = files[files.length - 1]
+  const latest = files[files.length - 1]!
   console.log(`Latest weekly notes file: ${path.join(weeklyNotesDir, latest)}`)
   return path.join(weeklyNotesDir, latest)
 }

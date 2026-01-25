@@ -77,7 +77,7 @@ async function handleFileRename(
         new RegExp(`\\[\\[${escapeRegExp(oldDisplayPath)}\\]\\]`, "g"),
         // With label
         new RegExp(`\\[\\[${escapeRegExp(oldDisplayPath)}\\|([^\\]]+)\\]\\]`, "g"),
-      ]
+      ] as const
 
       content = content.replace(patterns[0], `[[${newDisplayPath}]]`)
       content = content.replace(patterns[1], `[[${newDisplayPath}|$1]]`)
