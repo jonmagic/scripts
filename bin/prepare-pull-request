@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# prepare-pull-request: Generate PR title and body using copilot CLI, then create PR with gh
+#
+# Usage: prepare-pull-request --base-branch BRANCH --pr-body-prompt-path PATH
+#
+# The script:
+# 1. Gets commit context between HEAD and base branch
+# 2. Uses copilot CLI with the provided prompt to generate PR title and body
+# 3. Opens editor for you to review/edit the title and body
+# 4. Pushes the branch and creates the PR using gh CLI
+
+set -euo pipefail
+
+# Default values
+base_branch=""
+prompt_path=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --base-branch)
+      base_branch="$2"
+      shift 2
+      ;;
+    --pr-body-prompt-path)
+      prompt_path="$2"
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: prepare-pull-request --base-branch BRANCH --pr-body-prompt-path PATH"
+      echo ""
+      echo "Options:"
+      echo "  --base-branch BRANCH         Name of the base branch (required)"
+      echo "  --pr-body-prompt-path PATH   Path to PR body prompt template (required)"
+      echo "  -h, --help                   Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Validate required arguments
+if [[ -z "$base_branch" ]]; then
+  echo "Error: --base-branch is required" >&2
+  exit 1
+fi
+
+if [[ -z "$prompt_path" ]]; then
+  echo "Error: --pr-body-prompt-path is required" >&2
+  exit 1
+fi
+
+if [[ ! -f "$prompt_path" ]]; then
+  echo "Error: Prompt file not found: $prompt_path" >&2
+  exit 1
+fi
+
+# Check dependencies
+for cmd in git gh copilot; do
+  if ! command -v "$cmd" &> /dev/null; then
+    echo "Error: Required command '$cmd' not found in PATH" >&2
+    exit 1
+  fi
+done
+
+# Get commit context
+echo "Getting commit context between $base_branch and HEAD..."
+commit_log=$(git log --reverse --pretty=format:'%h %s%n%b' "$base_branch"..HEAD 2>/dev/null) || {
+  echo "Error: Failed to get commit log. Are you on a branch with commits?" >&2
+  exit 1
+}
+
+diff_summary=$(git diff --name-status "$base_branch"...HEAD 2>/dev/null) || {
+  echo "Error: Failed to get diff between branches" >&2
+  exit 1
+}
+
+context="# Commit messages between '$base_branch' and 'HEAD':
+
+$commit_log
+
+# Summary of changes:
+
+$diff_summary"
+
+# Generate PR content using copilot
+echo "Generating PR content using copilot CLI..."
+prompt_content=$(cat "$prompt_path")
+
+# Combine prompt and context for copilot
+full_prompt="$prompt_content
+
+$context"
+
+# Run copilot to generate PR content
+pr_content=$(echo "$full_prompt" | copilot -q 2>/dev/null) || {
+  echo "Error: Failed to generate PR content with copilot" >&2
+  exit 1
+}
+
+# Parse title (first line) and body (rest)
+pr_title=$(echo "$pr_content" | head -n 1 | sed 's/^#* *//')
+pr_body=$(echo "$pr_content" | tail -n +3)
+
+# Create temp files for editing
+title_file=$(mktemp)
+body_file=$(mktemp)
+trap 'rm -f "$title_file" "$body_file"' EXIT
+
+echo "$pr_title" > "$title_file"
+echo "$pr_body" > "$body_file"
+
+# Get editor
+editor="${GIT_EDITOR:-${VISUAL:-${EDITOR:-vim}}}"
+
+# Edit title
+echo ""
+echo "Generated PR title: $pr_title"
+read -p "Edit the PR title? [y/N] " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  $editor "$title_file"
+  pr_title=$(cat "$title_file")
+  echo "Updated PR title: $pr_title"
+fi
+
+# Edit body
+echo ""
+echo "Generated PR body:"
+echo "---"
+echo "$pr_body"
+echo "---"
+read -p "Edit the PR body? [y/N] " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  $editor "$body_file"
+  pr_body=$(cat "$body_file")
+fi
+
+# Confirm creation
+echo ""
+echo "Ready to create PR:"
+echo "  Title: $pr_title"
+echo "  Base: $base_branch"
+echo ""
+read -p "Create the PR? [y/N] " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  echo "Cancelled."
+  exit 0
+fi
+
+# Check if branch has remote tracking
+if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} &>/dev/null; then
+  echo "Pushing branch to origin..."
+  git push -u origin HEAD || {
+    echo "Error: Failed to push branch" >&2
+    exit 1
+  }
+else
+  echo "Ensuring remote branch is up-to-date..."
+  git push || {
+    echo "Error: Failed to push branch" >&2
+    exit 1
+  }
+fi
+
+# Create PR
+echo "Creating pull request..."
+gh pr create --title "$pr_title" --body "$pr_body" --base "$base_branch"
+
+echo "Pull request created successfully!"
