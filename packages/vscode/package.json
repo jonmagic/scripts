@@ -1,0 +1,48 @@
+{
+  "name": "jonmagic-scripts",
+  "displayName": "Jonmagic Scripts",
+  "description": "Utilities for my Brain repo (Daily Projects, wikilinks, etc.)",
+  "version": "0.0.0",
+  "publisher": "jonmagic",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jonmagic/scripts",
+    "directory": "packages/vscode"
+  },
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "jonmagic.scripts.createDailyProjectNote",
+        "title": "Jonmagic: Create Daily Project Note"
+      },
+      {
+        "command": "jonmagic.scripts.addFrontmatter",
+        "title": "Jonmagic: Add Frontmatter to Current File"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "watch": "node ./scripts/build.mjs --watch",
+    "package": "bunx @vscode/vsce package --no-dependencies",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@jonmagic/scripts-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.8.2"
+  }
+}

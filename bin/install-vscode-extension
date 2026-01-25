@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Install the VS Code extension from this repo.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+VSCODE_DIR="$ROOT_DIR/packages/vscode"
+
+cd "$VSCODE_DIR"
+
+echo "==> Building VS Code extension..."
+bun run build
+
+echo "==> Packaging extension..."
+bun run package
+
+VSIX_FILE=$(ls -t *.vsix 2>/dev/null | head -1)
+
+if [[ -z "$VSIX_FILE" ]]; then
+  echo "Error: No .vsix file found after packaging."
+  exit 1
+fi
+
+echo "==> Installing $VSIX_FILE..."
+code-insiders --install-extension "$VSIX_FILE"
+
+echo "==> Done! Restart VS Code Insiders to activate the extension."

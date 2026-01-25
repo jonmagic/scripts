@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# Setup script for jonmagic/scripts
+# Installs Bun (if needed), dependencies, and builds all packages.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$ROOT_DIR"
+
+echo "==> Setting up jonmagic/scripts..."
+
+# Check for Bun
+if ! command -v bun &> /dev/null; then
+  echo "==> Bun not found. Installing..."
+  curl -fsSL https://bun.sh/install | bash
+  
+  # Source bun for current session
+  export BUN_INSTALL="$HOME/.bun"
+  export PATH="$BUN_INSTALL/bin:$PATH"
+  
+  echo "==> Bun installed successfully."
+else
+  echo "==> Bun found: $(bun --version)"
+fi
+
+# Install dependencies
+echo "==> Installing dependencies..."
+bun install
+
+# Build all packages
+echo "==> Building packages..."
+bun run build
+
+echo ""
+echo "==> Setup complete!"
+echo ""
+echo "Next steps:"
+echo "  • Add CLI tools to your PATH:"
+echo "    export PATH=\"$ROOT_DIR/packages/cli/bin:\$PATH\""
+echo ""
+echo "  • Install VS Code extension:"
+echo "    scripts/install-vscode-extension.sh"
+echo ""
+echo "  • Install Raycast extension:"
+echo "    scripts/install-raycast-extension.sh"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#
+# Install the Raycast extension from this repo using ray develop.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+RAYCAST_DIR="$ROOT_DIR/packages/raycast"
+
+cd "$RAYCAST_DIR"
+
+echo "==> Installing Raycast extension via ray develop..."
+echo "    This will open Raycast and link the extension for development."
+echo ""
+
+ray develop
+
+echo ""
+echo "==> Done! The extension should now be available in Raycast."

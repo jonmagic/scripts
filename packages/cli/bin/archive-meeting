@@ -1,0 +1,57 @@
+#!/usr/bin/env bun
+/**
+ * archive-meeting: Archive a meeting by combining transcripts and chat logs,
+ * generating an executive summary, detailed notes, and updating notes.
+ *
+ * Usage:
+ *   archive-meeting --transcripts-dir DIR --target-dir DIR \
+ *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
+ *     [--llm-model MODEL]
+ */
+
+import { parseArgs } from "node:util"
+import { archiveMeeting } from "../dist/archive-meeting.js"
+
+const { values } = parseArgs({
+  options: {
+    "transcripts-dir": { type: "string" },
+    "target-dir": { type: "string" },
+    "executive-summary-prompt-path": { type: "string" },
+    "detailed-notes-prompt-path": { type: "string" },
+    "llm-model": { type: "string" },
+    help: { type: "boolean", short: "h" },
+  },
+})
+
+if (values.help) {
+  console.log(`
+Usage: archive-meeting [options]
+
+Options:
+  --transcripts-dir DIR                Path to Zoom meetings folder
+  --target-dir DIR                     Path to notes folder
+  --executive-summary-prompt-path PATH Path to LLM prompt file for executive summary
+  --detailed-notes-prompt-path PATH    Path to LLM prompt file for detailed notes
+  --llm-model MODEL                    Model alias to use for llm -m (optional)
+  -h, --help                           Show this help message
+`)
+  process.exit(0)
+}
+
+if (
+  !values["transcripts-dir"] ||
+  !values["target-dir"] ||
+  !values["executive-summary-prompt-path"] ||
+  !values["detailed-notes-prompt-path"]
+) {
+  console.error("Missing required arguments. Use --help for usage information.")
+  process.exit(1)
+}
+
+await archiveMeeting({
+  transcriptsDir: values["transcripts-dir"],
+  targetDir: values["target-dir"],
+  executiveSummaryPromptPath: values["executive-summary-prompt-path"],
+  detailedNotesPromptPath: values["detailed-notes-prompt-path"],
+  llmModel: values["llm-model"],
+})

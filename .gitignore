@@ -1,0 +1,20 @@
+# Local data directories (preserved from v1)
+/data*
+/work*
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# VS Code extension packages
+*.vsix
+
+# OS files
+.DS_Store
+
+# Editor
+.vscode/
+!.vscode/extensions.json

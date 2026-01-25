@@ -1,0 +1,23 @@
+{
+  "name": "@jonmagic/scripts-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "archive-meeting": "./bin/archive-meeting"
+  },
+  "scripts": {
+    "build": "bunx tsc -p tsconfig.json",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@jonmagic/scripts-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "@types/node": "^22.10.7",
+    "typescript": "^5.8.2"
+  }
+}
