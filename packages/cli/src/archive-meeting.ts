@@ -338,7 +338,7 @@ function updateMeetingNotesFile(options: {
  * Extract canonical name from selection
  */
 function extractCanonicalName(selection: string): string {
-  let cleaned = selection.replace(/^Meeting Notes\//, "")
+  const cleaned = selection.replace(/^Meeting Notes\//, "")
 
   // Handle wikilinks
   const wikilinkMatch = cleaned.match(/\[\[(.+?)(?:\|.+?)?\]\]/)
