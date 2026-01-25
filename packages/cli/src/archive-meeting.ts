@@ -240,7 +240,7 @@ async function selectMeetingNotesSection(
   const content = fs.readFileSync(weeklyNotesFile, "utf-8")
 
   // Extract Schedule section
-  const scheduleMatch = content.match(/^## Schedule\n([\s\S]*?)(?=^## |\Z)/m)
+  const scheduleMatch = content.match(/^## Schedule\n([\s\S]*?)(?=^## |$)/m)
   if (!scheduleMatch?.[1]) {
     throw new Error("Could not find '## Schedule' section in Weekly Notes")
   }
