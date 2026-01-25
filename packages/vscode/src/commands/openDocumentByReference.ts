@@ -54,7 +54,7 @@ export async function openDocumentByReference(
   try {
     const doc = await vscode.workspace.openTextDocument(absolutePath)
     await vscode.window.showTextDocument(doc)
-  } catch (err) {
+  } catch {
     vscode.window.showErrorMessage(`Could not open file: ${resolvedPath}`)
   }
 }

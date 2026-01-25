@@ -13,7 +13,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { extractWikilinks, pathToDisplayPath, UID_PREFIX, buildUidIndex, type UidIndex, type FileInfo } from "../wikilinks/index.js"
-import { extractUid } from "../frontmatter/index.js"
 
 interface LinkChange {
   file: string

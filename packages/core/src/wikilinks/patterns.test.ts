@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
   WIKILINK_REGEX,
-  UID_PREFIX,
   parseWikilink,
   formatWikilink,
   extractWikilinks,

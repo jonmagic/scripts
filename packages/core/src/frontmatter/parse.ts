@@ -60,9 +60,6 @@ export function parseFrontmatter(content: string): ParseResult {
 
   // Simple YAML parsing for our known structure
   const frontmatter: ParsedFrontmatter = {}
-  let currentKey: string | null = null
-  let inArray = false
-  let arrayKey: string | null = null
   let inLinks = false
 
   for (const line of frontmatterLines) {

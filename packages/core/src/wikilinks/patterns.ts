@@ -93,7 +93,7 @@ export function extractWikilinks(content: string): ParsedWikilink[] {
 
   let match: RegExpExecArray | null
   while ((match = regex.exec(content)) !== null) {
-    const [full, target, label] = match
+    const [full] = match
     links.push(parseWikilink(full))
   }
 

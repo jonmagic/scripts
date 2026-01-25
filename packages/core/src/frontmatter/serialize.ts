@@ -1,7 +1,5 @@
 // Frontmatter serialization utilities for Brain markdown files.
 
-import type { ParsedFrontmatter } from "./parse.js"
-
 export interface FrontmatterData {
   uid: string
   type: string
