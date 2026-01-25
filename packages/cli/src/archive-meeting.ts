@@ -177,7 +177,7 @@ async function generateExecutiveSummary(
   const input = `${promptContent}\n\n${transcript}`
 
   console.log("Generating executive summary with copilot...")
-  const summary = await runCommand("copilot", ["-q"], input)
+  const summary = await runCommand("copilot", ["-p", input, "--allow-all-tools"])
   fs.writeFileSync(summaryFile, summary)
   console.log(`Executive summary saved to: ${summaryFile}`)
 }
@@ -194,7 +194,7 @@ async function generateDetailedNotes(
   const input = `${promptContent}\n\n${transcript}`
 
   console.log("Generating detailed notes with copilot...")
-  return await runCommand("copilot", ["-q"], input)
+  return await runCommand("copilot", ["-p", input, "--allow-all-tools"])
 }
 
 /**
@@ -250,7 +250,7 @@ EXECUTIVE SUMMARY:
 ${executiveSummary}`
 
   console.log("Suggesting Meeting Notes section with copilot...")
-  const sorted = await runCommand("copilot", ["-q"], prompt)
+  const sorted = await runCommand("copilot", ["-p", prompt, "--allow-all-tools"])
 
   const sortedOptions = sorted
     .split("\n")

@@ -96,7 +96,7 @@ full_prompt="$prompt_content
 $context"
 
 # Run copilot to generate PR content
-pr_content=$(echo "$full_prompt" | copilot -q 2>/dev/null) || {
+pr_content=$(copilot -p "$full_prompt" --allow-all-tools 2>/dev/null) || {
   echo "Error: Failed to generate PR content with copilot" >&2
   exit 1
 }
