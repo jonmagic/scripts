@@ -53,7 +53,7 @@ export class WorkspaceCache {
 
     // Build initial cache
     for (const uri of mdFiles) {
-      await this.addFile(uri.fsPath)
+      this.addFile(uri.fsPath)
     }
 
     // Rebuild indices
@@ -145,7 +145,7 @@ export class WorkspaceCache {
 
   // Private methods
 
-  private async addFile(absolutePath: string): Promise<void> {
+  private addFile(absolutePath: string): void {
     if (!this.workspaceRoot) return
 
     try {
@@ -209,14 +209,14 @@ export class WorkspaceCache {
     }
   }
 
-  private async onFileCreated(uri: vscode.Uri): Promise<void> {
-    await this.addFile(uri.fsPath)
+  private onFileCreated(uri: vscode.Uri): void {
+    this.addFile(uri.fsPath)
     this.rebuildUidIndex()
     this.rebuildBacklinks()
   }
 
-  private async onFileChanged(uri: vscode.Uri): Promise<void> {
-    await this.addFile(uri.fsPath)
+  private onFileChanged(uri: vscode.Uri): void {
+    this.addFile(uri.fsPath)
     this.rebuildUidIndex()
     this.rebuildBacklinks()
   }

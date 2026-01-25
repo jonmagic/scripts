@@ -110,7 +110,7 @@ export async function addFrontmatter(): Promise<void> {
 
   // Now find and update all links pointing to this file
   const displayPath = pathToDisplayPath(relativePath)
-  const linksUpdated = await updateLinksToFile(workspaceRoot, relativePath, displayPath, uid)
+  const linksUpdated = updateLinksToFile(workspaceRoot, relativePath, displayPath, uid)
 
   if (linksUpdated > 0) {
     vscode.window.showInformationMessage(
@@ -123,12 +123,12 @@ export async function addFrontmatter(): Promise<void> {
   }
 }
 
-async function updateLinksToFile(
+function updateLinksToFile(
   workspaceRoot: string,
   targetRelativePath: string,
   displayPath: string,
   uid: string
-): Promise<number> {
+): number {
   const cache = getWorkspaceCache()
   const allFiles = cache.getAllFiles()
   let totalUpdated = 0

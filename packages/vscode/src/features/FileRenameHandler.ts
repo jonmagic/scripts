@@ -14,9 +14,9 @@ import { pathToDisplayPath } from "@jonmagic/scripts-core"
 export function registerFileRenameHandler(
   context: vscode.ExtensionContext
 ): void {
-  const disposable = vscode.workspace.onDidRenameFiles(async (event) => {
+  const disposable = vscode.workspace.onDidRenameFiles((event) => {
     for (const { oldUri, newUri } of event.files) {
-      await handleFileRename(oldUri, newUri)
+      handleFileRename(oldUri, newUri)
     }
   })
 
@@ -26,10 +26,10 @@ export function registerFileRenameHandler(
 /**
  * Handle a single file rename event.
  */
-async function handleFileRename(
+function handleFileRename(
   oldUri: vscode.Uri,
   newUri: vscode.Uri
-): Promise<void> {
+): void {
   // Only process markdown files
   if (!oldUri.fsPath.endsWith(".md")) {
     return

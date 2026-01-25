@@ -115,9 +115,9 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
     return items
   }
 
-  async resolveCompletionItem(
+  resolveCompletionItem(
     item: vscode.CompletionItem
-  ): Promise<vscode.CompletionItem> {
+  ): vscode.CompletionItem {
     const file = (item as CompletionItemWithFile).cachedFile
     if (!file) return item
 
