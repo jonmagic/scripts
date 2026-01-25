@@ -73,13 +73,13 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 - [Bun](https://bun.sh) - JavaScript runtime (installed by setup)
 - [gh](https://cli.github.com) - GitHub CLI
 - [copilot](https://githubnext.com/projects/copilot-cli) - GitHub Copilot CLI
-- [fzf](https://github.com/junegunn/fzf) - Fuzzy finder
 
 ### Available Commands
 
 | Command | Description | Requirements |
 |---------|-------------|--------------|
-| `archive-meeting` | Archive meeting transcripts with AI-generated summaries | bun, copilot, fzf |
+| `archive-meeting` | Archive a meeting transcript with AI-generated summaries | bun, copilot |
+| `list-recent-meetings` | List recent Zoom and Teams meeting inputs as JSON | bun |
 | `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |
 | `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
 
