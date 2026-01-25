@@ -33,7 +33,7 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "watch": "node ./scripts/build.mjs --watch",
-    "package": "bun @vscode/vsce package --no-dependencies",
+    "package": "bunx @vscode/vsce package --no-dependencies --skip-license",
     "typecheck": "bun tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
