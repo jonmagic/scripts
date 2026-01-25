@@ -132,22 +132,35 @@ function findLatestWeeklyNotes(brainDir: string): string | null {
 }
 
 /**
- * Extract meeting note targets from weekly notes
+ * Extract meeting note entries from weekly notes (full paths with dates)
  */
-function extractMeetingTargets(weeklyNotesPath: string): string[] {
+function extractMeetingEntries(weeklyNotesPath: string): { display: string; target: string }[] {
   const content = fs.readFileSync(weeklyNotesPath, "utf-8")
 
   // Match wikilinks like [[Meeting Notes/briangreenhill/2026-01-20/01]]
-  // Extract just the target name (e.g., "briangreenhill")
-  const wikiLinkRe = /\[\[Meeting Notes\/([^/\]]+)/g
-  const targets = new Set<string>()
+  // Extract full path after "Meeting Notes/"
+  const wikiLinkRe = /\[\[Meeting Notes\/([^\]]+)\]\]/g
+  const entries: { display: string; target: string }[] = []
+  const seen = new Set<string>()
 
   let match
   while ((match = wikiLinkRe.exec(content)) !== null) {
-    targets.add(match[1]!)
+    const fullPath = match[1]!
+    if (seen.has(fullPath)) continue
+    seen.add(fullPath)
+
+    // Extract target name (first path segment)
+    const target = fullPath.split("/")[0]!
+    entries.push({ display: fullPath, target })
   }
 
-  return Array.from(targets).sort()
+  // Sort by date (second segment) descending, then by target
+  return entries.sort((a, b) => {
+    const dateA = a.display.split("/")[1] || ""
+    const dateB = b.display.split("/")[1] || ""
+    if (dateB !== dateA) return dateB.localeCompare(dateA)
+    return a.target.localeCompare(b.target)
+  })
 }
 
 /**
@@ -162,14 +175,24 @@ export async function selectMeetingNotesTarget(
     throw new Error("No weekly notes found")
   }
 
-  const targets = extractMeetingTargets(weeklyNotesPath)
+  const entries = extractMeetingEntries(weeklyNotesPath)
 
-  if (targets.length === 0) {
+  if (entries.length === 0) {
     throw new Error("No meeting note targets found in weekly notes")
   }
 
-  console.log(`Found ${targets.length} meeting targets in ${path.basename(weeklyNotesPath)}`)
-  return await fzfSelect(targets, "Select meeting notes target: ")
+  console.log(`Found ${entries.length} meetings in ${path.basename(weeklyNotesPath)}`)
+
+  const displayOptions = entries.map((e) => e.display)
+  const selection = await fzfSelect(displayOptions, "Select meeting: ")
+
+  // Find the matching entry and return just the target name
+  const entry = entries.find((e) => e.display === selection)
+  if (!entry) {
+    throw new Error("Selection not found")
+  }
+
+  return entry.target
 }
 
 /**
