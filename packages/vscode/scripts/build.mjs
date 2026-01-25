@@ -23,7 +23,6 @@ const options = {
 if (watch) {
   const ctx = await esbuild.context(options)
   await ctx.watch()
-  // eslint-disable-next-line no-console
   console.log("Watching…")
 } else {
   await esbuild.build(options)
