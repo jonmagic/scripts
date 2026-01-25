@@ -431,61 +431,36 @@ function ensureBullets(text: string): string {
 
 /**
  * Update Meeting Notes file
+ * Path: Meeting Notes/<target>/<date>/<number>.md with frontmatter
  */
 function updateMeetingNotes(options: {
   brainDir: string
   target: string
   date: string
+  fileNumber: string
   transcriptLink: string
   summaryLink: string
   detailedNotes: string
 }): string {
-  const { brainDir, target, date, transcriptLink, summaryLink, detailedNotes } =
+  const { brainDir, target, date, fileNumber, transcriptLink, summaryLink, detailedNotes } =
     options
 
-  const meetingNotesFile = path.join(brainDir, "Meeting Notes", `${target}.md`)
-  const header = `## ${date}`
+  // Path: Meeting Notes/<target>/<date>/<number>.md
+  const meetingNotesDir = path.join(brainDir, "Meeting Notes", target, date)
+  const meetingNotesFile = path.join(meetingNotesDir, `${fileNumber}.md`)
+
+  fs.mkdirSync(meetingNotesDir, { recursive: true })
+
+  // Build content with frontmatter
+  const frontmatter = createFrontmatter("meeting.note", date)
 
   const detailed = ensureBullets(detailedNotes)
-  let block = `- ${transcriptLink}\n- ${summaryLink}\n`
-  if (detailed) block += `${detailed}\n`
-  block += "\n"
+  let content = `## ${date}\n`
+  content += `- ${transcriptLink}\n- ${summaryLink}\n`
+  if (detailed) content += `${detailed}\n`
 
-  if (!fs.existsSync(meetingNotesFile)) {
-    fs.mkdirSync(path.dirname(meetingNotesFile), { recursive: true })
-    fs.writeFileSync(meetingNotesFile, `${header}\n\n${block}`, "utf-8")
-    return `Created: ${meetingNotesFile}`
-  }
-
-  let text = fs.readFileSync(meetingNotesFile, "utf-8")
-
-  // Find all date headers
-  const dateHeaderRe = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/gm
-  const matches: { date: string; start: number }[] = []
-  let match
-  while ((match = dateHeaderRe.exec(text)) !== null) {
-    matches.push({ date: match[1]!, start: match.index })
-  }
-
-  const targetIdx = matches.findIndex((m) => m.date === date)
-
-  if (targetIdx === -1) {
-    // Prepend new section
-    text = `${header}\n\n${block}${text}`
-  } else {
-    // Insert at end of target section (before next header or end)
-    const nextHeaderStart =
-      targetIdx + 1 < matches.length ? matches[targetIdx + 1]!.start : text.length
-
-    const before = text.slice(0, nextHeaderStart)
-    const after = text.slice(nextHeaderStart)
-
-    const beforeWithNewline = before.endsWith("\n") ? before : before + "\n"
-    text = beforeWithNewline + block + after
-  }
-
-  fs.writeFileSync(meetingNotesFile, text, "utf-8")
-  return `Updated: ${meetingNotesFile}`
+  fs.writeFileSync(meetingNotesFile, `${frontmatter}\n\n${content}`, "utf-8")
+  return `Created: ${meetingNotesFile}`
 }
 
 /**
@@ -737,8 +712,8 @@ export async function archiveMeeting(
   console.log("\nGenerating meeting notes...")
   const meetingNotes = await callCopilot(transcriptMd, detailedNotesPromptPath)
 
-  // Step 6: Update meeting notes file
-  console.log("\nUpdating meeting notes...")
+  // Step 6: Create meeting notes file
+  console.log("\nCreating meeting notes...")
   const transcriptLink = `[[Transcripts/${meetingDate}/${nextNumStr}|Transcript]]`
   const summaryLink = `[[Executive Summaries/${meetingDate}/${nextNumStr}|Executive Summary]]`
 
@@ -746,6 +721,7 @@ export async function archiveMeeting(
     brainDir,
     target: meetingNotesTarget,
     date: meetingDate,
+    fileNumber: nextNumStr,
     transcriptLink,
     summaryLink,
     detailedNotes: meetingNotes,
@@ -763,5 +739,5 @@ export async function archiveMeeting(
   console.log("Archive complete!")
   console.log(`  Transcript:        ${transcriptPath}`)
   console.log(`  Executive Summary: ${execSummaryPath}`)
-  console.log(`  Meeting Notes:     Meeting Notes/${meetingNotesTarget}.md`)
+  console.log(`  Meeting Notes:     Meeting Notes/${meetingNotesTarget}/${meetingDate}/${nextNumStr}.md`)
 }
