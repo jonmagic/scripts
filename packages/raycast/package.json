@@ -2,7 +2,7 @@
   "name": "jonmagic-scripts-raycast",
   "title": "Jonmagic Scripts",
   "description": "Create Daily Project notes in my Brain repo",
-  "icon": "extension-icon.png",
+  "icon": "assets/extension-icon.png",
   "author": "jonmagic",
   "license": "MIT",
   "categories": ["Productivity"],
@@ -23,8 +23,8 @@
     "build": "ray build",
     "lint": "ray lint",
     "fix-lint": "ray lint --fix",
-    "publish": "npx @raycast/api@latest publish",
-    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+    "publish": "bun @raycast/api@latest publish",
+    "typecheck": "bun tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@jonmagic/scripts-core": "workspace:*",

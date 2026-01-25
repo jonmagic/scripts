@@ -14,9 +14,9 @@
     "build:core": "cd packages/core && bun run build",
     "build:cli": "cd packages/cli && bun run build",
     "build:vscode": "cd packages/vscode && bun run build",
-    "lint": "bunx eslint \"**/*.{ts,tsx,js,mjs,cjs}\"",
+    "lint": "bun eslint \"**/*.{ts,tsx,js,mjs,cjs}\"",
     "test": "bun test",
-    "typecheck": "bunx tsc -b"
+    "typecheck": "bun tsc -b"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",

@@ -2,6 +2,8 @@
 #
 # Setup script for jonmagic/scripts
 # Installs Bun (if needed), dependencies, and builds all packages.
+#
+# This project uses Bun exclusively. Do not use npm, yarn, or pnpm.
 
 set -euo pipefail
 
@@ -26,8 +28,14 @@ else
   echo "==> Bun found: $(bun --version)"
 fi
 
+# Ensure no npm artifacts exist
+if [[ -f "package-lock.json" ]]; then
+  echo "==> Removing package-lock.json (this project uses bun.lock only)"
+  rm package-lock.json
+fi
+
 # Install dependencies
-echo "==> Installing dependencies..."
+echo "==> Installing dependencies with bun..."
 bun install
 
 # Build all packages
@@ -42,7 +50,7 @@ echo "  • Add CLI tools to your PATH:"
 echo "    export PATH=\"$ROOT_DIR/packages/cli/bin:\$PATH\""
 echo ""
 echo "  • Install VS Code extension:"
-echo "    scripts/install-vscode-extension.sh"
+echo "    bin/install-vscode-extension"
 echo ""
 echo "  • Install Raycast extension:"
-echo "    scripts/install-raycast-extension.sh"
+echo "    bin/install-raycast-extension"

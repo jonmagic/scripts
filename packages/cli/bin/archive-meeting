@@ -10,7 +10,7 @@
  */
 
 import { parseArgs } from "node:util"
-import { archiveMeeting } from "../dist/archive-meeting.js"
+import { archiveMeeting } from "../src/archive-meeting.js"
 
 const { values } = parseArgs({
   options: {

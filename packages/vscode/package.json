@@ -33,8 +33,8 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "watch": "node ./scripts/build.mjs --watch",
-    "package": "bunx @vscode/vsce package --no-dependencies",
-    "typecheck": "bunx tsc -p tsconfig.json --noEmit"
+    "package": "bun @vscode/vsce package --no-dependencies",
+    "typecheck": "bun tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@jonmagic/scripts-core": "workspace:*"

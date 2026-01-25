@@ -9,6 +9,11 @@ dist/
 # Dependencies
 node_modules/
 
+# Lock files (bun.lock is the only allowed lock file)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
 # VS Code extension packages
 *.vsix
 
