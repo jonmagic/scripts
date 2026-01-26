@@ -740,9 +740,12 @@ export async function archiveMeeting(
   )
   console.log(`Created: ${transcriptPath}`)
 
-  // Step 4: Generate executive summary via copilot
-  console.log("\nGenerating executive summary...")
-  const execSummary = await callCopilot(transcriptMd, executiveSummaryPromptPath)
+  // Step 4: Generate executive summary and meeting notes concurrently
+  console.log("\nGenerating executive summary and meeting notes...")
+  const [execSummary, meetingNotes] = await Promise.all([
+    callCopilot(transcriptMd, executiveSummaryPromptPath),
+    callCopilot(transcriptMd, detailedNotesPromptPath),
+  ])
 
   fs.mkdirSync(execSummariesDir, { recursive: true })
   const summaryFrontmatter = createFrontmatter("executive.summary", meetingDate)
@@ -752,10 +755,6 @@ export async function archiveMeeting(
     "utf-8"
   )
   console.log(`Created: ${execSummaryPath}`)
-
-  // Step 5: Generate meeting notes via copilot
-  console.log("\nGenerating meeting notes...")
-  const meetingNotes = await callCopilot(transcriptMd, detailedNotesPromptPath)
 
   // Step 6: Create meeting notes file
   console.log("\nCreating meeting notes...")
