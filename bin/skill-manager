@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper for skill-manager CLI (alias: sm)
+exec "$(dirname "$0")/../packages/cli/bin/skill-manager" "$@"

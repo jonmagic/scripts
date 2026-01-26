@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# skill-manager (sm): Manage skill sources and installations
+#
+# Usage:
+#   sm source add <name> <path|git>    Add a skill source
+#   sm source list                     List configured sources
+#   sm source remove <name>            Remove a source
+#   sm install <skill> [options]       Install a skill
+#   sm uninstall <skill> [options]     Uninstall a skill
+#   sm list                            List available skills
+#   sm list --installed                List installed skills
+#   sm doctor                          Check for issues
+
+# Resolve the directory of this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Try bun first, fall back to node
+if command -v bun &> /dev/null; then
+  exec bun "$SCRIPT_DIR/../dist/skill-manager-cli.js" "$@"
+else
+  exec node "$SCRIPT_DIR/../dist/skill-manager-cli.js" "$@"
+fi

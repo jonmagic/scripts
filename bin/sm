@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Alias for skill-manager
+exec "$(dirname "$0")/skill-manager" "$@"
