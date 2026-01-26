@@ -133,35 +133,28 @@ function findLatestWeeklyNotes(brainDir: string): string | null {
 }
 
 /**
- * Extract meeting note entries from weekly notes (full paths with dates)
+ * Extract pending meeting note entries from weekly notes ({{placeholders}})
  */
 function extractMeetingEntries(weeklyNotesPath: string): { display: string; target: string }[] {
   const content = fs.readFileSync(weeklyNotesPath, "utf-8")
 
-  // Match wikilinks like [[Meeting Notes/briangreenhill/2026-01-20/01]]
-  // Extract full path after "Meeting Notes/"
-  const wikiLinkRe = /\[\[Meeting Notes\/([^\]]+)\]\]/g
+  // Match pending placeholders like {{Meeting Notes/jonmagic}}
+  // Extract target name after "Meeting Notes/"
+  const placeholderRe = /\{\{Meeting Notes\/([^}]+)\}\}/g
   const entries: { display: string; target: string }[] = []
   const seen = new Set<string>()
 
   let match
-  while ((match = wikiLinkRe.exec(content)) !== null) {
-    const fullPath = match[1]!
-    if (seen.has(fullPath)) continue
-    seen.add(fullPath)
+  while ((match = placeholderRe.exec(content)) !== null) {
+    const target = match[1]!
+    if (seen.has(target)) continue
+    seen.add(target)
 
-    // Extract target name (first path segment)
-    const target = fullPath.split("/")[0]!
-    entries.push({ display: fullPath, target })
+    entries.push({ display: target, target })
   }
 
-  // Sort by date (second segment) descending, then by target
-  return entries.sort((a, b) => {
-    const dateA = a.display.split("/")[1] || ""
-    const dateB = b.display.split("/")[1] || ""
-    if (dateB !== dateA) return dateB.localeCompare(dateA)
-    return a.target.localeCompare(b.target)
-  })
+  // Sort alphabetically by target
+  return entries.sort((a, b) => a.target.localeCompare(b.target))
 }
 
 /**
@@ -609,14 +602,16 @@ function listZoomFolders(zoomDir: string, limit: number): MeetingCandidate[] {
 }
 
 /**
- * List recent Teams VTT files
+ * List recent Teams VTT/TXT files from Downloads
  */
 function listTeamsVtts(downloadsDir: string, limit: number): MeetingCandidate[] {
   if (!fs.existsSync(downloadsDir)) return []
 
   const candidates: MeetingCandidate[] = []
   for (const entry of fs.readdirSync(downloadsDir)) {
-    if (entry.startsWith(".") || !entry.toLowerCase().endsWith(".vtt")) continue
+    const lowerEntry = entry.toLowerCase()
+    if (entry.startsWith(".")) continue
+    if (!lowerEntry.endsWith(".vtt") && !lowerEntry.endsWith(".txt")) continue
     const entryPath = path.join(downloadsDir, entry)
     const stat = fs.statSync(entryPath)
     if (stat.isFile()) {
@@ -643,7 +638,7 @@ export function listRecentMeetings(
 ): { zoom: MeetingCandidate[]; teams_vtt: MeetingCandidate[] } | MeetingCandidate[] {
   const zoomDir = options.zoomDir || path.join(process.env.HOME || "", "Documents/Zoom")
   const downloadsDir = options.downloadsDir || path.join(process.env.HOME || "", "Downloads")
-  const limit = options.limit || 10
+  const limit = options.limit || 30
 
   const zoom = listZoomFolders(zoomDir, limit)
   const teams = listTeamsVtts(downloadsDir, limit)
