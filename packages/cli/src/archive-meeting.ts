@@ -53,7 +53,7 @@ async function fzfSelect(
   options: string[],
   prompt: string
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const proc = spawn("fzf", ["--prompt", prompt], {
       stdio: ["pipe", "pipe", "inherit"],
     })
@@ -68,7 +68,8 @@ async function fzfSelect(
       if (code === 0) {
         resolve(result.trim())
       } else {
-        reject(new Error("fzf selection cancelled"))
+        // User cancelled (Ctrl+C or Escape) - exit gracefully
+        process.exit(0)
       }
     })
 
@@ -203,7 +204,7 @@ async function runCommand(
   args: string[],
   input?: string
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     const proc = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
     })
