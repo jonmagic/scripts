@@ -9,6 +9,10 @@ export type CreateDailyProjectNoteOptions = {
   brainRoot?: string;
   /** Override date (local). Defaults to now. */
   date?: Date;
+  /** When true, add a link to this note in the current weekly note. */
+  updateWeeklyNote?: boolean;
+  /** Override weekly note path. If omitted, it is derived from date + brainRoot. */
+  weeklyNotePath?: string;
 }
 
 export type CreateDailyProjectNoteResult = {
@@ -16,6 +20,8 @@ export type CreateDailyProjectNoteResult = {
   dateFolder: string;
   filePath: string;
   number: number;
+  weeklyNotePath?: string;
+  weeklyNoteUpdated?: boolean;
 }
 
 function pad2(n: number): string {
@@ -59,6 +65,90 @@ export async function resolveBrainRoot(explicit?: string): Promise<string> {
       "Create the folder or set BRAIN_ROOT to the correct path."
     ].join("\n")
   )
+}
+
+const DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday"
+]
+
+function startOfWeekSunday(date: Date): Date {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - d.getDay())
+  return d
+}
+
+function formatRelativePath(filePath: string, root: string): string {
+  const rel = path.relative(root, filePath)
+  return rel.split(path.sep).join("/")
+}
+
+async function updateWeeklyNoteLink(options: {
+  brainRoot: string;
+  date: Date;
+  filePath: string;
+  weeklyNotePath?: string;
+}): Promise<{ path?: string; updated: boolean }> {
+  const weekStart = startOfWeekSunday(options.date)
+  const weeklyPath =
+    options.weeklyNotePath ??
+    path.join(
+      options.brainRoot,
+      "Weekly Notes",
+      `Week of ${formatLocalDateYYYYMMDD(weekStart)}.md`
+    )
+
+  try {
+    await fs.stat(weeklyPath)
+  } catch {
+    return { path: weeklyPath, updated: false }
+  }
+
+  const dayName = DAY_NAMES[options.date.getDay()]
+  const heading = `## ${dayName}`
+  const relativePath = formatRelativePath(options.filePath, options.brainRoot)
+  const link = `- [[${relativePath}]]`
+
+  const raw = await fs.readFile(weeklyPath, "utf8")
+  const lines = raw.split(/\r?\n/)
+
+  const headingIndex = lines.findIndex((line) => line.trim() === heading)
+  if (headingIndex === -1) {
+    const randomNotesIndex = lines.findIndex(
+      (line) => line.trim() === "## Random notes"
+    )
+    const insertIndex = randomNotesIndex === -1 ? lines.length : randomNotesIndex
+    lines.splice(insertIndex, 0, heading, link, "")
+  } else {
+    let sectionEndIndex = lines.length
+    for (let i = headingIndex + 1; i < lines.length; i += 1) {
+      if (lines[i].startsWith("## ")) {
+        sectionEndIndex = i
+        break
+      }
+    }
+
+    const alreadyPresent = lines
+      .slice(headingIndex + 1, sectionEndIndex)
+      .some((line) => line.trim() === link)
+
+    if (!alreadyPresent) {
+      let insertionPoint = headingIndex + 1
+      if (lines[insertionPoint]?.trim() === "") {
+        insertionPoint += 1
+      }
+      lines.splice(insertionPoint, 0, link)
+    }
+  }
+
+  await fs.writeFile(weeklyPath, lines.join("\n"))
+  return { path: weeklyPath, updated: true }
 }
 
 export function sanitizeTitleForFilename(title: string): string {
@@ -118,5 +208,25 @@ export async function createDailyProjectNote(
   const contents = `# ${title}\n\n`
   await fs.writeFile(filePath, contents, { flag: "wx" })
 
-  return { brainRoot, dateFolder, filePath, number }
+  let weeklyNotePath: string | undefined
+  let weeklyNoteUpdated: boolean | undefined
+  if (options.updateWeeklyNote !== false) {
+    const result = await updateWeeklyNoteLink({
+      brainRoot,
+      date,
+      filePath,
+      weeklyNotePath: options.weeklyNotePath
+    })
+    weeklyNotePath = result.path
+    weeklyNoteUpdated = result.updated
+  }
+
+  return {
+    brainRoot,
+    dateFolder,
+    filePath,
+    number,
+    weeklyNotePath,
+    weeklyNoteUpdated
+  }
 }
