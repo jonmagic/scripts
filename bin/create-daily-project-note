@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper for create-daily-project-note CLI
+exec "$(dirname "$0")/../packages/cli/bin/create-daily-project-note" "$@"
