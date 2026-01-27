@@ -4,3 +4,5 @@ export type {
   ListRecentMeetingsOptions,
   MeetingCandidate,
 } from "./archive-meeting.js"
+
+export { createDailyProjectNote } from "./create-daily-project-note.js"

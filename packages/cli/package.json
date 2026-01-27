@@ -9,7 +9,8 @@
     "archive-meeting": "./bin/archive-meeting",
     "list-recent-meetings": "./bin/list-recent-meetings",
     "skill-manager": "./bin/skill-manager",
-    "sm": "./bin/skill-manager"
+    "sm": "./bin/skill-manager",
+    "create-daily-project-note": "./bin/create-daily-project-note"
   },
   "scripts": {
     "build": "bun tsc -p tsconfig.json",

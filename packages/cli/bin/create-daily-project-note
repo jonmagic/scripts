@@ -1,0 +1,55 @@
+#!/usr/bin/env bun
+/**
+ * create-daily-project-note: Create a daily project note (and link it in the weekly note).
+ *
+ * Usage:
+ *   create-daily-project-note "title" [brain_root]
+ *   create-daily-project-note --title "title" [--brain-root PATH]
+ */
+
+import { parseArgs } from "node:util"
+import { runCreateDailyProjectNote } from "../src/create-daily-project-note.js"
+
+const { values, positionals } = parseArgs({
+  options: {
+    title: { type: "string" },
+    "brain-root": { type: "string" },
+    "weekly-note-path": { type: "string" },
+    "no-weekly-note": { type: "boolean" },
+    help: { type: "boolean", short: "h" },
+  },
+  allowPositionals: true,
+})
+
+if (values.help) {
+  console.log(`
+Usage: create-daily-project-note "title" [brain_root]
+       create-daily-project-note --title "title" [--brain-root PATH]
+
+Options:
+  --title "title"            Title for the new note (required if not positional)
+  --brain-root PATH          Override Brain root directory
+  --weekly-note-path PATH    Override the weekly note path
+  --no-weekly-note           Skip linking into the weekly note
+  -h, --help                 Show this help message
+`)
+  process.exit(0)
+}
+
+const positionalTitle = positionals[0]
+const positionalBrainRoot = positionals[1]
+const title = values.title ?? positionalTitle
+
+if (!title?.trim()) {
+  console.error("Missing title. Use --help for usage information.")
+  process.exit(1)
+}
+
+const filePath = await runCreateDailyProjectNote({
+  title,
+  brainRoot: values["brain-root"] ?? positionalBrainRoot,
+  updateWeeklyNote: values["no-weekly-note"] ? false : undefined,
+  weeklyNotePath: values["weekly-note-path"],
+})
+
+console.log(filePath)
