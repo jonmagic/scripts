@@ -60,6 +60,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           vscode.Uri.file(result.filePath)
         )
         await vscode.window.showTextDocument(doc, { preview: false })
+        if (result.weeklyNoteUpdated === false && result.weeklyNotePath) {
+          await vscode.window.showWarningMessage(
+            `Weekly note not updated: ${result.weeklyNotePath}`
+          )
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         await vscode.window.showErrorMessage(message)

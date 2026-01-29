@@ -9,7 +9,7 @@ export type CreateDailyProjectNoteCliOptions = {
 
 export async function runCreateDailyProjectNote(
   options: CreateDailyProjectNoteCliOptions
-): Promise<string> {
+): Promise<ReturnType<typeof createDailyProjectNote>> {
   const result = await createDailyProjectNote({
     title: options.title,
     brainRoot: options.brainRoot,
@@ -17,5 +17,5 @@ export async function runCreateDailyProjectNote(
     weeklyNotePath: options.weeklyNotePath,
   })
 
-  return result.filePath
+  return result
 }

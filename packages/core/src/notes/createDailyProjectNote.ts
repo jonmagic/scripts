@@ -94,7 +94,7 @@ async function updateWeeklyNoteLink(options: {
   date: Date;
   filePath: string;
   weeklyNotePath?: string;
-}): Promise<{ path?: string; updated: boolean }> {
+}): Promise<{ path: string; updated: boolean }> {
   const weekStart = startOfWeekSunday(options.date)
   const weeklyPath =
     options.weeklyNotePath ??
@@ -128,7 +128,8 @@ async function updateWeeklyNoteLink(options: {
   } else {
     let sectionEndIndex = lines.length
     for (let i = headingIndex + 1; i < lines.length; i += 1) {
-      if (lines[i].startsWith("## ")) {
+      const line = lines[i] ?? ""
+      if (line.startsWith("## ")) {
         sectionEndIndex = i
         break
       }
@@ -211,22 +212,30 @@ export async function createDailyProjectNote(
   let weeklyNotePath: string | undefined
   let weeklyNoteUpdated: boolean | undefined
   if (options.updateWeeklyNote !== false) {
-    const result = await updateWeeklyNoteLink({
+    const updateOptions = {
       brainRoot,
       date,
       filePath,
-      weeklyNotePath: options.weeklyNotePath
-    })
+      ...(options.weeklyNotePath ? { weeklyNotePath: options.weeklyNotePath } : {})
+    }
+    const result = await updateWeeklyNoteLink(updateOptions)
     weeklyNotePath = result.path
     weeklyNoteUpdated = result.updated
   }
 
-  return {
+  const result: CreateDailyProjectNoteResult = {
     brainRoot,
     dateFolder,
     filePath,
-    number,
-    weeklyNotePath,
-    weeklyNoteUpdated
+    number
   }
+
+  if (weeklyNotePath) {
+    result.weeklyNotePath = weeklyNotePath
+  }
+  if (weeklyNoteUpdated !== undefined) {
+    result.weeklyNoteUpdated = weeklyNoteUpdated
+  }
+
+  return result
 }

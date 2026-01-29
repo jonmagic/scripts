@@ -45,11 +45,20 @@ if (!title?.trim()) {
   process.exit(1)
 }
 
-const filePath = await runCreateDailyProjectNote({
+const result = await runCreateDailyProjectNote({
   title,
   brainRoot: values["brain-root"] ?? positionalBrainRoot,
   updateWeeklyNote: values["no-weekly-note"] ? false : undefined,
   weeklyNotePath: values["weekly-note-path"],
 })
 
-console.log(filePath)
+const weeklyNoteInfo = result as {
+  weeklyNoteUpdated?: boolean
+  weeklyNotePath?: string
+}
+
+if (weeklyNoteInfo.weeklyNoteUpdated === false && weeklyNoteInfo.weeklyNotePath) {
+  console.error(`Weekly note not updated: ${weeklyNoteInfo.weeklyNotePath}`)
+}
+
+console.log(result.filePath)
