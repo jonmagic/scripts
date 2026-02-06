@@ -27,8 +27,80 @@
       {
         "command": "jonmagic.scripts.addFrontmatter",
         "title": "Jonmagic: Add Frontmatter to Current File"
+      },
+      {
+        "command": "jonmagic.brain.previousWeek",
+        "title": "Brain: Previous Week",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "jonmagic.brain.nextWeek",
+        "title": "Brain: Next Week",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "jonmagic.brain.goToCurrentWeek",
+        "title": "Brain: Go to Current Week",
+        "icon": "$(home)"
+      },
+      {
+        "command": "jonmagic.brain.refresh",
+        "title": "Brain: Refresh",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Jonmagic Scripts",
+      "properties": {
+        "jonmagic.brain.path": {
+          "type": "string",
+          "default": "~/Brain",
+          "description": "Path to the Brain repository folder"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "brain-sidebar",
+          "title": "Brain",
+          "icon": "$(book)"
+        }
+      ]
+    },
+    "views": {
+      "brain-sidebar": [
+        {
+          "id": "brainWeekView",
+          "name": "This Week",
+          "contextualTitle": "Brain"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "jonmagic.brain.previousWeek",
+          "when": "view == brainWeekView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jonmagic.brain.nextWeek",
+          "when": "view == brainWeekView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "jonmagic.brain.goToCurrentWeek",
+          "when": "view == brainWeekView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "jonmagic.brain.refresh",
+          "when": "view == brainWeekView",
+          "group": "navigation@4"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",

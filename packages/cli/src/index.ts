@@ -5,4 +5,4 @@ export type {
   MeetingCandidate,
 } from "./archive-meeting.js"
 
-export { createDailyProjectNote } from "./create-daily-project-note.js"
+export { runCreateDailyProjectNote as createDailyProjectNote } from "./create-daily-project-note.js"

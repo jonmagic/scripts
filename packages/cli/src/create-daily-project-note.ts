@@ -10,12 +10,20 @@ export type CreateDailyProjectNoteCliOptions = {
 export async function runCreateDailyProjectNote(
   options: CreateDailyProjectNoteCliOptions
 ): Promise<ReturnType<typeof createDailyProjectNote>> {
-  const result = await createDailyProjectNote({
+  const createOptions: Parameters<typeof createDailyProjectNote>[0] = {
     title: options.title,
-    brainRoot: options.brainRoot,
-    updateWeeklyNote: options.updateWeeklyNote,
-    weeklyNotePath: options.weeklyNotePath,
-  })
+  }
+  if (options.brainRoot !== undefined) {
+    createOptions.brainRoot = options.brainRoot
+  }
+  if (options.updateWeeklyNote !== undefined) {
+    createOptions.updateWeeklyNote = options.updateWeeklyNote
+  }
+  if (options.weeklyNotePath !== undefined) {
+    createOptions.weeklyNotePath = options.weeklyNotePath
+  }
+
+  const result = await createDailyProjectNote(createOptions)
 
   return result
 }

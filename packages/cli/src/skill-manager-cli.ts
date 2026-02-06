@@ -95,7 +95,7 @@ if (command === "install") {
     process.exit(1)
   }
 
-  install(skillName, values.agent!, values.target!, values["project-dir"])
+  install(skillName, values.agent, values.target, values["project-dir"])
   process.exit(0)
 }
 

@@ -7,6 +7,7 @@ import { WikilinkCompletionProvider } from "./features/CompletionProvider"
 import { registerFileRenameHandler } from "./features/FileRenameHandler"
 import { registerOpenDocumentCommand } from "./commands/openDocumentByReference"
 import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
+import { BrainSidebarProvider } from "./sidebar/BrainSidebarProvider"
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Initialize workspace cache
@@ -39,6 +40,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register commands
   registerOpenDocumentCommand(context)
   registerAddFrontmatterCommand(context)
+
+  // Register Brain sidebar tree view
+  const brainSidebarProvider = new BrainSidebarProvider()
+  vscode.window.registerTreeDataProvider('brainWeekView', brainSidebarProvider)
+
+  // Register Brain navigation commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('jonmagic.brain.previousWeek', () => brainSidebarProvider.previousWeek()),
+    vscode.commands.registerCommand('jonmagic.brain.nextWeek', () => brainSidebarProvider.nextWeek()),
+    vscode.commands.registerCommand('jonmagic.brain.goToCurrentWeek', () => brainSidebarProvider.goToCurrentWeek()),
+    vscode.commands.registerCommand('jonmagic.brain.refresh', () => brainSidebarProvider.refresh())
+  )
+
+  // Watch for file changes in Brain folder to auto-refresh sidebar
+  const brainPath = vscode.workspace.getConfiguration('jonmagic.brain').get<string>('path', '~/Brain').replace(/^~/, process.env.HOME || '')
+  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(brainPath, '**/*.md'))
+  watcher.onDidChange(() => brainSidebarProvider.refresh())
+  watcher.onDidCreate(() => brainSidebarProvider.refresh())
+  watcher.onDidDelete(() => brainSidebarProvider.refresh())
+  context.subscriptions.push(watcher)
 
   // Register daily project note command
   const createNoteDisposable = vscode.commands.registerCommand(
