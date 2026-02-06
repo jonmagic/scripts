@@ -42,6 +42,14 @@ function handleFileRename(
     return
   }
 
+  // Warn if cache not fully loaded
+  if (!cache.hasFullIndex()) {
+    vscode.window.showWarningMessage(
+      "Wikilink backlinks not updated - file index still loading. Try again in a moment."
+    )
+    return
+  }
+
   // Get paths without .md extension (how they appear in wikilinks)
   const oldRelativePath = path.relative(workspaceRoot, oldUri.fsPath)
   const newRelativePath = path.relative(workspaceRoot, newUri.fsPath)

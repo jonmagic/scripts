@@ -91,7 +91,7 @@ export function registerOpenDocumentCommand(
   context: vscode.ExtensionContext
 ): void {
   const disposable = vscode.commands.registerCommand(
-    "jonmagic.scripts.openDocumentByReference",
+    "jonmagic.openDocumentByReference",
     openDocumentByReference
   )
   context.subscriptions.push(disposable)

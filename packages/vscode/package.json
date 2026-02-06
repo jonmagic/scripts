@@ -21,38 +21,54 @@
   "contributes": {
     "commands": [
       {
-        "command": "jonmagic.scripts.createDailyProjectNote",
+        "command": "jonmagic.createDailyProjectNote",
         "title": "Jonmagic: Create Daily Project Note"
       },
       {
-        "command": "jonmagic.scripts.addFrontmatter",
+        "command": "jonmagic.addFrontmatter",
         "title": "Jonmagic: Add Frontmatter to Current File"
       },
       {
-        "command": "jonmagic.brain.previousWeek",
+        "command": "jonmagic.previousWeek",
         "title": "Brain: Previous Week",
         "icon": "$(arrow-left)"
       },
       {
-        "command": "jonmagic.brain.nextWeek",
+        "command": "jonmagic.nextWeek",
         "title": "Brain: Next Week",
         "icon": "$(arrow-right)"
       },
       {
-        "command": "jonmagic.brain.goToCurrentWeek",
+        "command": "jonmagic.goToCurrentWeek",
         "title": "Brain: Go to Current Week",
         "icon": "$(home)"
       },
       {
-        "command": "jonmagic.brain.refresh",
+        "command": "jonmagic.refresh",
         "title": "Brain: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "jonmagic.deleteFile",
+        "title": "Delete"
+      },
+      {
+        "command": "jonmagic.revealInFinder",
+        "title": "Reveal in Finder"
+      },
+      {
+        "command": "jonmagic.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "jonmagic.copyFileContents",
+        "title": "Copy File Contents"
       }
     ],
     "configuration": {
       "title": "Jonmagic Scripts",
       "properties": {
-        "jonmagic.brain.path": {
+        "jonmagic.brainPath": {
           "type": "string",
           "default": "~/Brain",
           "description": "Path to the Brain repository folder"
@@ -80,24 +96,46 @@
     "menus": {
       "view/title": [
         {
-          "command": "jonmagic.brain.previousWeek",
-          "when": "view == brainWeekView",
+          "command": "jonmagic.previousWeek",
+          "when": "view == brainWeekView && jonmagic.hasPreviousWeek",
           "group": "navigation@1"
         },
         {
-          "command": "jonmagic.brain.nextWeek",
-          "when": "view == brainWeekView",
+          "command": "jonmagic.nextWeek",
+          "when": "view == brainWeekView && jonmagic.hasNextWeek",
           "group": "navigation@2"
         },
         {
-          "command": "jonmagic.brain.goToCurrentWeek",
+          "command": "jonmagic.goToCurrentWeek",
           "when": "view == brainWeekView",
           "group": "navigation@3"
         },
         {
-          "command": "jonmagic.brain.refresh",
+          "command": "jonmagic.refresh",
           "when": "view == brainWeekView",
           "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "jonmagic.deleteFile",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "7_modification"
+        },
+        {
+          "command": "jonmagic.revealInFinder",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "6_copypath"
+        },
+        {
+          "command": "jonmagic.copyPath",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "6_copypath"
+        },
+        {
+          "command": "jonmagic.copyFileContents",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "6_copypath"
         }
       ]
     }

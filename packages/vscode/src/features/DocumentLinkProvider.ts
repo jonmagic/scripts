@@ -26,7 +26,7 @@ export class WikilinkDocumentLinkProvider implements vscode.DocumentLinkProvider
 
       // Create a command URI to handle the link
       const commandUri = vscode.Uri.parse(
-        `command:jonmagic.scripts.openDocumentByReference?${encodeURIComponent(
+        `command:jonmagic.openDocumentByReference?${encodeURIComponent(
           JSON.stringify({ reference: target })
         )}`
       )

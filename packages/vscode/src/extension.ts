@@ -10,9 +10,10 @@ import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
 import { BrainSidebarProvider } from "./sidebar/BrainSidebarProvider"
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  // Initialize workspace cache
+  // Initialize workspace cache - fast init blocks, full init runs in background
   const cache = getWorkspaceCache()
-  await cache.initialize()
+  await cache.initializeFast()
+  void cache.initializeFull()
 
   // Register document link provider for wikilinks
   const linkProvider = new WikilinkDocumentLinkProvider()
@@ -47,15 +48,48 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Register Brain navigation commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('jonmagic.brain.previousWeek', () => brainSidebarProvider.previousWeek()),
-    vscode.commands.registerCommand('jonmagic.brain.nextWeek', () => brainSidebarProvider.nextWeek()),
-    vscode.commands.registerCommand('jonmagic.brain.goToCurrentWeek', () => brainSidebarProvider.goToCurrentWeek()),
-    vscode.commands.registerCommand('jonmagic.brain.refresh', () => brainSidebarProvider.refresh())
+    vscode.commands.registerCommand('jonmagic.previousWeek', () => brainSidebarProvider.previousWeek()),
+    vscode.commands.registerCommand('jonmagic.nextWeek', () => brainSidebarProvider.nextWeek()),
+    vscode.commands.registerCommand('jonmagic.goToCurrentWeek', () => brainSidebarProvider.goToCurrentWeek()),
+    vscode.commands.registerCommand('jonmagic.refresh', () => brainSidebarProvider.refresh())
+  )
+
+  // Register Brain file context menu commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand('jonmagic.deleteFile', async (item: { resourceUri?: vscode.Uri }) => {
+      if (!item.resourceUri) return
+      const fileName = item.resourceUri.fsPath.split('/').pop() || 'this file'
+      const answer = await vscode.window.showWarningMessage(
+        `Delete "${fileName}"?`,
+        { modal: true },
+        'Delete'
+      )
+      if (answer === 'Delete') {
+        await vscode.workspace.fs.delete(item.resourceUri)
+        brainSidebarProvider.refresh()
+      }
+    }),
+    vscode.commands.registerCommand('jonmagic.revealInFinder', (item: { resourceUri?: vscode.Uri }) => {
+      if (!item.resourceUri) return
+      vscode.commands.executeCommand('revealFileInOS', item.resourceUri)
+    }),
+    vscode.commands.registerCommand('jonmagic.copyPath', async (item: { resourceUri?: vscode.Uri }) => {
+      if (!item.resourceUri) return
+      await vscode.env.clipboard.writeText(item.resourceUri.fsPath)
+      vscode.window.showInformationMessage('Path copied to clipboard')
+    }),
+    vscode.commands.registerCommand('jonmagic.copyFileContents', async (item: { resourceUri?: vscode.Uri }) => {
+      if (!item.resourceUri) return
+      const content = await vscode.workspace.fs.readFile(item.resourceUri)
+      await vscode.env.clipboard.writeText(Buffer.from(content).toString('utf-8'))
+      vscode.window.showInformationMessage('File contents copied to clipboard')
+    })
   )
 
   // Watch for file changes in Brain folder to auto-refresh sidebar
-  const brainPath = vscode.workspace.getConfiguration('jonmagic.brain').get<string>('path', '~/Brain').replace(/^~/, process.env.HOME || '')
-  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(brainPath, '**/*.md'))
+  const brainPath = vscode.workspace.getConfiguration('jonmagic').get<string>('brainPath', '~/Brain').replace(/^~/, process.env.HOME || '')
+  const brainUri = vscode.Uri.file(brainPath)
+  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(brainUri, '**/*.md'))
   watcher.onDidChange(() => brainSidebarProvider.refresh())
   watcher.onDidCreate(() => brainSidebarProvider.refresh())
   watcher.onDidDelete(() => brainSidebarProvider.refresh())
@@ -63,7 +97,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Register daily project note command
   const createNoteDisposable = vscode.commands.registerCommand(
-    "jonmagic.scripts.createDailyProjectNote",
+    "jonmagic.createDailyProjectNote",
     async () => {
       const title = await vscode.window.showInputBox({
         title: "Create Daily Project Note",

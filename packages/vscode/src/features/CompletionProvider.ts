@@ -66,22 +66,12 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
     const recentFiles = cache.getRecentFiles(10)
     const recentPaths = new Set(recentFiles.map((f) => f.relativePath))
 
-    // For pending placeholders, extract unique Meeting Notes targets
+    // For pending placeholders, use cached folder names (fast)
     if (isPending) {
-      const meetingTargets = new Set<string>()
+      const meetingTargets = cache.getMeetingNotesFolders()
 
-      for (const file of allFiles) {
-        // Match Meeting Notes/<target>/... paths
-        const match = file.relativePath.match(/^Meeting Notes\/([^/]+)\//)
-        if (match) {
-          meetingTargets.add(match[1]!)
-        }
-      }
-
-      const sortedTargets = Array.from(meetingTargets).sort()
-
-      for (let i = 0; i < sortedTargets.length; i++) {
-        const target = sortedTargets[i]!
+      for (let i = 0; i < meetingTargets.length; i++) {
+        const target = meetingTargets[i]!
         const displayPath = `Meeting Notes/${target}`
 
         // Filter by typed text

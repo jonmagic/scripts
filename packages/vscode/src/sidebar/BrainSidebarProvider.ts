@@ -47,6 +47,40 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
 
   constructor() {
     this.currentWeekStart = getWeekStart(new Date())
+    void this.updateNavigationContext()
+  }
+
+  /**
+   * Check if a weekly note exists for a given week start date
+   */
+  private async weeklyNoteExists(weekStart: Date): Promise<boolean> {
+    const brainPath = this.getBrainPath()
+    const weekLabel = getWeekLabel(weekStart)
+    const weeklyNotePath = path.join(brainPath, 'Weekly Notes', `${weekLabel}.md`)
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.file(weeklyNotePath))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Update context keys for navigation button visibility
+   */
+  private async updateNavigationContext(): Promise<void> {
+    const prev = new Date(this.currentWeekStart)
+    prev.setDate(prev.getDate() - 7)
+    const next = new Date(this.currentWeekStart)
+    next.setDate(next.getDate() + 7)
+
+    const [hasPrev, hasNext] = await Promise.all([
+      this.weeklyNoteExists(prev),
+      this.weeklyNoteExists(next)
+    ])
+
+    await vscode.commands.executeCommand('setContext', 'jonmagic.hasPreviousWeek', hasPrev)
+    await vscode.commands.executeCommand('setContext', 'jonmagic.hasNextWeek', hasNext)
   }
 
   /**
@@ -81,6 +115,8 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
    * Refresh the tree view
    */
   refresh(): void {
+    // Update navigation context for button visibility
+    void this.updateNavigationContext()
     // Refresh schedule from weekly note when tree refreshes
     void this.parseScheduleFromWeeklyNote().then(schedule => {
       this.scheduleByDate = schedule
@@ -92,8 +128,8 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
    * Get the configured Brain folder path
    */
   private getBrainPath(): string {
-    const config = vscode.workspace.getConfiguration('jonmagic.brain')
-    const configuredPath = config.get<string>('path', '~/Brain')
+    const config = vscode.workspace.getConfiguration('jonmagic')
+    const configuredPath = config.get<string>('brainPath', '~/Brain')
     // Expand ~ to home directory
     if (configuredPath.startsWith('~/')) {
       const homedir = process.env.HOME ?? ''
@@ -117,11 +153,11 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
       try {
         const folderUri = vscode.Uri.file(dayFolder)
         const entries = await vscode.workspace.fs.readDirectory(folderUri)
-        const mdFiles = entries
-          .filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.md'))
+        const files = entries
+          .filter(([name, type]) => type === vscode.FileType.File && !name.startsWith('.'))
           .sort((a, b) => a[0].localeCompare(b[0]))
 
-        if (mdFiles.length > 0) {
+        if (files.length > 0) {
           const dayName = getDayName(day)
           const dayHeader = new BrainSidebarItem(
             `${dayName} (${dateStr})`,
@@ -151,13 +187,13 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     try {
       const folderUri = vscode.Uri.file(dayFolder)
       const entries = await vscode.workspace.fs.readDirectory(folderUri)
-      const mdFiles = entries
-        .filter(([name, type]) => type === vscode.FileType.File && name.endsWith('.md'))
+      const files = entries
+        .filter(([name, type]) => type === vscode.FileType.File && !name.startsWith('.'))
         .sort((a, b) => a[0].localeCompare(b[0]))
 
-      for (const [name] of mdFiles) {
+      for (const [name] of files) {
         const fileUri = vscode.Uri.file(path.join(dayFolder, name))
-        const displayName = name.replace(/\.md$/, '')
+        const displayName = name.replace(/\.[^.]+$/, '')
         const item = new BrainSidebarItem(
           displayName,
           vscode.TreeItemCollapsibleState.None,
@@ -165,6 +201,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
           'file',
           fileUri
         )
+        item.contextValue = 'file'
         item.command = {
           command: 'vscode.open',
           title: 'Open File',
@@ -294,7 +331,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
           'warning'
         )
         errorItem.description = 'Configure in settings'
-        errorItem.tooltip = `Configure "jonmagic.brain.path" in VS Code settings to point to your Brain folder. Current path: ${brainPath}`
+        errorItem.tooltip = `Configure "jonmagic.brainPath" in VS Code settings to point to your Brain folder. Current path: ${brainPath}`
         return [errorItem]
       }
 
@@ -318,7 +355,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
       }
       items.push(weekHeader)
 
-      // Schedule section header (collapsible) - comes first
+      // Schedule section header (collapsible) - always show for current/past weeks with content
       this.scheduleByDate = await this.parseScheduleFromWeeklyNote()
       if (this.scheduleByDate.size > 0) {
         const scheduleSection = new BrainSidebarItem(
@@ -331,18 +368,15 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
         items.push(scheduleSection)
       }
 
-      // Daily Projects section header (collapsible)
-      const dailyProjectItems = await this.getDailyProjectItems()
-      if (dailyProjectItems.length > 0) {
-        const dailyProjectsSection = new BrainSidebarItem(
-          'Daily Projects',
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'section',
-          'folder-library'
-        )
-        dailyProjectsSection.contextValue = 'daily-projects-section'
-        items.push(dailyProjectsSection)
-      }
+      // Daily Projects section header - always show
+      const dailyProjectsSection = new BrainSidebarItem(
+        'Daily Projects',
+        vscode.TreeItemCollapsibleState.Collapsed,
+        'section',
+        'folder-library'
+      )
+      dailyProjectsSection.contextValue = 'daily-projects-section'
+      items.push(dailyProjectsSection)
 
       return items
     }

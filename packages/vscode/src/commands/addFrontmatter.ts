@@ -192,7 +192,7 @@ export function registerAddFrontmatterCommand(
   context: vscode.ExtensionContext
 ): void {
   const disposable = vscode.commands.registerCommand(
-    "jonmagic.scripts.addFrontmatter",
+    "jonmagic.addFrontmatter",
     addFrontmatter
   )
   context.subscriptions.push(disposable)
