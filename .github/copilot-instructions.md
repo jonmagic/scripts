@@ -11,75 +11,73 @@ This is a TypeScript monorepo for personal automation tools. It uses **Bun** exc
 - **ALWAYS** use `bun` commands, never `npm`, `yarn`, or `pnpm`
 - **NEVER** create or commit `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml`
 - The only lock file should be `bun.lock`
-- Use `bun install`, `bun run`, `bun test`, `bun tsc`, etc.
 
-### Development Workflow
+### Commands
 
 ```bash
-# Install dependencies
-bun install
-
-# Build all packages
-bun run build
-
-# Run tests
-bun test
-
-# Lint
-bun run lint
-
-# Type check
-bun run typecheck
+bun install            # Install dependencies
+bun run build          # Build all packages
+bun test               # Run all tests
+bun test path/to/file  # Run a single test file
+bun run lint           # Lint
+bun run typecheck      # Type check
 ```
 
 ### Before Committing
 
-Always run these checks before committing changes:
-
 ```bash
-bun install          # Ensure dependencies are up to date
-bun run typecheck    # Verify no TypeScript errors
-bun run lint         # Verify no linting errors
-bun test             # Verify tests pass
-bun run build        # Verify build succeeds
+bun run typecheck && bun run lint && bun test && bun run build
 ```
+
+### Commits
+
+- Use semantic commit format: `type(scope): description` (e.g., `feat(vscode): add sidebar cache`)
+- Common types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`
+- Scope is typically the package name: `core`, `cli`, `vscode`, `raycast`
+- **Commit after completing each logical unit of work** — don't accumulate multiple unrelated changes
+- When finishing a planned task successfully, commit the changes before marking complete
 
 ### Package Structure
 
-- `packages/core` - Shared TypeScript utilities (`@jonmagic/scripts-core`)
+- `packages/core` - Shared utilities (`@jonmagic/scripts-core`) — other packages depend on this
 - `packages/cli` - CLI tools (`@jonmagic/scripts-cli`)
-- `packages/vscode` - VS Code extension
+- `packages/vscode` - VS Code extension (uses `code-insiders`)
 - `packages/raycast` - Raycast extension
 
 ### Adding New CLI Commands
 
 1. Create implementation in `packages/cli/src/your-command.ts`
 2. Export from `packages/cli/src/index.ts`
-3. Create CLI entrypoint in `packages/cli/bin/your-command` with `#!/usr/bin/env bun` shebang
+3. Create CLI entrypoint in `packages/cli/bin/your-command`:
+   - Start with `#!/usr/bin/env bun` shebang
+   - Import from `../src/your-command.js` (bun resolves .ts)
+   - Use `node:util` `parseArgs` for argument parsing
 4. Make executable: `chmod +x packages/cli/bin/your-command`
-5. Import from `../src/your-command.js` (bun handles .ts resolution)
+5. Add to `bin` in `packages/cli/package.json`
 
 ### VS Code Extension
 
-```bash
-# Build and install
-bin/install-vscode-extension
+The extension (`packages/vscode`) provides utilities for a "Brain" markdown-based knowledge repo.
 
-# Package only
-cd packages/vscode && bun run package
+**Key components:**
+- **Sidebar** (`src/sidebar/`) - "Brain" activity bar with week-based tree view (`brainWeekView`) for navigating daily project notes
+- **Commands** (`src/commands/`) - Command palette actions like "Create Daily Project Note", "Add Frontmatter"
+- **Features** (`src/features/`) - Editor enhancements (wikilink support, etc.)
+
+**Development:**
+```bash
+cd packages/vscode
+bun run build              # Build with esbuild (bundles core dependency)
+bun run watch              # Watch mode for development
+bun run package            # Create .vsix file
+bin/install-vscode-extension  # Build, package, and install to code-insiders
 ```
 
-Uses `code-insiders` for installation.
-
-### Raycast Extension
-
-```bash
-# Install/link for development
-bin/install-raycast-extension
-
-# Or manually
-cd packages/raycast && ray develop
-```
+**Architecture notes:**
+- Uses esbuild to bundle (not tsc) — see `scripts/build.mjs`
+- Bundles `@jonmagic/scripts-core` into the extension
+- Targets `code-insiders` for installation
+- Config setting `jonmagic.brainPath` points to the Brain repo (default: `~/Brain`)
 
 ## Agent Skills
 
