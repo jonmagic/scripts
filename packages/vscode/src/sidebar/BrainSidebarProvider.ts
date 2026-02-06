@@ -19,7 +19,7 @@ export class BrainSidebarItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly itemType: 'week' | 'day' | 'file' | 'section' | 'meeting' | 'error' = 'week',
+    public readonly itemType: 'week' | 'day' | 'file' | 'meeting' | 'error' = 'week',
     icon?: string,
     resourceUri?: vscode.Uri
   ) {
@@ -83,9 +83,6 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     await vscode.commands.executeCommand('setContext', 'jonmagic.hasNextWeek', hasNext)
   }
 
-  /**
-   * Navigate to the previous week
-   */
   previousWeek(): void {
     const prev = new Date(this.currentWeekStart)
     prev.setDate(prev.getDate() - 7)
@@ -93,9 +90,6 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     this.refresh()
   }
 
-  /**
-   * Navigate to the next week
-   */
   nextWeek(): void {
     const next = new Date(this.currentWeekStart)
     next.setDate(next.getDate() + 7)
@@ -103,34 +97,22 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     this.refresh()
   }
 
-  /**
-   * Reset to the current week
-   */
   goToCurrentWeek(): void {
     this.currentWeekStart = getWeekStart(new Date())
     this.refresh()
   }
 
-  /**
-   * Refresh the tree view
-   */
   refresh(): void {
-    // Update navigation context for button visibility
     void this.updateNavigationContext()
-    // Refresh schedule from weekly note when tree refreshes
     void this.parseScheduleFromWeeklyNote().then(schedule => {
       this.scheduleByDate = schedule
     })
     this._onDidChangeTreeData.fire()
   }
 
-  /**
-   * Get the configured Brain folder path
-   */
   private getBrainPath(): string {
     const config = vscode.workspace.getConfiguration('jonmagic')
     const configuredPath = config.get<string>('brainPath', '~/Brain')
-    // Expand ~ to home directory
     if (configuredPath.startsWith('~/')) {
       const homedir = process.env.HOME ?? ''
       return path.join(homedir, configuredPath.slice(2))
@@ -139,45 +121,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
   }
 
   /**
-   * Get Daily Projects items for the current week
-   */
-  private async getDailyProjectItems(): Promise<BrainSidebarItem[]> {
-    const brainPath = this.getBrainPath()
-    const weekDays = getWeekDays(this.currentWeekStart)
-    const items: BrainSidebarItem[] = []
-
-    for (const day of weekDays) {
-      const dateStr = formatDate(day)
-      const dayFolder = path.join(brainPath, 'Daily Projects', dateStr)
-
-      try {
-        const folderUri = vscode.Uri.file(dayFolder)
-        const entries = await vscode.workspace.fs.readDirectory(folderUri)
-        const files = entries
-          .filter(([name, type]) => type === vscode.FileType.File && !name.startsWith('.'))
-          .sort((a, b) => a[0].localeCompare(b[0]))
-
-        if (files.length > 0) {
-          const dayName = getDayName(day)
-          const dayHeader = new BrainSidebarItem(
-            `${dayName} (${dateStr})`,
-            vscode.TreeItemCollapsibleState.Collapsed,
-            'day',
-            'folder'
-          )
-          dayHeader.contextValue = dateStr // Store date for getChildren lookup
-          items.push(dayHeader)
-        }
-      } catch {
-        // Folder doesn't exist, skip
-      }
-    }
-
-    return items
-  }
-
-  /**
-   * Get the files in a Daily Projects day folder
+   * Get daily project files for a specific date
    */
   private async getDayProjectFiles(dateStr: string): Promise<BrainSidebarItem[]> {
     const brainPath = this.getBrainPath()
@@ -198,7 +142,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
           displayName,
           vscode.TreeItemCollapsibleState.None,
           'file',
-          'file',
+          'file-text',
           fileUri
         )
         item.contextValue = 'file'
@@ -216,9 +160,6 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     return items
   }
 
-  /**
-   * Find the weekly note file for the current week
-   */
   private async getWeeklyNotePath(): Promise<string | undefined> {
     const brainPath = this.getBrainPath()
     const weekLabel = getWeekLabel(this.currentWeekStart)
@@ -233,7 +174,6 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
 
   /**
    * Parse schedule items from the weekly note
-   * Finds the "## Schedule" section and parses day headers with their schedule items
    */
   private async parseScheduleFromWeeklyNote(): Promise<Map<string, ScheduleItem[]>> {
     const weeklyNotePath = await this.getWeeklyNotePath()
@@ -244,11 +184,9 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     try {
       const content = await fs.promises.readFile(weeklyNotePath, 'utf-8')
 
-      // Find the Schedule section
       const scheduleMatch = content.match(/^## Schedule\s*$/m)
       if (!scheduleMatch || scheduleMatch.index === undefined) return new Map()
 
-      // Get content from Schedule section until next ## header or end
       const scheduleStart = scheduleMatch.index + scheduleMatch[0].length
       const nextSectionMatch = content.slice(scheduleStart).match(/^## /m)
       const scheduleContent = nextSectionMatch
@@ -256,16 +194,12 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
         : content.slice(scheduleStart)
 
       const scheduleByDate = new Map<string, ScheduleItem[]>()
-
-      // Pattern for Meeting Notes wikilink
       const meetingWikilinkPattern = /^\[\[Meeting Notes\/([^/]+)\/\d{4}-\d{2}-\d{2}\/([^\]|]+)(?:\|[^\]]+)?\]\]$/
 
-      // Split content into day sections
       const lines = scheduleContent.split('\n')
       let currentDate: string | null = null
 
       for (const line of lines) {
-        // Check for day header
         const dayMatch = line.match(/^- \w+ \((\d{4}-\d{2}-\d{2})\)/)
         if (dayMatch) {
           currentDate = dayMatch[1]!
@@ -275,14 +209,11 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
           continue
         }
 
-        // Check for schedule item (must have a current date)
         if (currentDate) {
           const itemMatch = line.match(/^\t-\s*\[[ x]\]\s*(\d{4})\s*(.+)$/)
           if (itemMatch) {
             const time = itemMatch[1]!
             const descriptionPart = itemMatch[2]!.trim()
-
-            // Check if it's a Meeting Notes wikilink
             const wikilinkMatch = descriptionPart.match(meetingWikilinkPattern)
 
             let scheduleItem: ScheduleItem
@@ -300,7 +231,6 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
         }
       }
 
-      // Sort schedule items by time within each date
       for (const items of scheduleByDate.values()) {
         items.sort((a, b) => a.time.localeCompare(b.time))
       }
@@ -311,19 +241,42 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     }
   }
 
+  /**
+   * Get schedule items as tree items for a specific date
+   */
+  private getScheduleItems(dateStr: string): BrainSidebarItem[] {
+    const scheduleItems = this.scheduleByDate.get(dateStr)
+    if (!scheduleItems) return []
+
+    return scheduleItems.map(scheduleItem => {
+      const item = new BrainSidebarItem(
+        `${scheduleItem.time} ${scheduleItem.description}`,
+        vscode.TreeItemCollapsibleState.None,
+        'meeting',
+        'clock'
+      )
+      if (scheduleItem.filePath) {
+        item.command = {
+          command: 'vscode.open',
+          title: 'Open Meeting Note',
+          arguments: [vscode.Uri.file(scheduleItem.filePath)]
+        }
+      }
+      return item
+    })
+  }
+
   getTreeItem(element: BrainSidebarItem): vscode.TreeItem {
     return element
   }
 
   async getChildren(element?: BrainSidebarItem): Promise<BrainSidebarItem[]> {
-    // Root level: return week header, weekly note, and daily projects
+    // Root level: week header + 7 day rows
     if (!element) {
-      // Check if Brain folder exists
       const brainPath = this.getBrainPath()
       try {
         await vscode.workspace.fs.stat(vscode.Uri.file(brainPath))
       } catch {
-        // Brain folder doesn't exist, show a helpful message
         const errorItem = new BrainSidebarItem(
           'Brain folder not found',
           vscode.TreeItemCollapsibleState.None,
@@ -355,107 +308,43 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
       }
       items.push(weekHeader)
 
-      // Schedule section header (collapsible) - always show for current/past weeks with content
+      // Parse schedule for the week
       this.scheduleByDate = await this.parseScheduleFromWeeklyNote()
-      if (this.scheduleByDate.size > 0) {
-        const scheduleSection = new BrainSidebarItem(
-          'Schedule',
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'section',
-          'list-unordered'
-        )
-        scheduleSection.contextValue = 'schedule-section'
-        items.push(scheduleSection)
-      }
 
-      // Daily Projects section header - always show
-      const dailyProjectsSection = new BrainSidebarItem(
-        'Daily Projects',
-        vscode.TreeItemCollapsibleState.Collapsed,
-        'section',
-        'folder-library'
-      )
-      dailyProjectsSection.contextValue = 'daily-projects-section'
-      items.push(dailyProjectsSection)
+      // Add a row for each day of the week (Sun-Sat)
+      const todayStr = formatDate(new Date())
+      const weekDays = getWeekDays(this.currentWeekStart)
+      for (const day of weekDays) {
+        const dateStr = formatDate(day)
+        const dayName = getDayName(day)
+        const isToday = dateStr === todayStr
+        const collapsibleState = isToday
+          ? vscode.TreeItemCollapsibleState.Expanded
+          : vscode.TreeItemCollapsibleState.Collapsed
+        const dayItem = new BrainSidebarItem(
+          `${dayName} (${dateStr})`,
+          collapsibleState,
+          'day',
+          isToday ? 'circle-filled' : 'circle-outline'
+        )
+        dayItem.contextValue = dateStr
+        if (isToday) {
+          dayItem.description = 'today'
+        }
+        items.push(dayItem)
+      }
 
       return items
     }
 
-    // Schedule section: return day headers for days with schedule items
-    if (element.itemType === 'section' && element.contextValue === 'schedule-section') {
-      return this.getScheduleDayHeaders()
-    }
-
-    // Schedule day: return individual schedule items for that day
-    if (element.itemType === 'day' && element.contextValue?.startsWith('schedule-day:')) {
-      const dateStr = element.contextValue.replace('schedule-day:', '')
-      return this.getScheduleItems(dateStr)
-    }
-
-    // Daily Projects section: return day folders
-    if (element.itemType === 'section' && element.contextValue === 'daily-projects-section') {
-      return this.getDailyProjectItems()
-    }
-
-    // Day items: return files for that day (Daily Projects)
-    if (element.itemType === 'day' && element.contextValue && !element.contextValue.startsWith('schedule-day:')) {
-      return this.getDayProjectFiles(element.contextValue)
+    // Day level: meetings first (chronological), then daily project files
+    if (element.itemType === 'day' && element.contextValue) {
+      const dateStr = element.contextValue
+      const meetings = this.getScheduleItems(dateStr)
+      const projects = await this.getDayProjectFiles(dateStr)
+      return [...meetings, ...projects]
     }
 
     return []
-  }
-
-  /**
-   * Get day headers for days that have schedule items
-   */
-  private getScheduleDayHeaders(): BrainSidebarItem[] {
-    const weekDays = getWeekDays(this.currentWeekStart)
-    const items: BrainSidebarItem[] = []
-
-    for (const day of weekDays) {
-      const dateStr = formatDate(day)
-      const scheduleItems = this.scheduleByDate.get(dateStr)
-
-      if (scheduleItems && scheduleItems.length > 0) {
-        const dayName = getDayName(day)
-        const dayHeader = new BrainSidebarItem(
-          `${dayName} (${dateStr})`,
-          vscode.TreeItemCollapsibleState.Collapsed,
-          'day',
-          'calendar'
-        )
-        dayHeader.contextValue = `schedule-day:${dateStr}`
-        items.push(dayHeader)
-      }
-    }
-
-    return items
-  }
-
-  /**
-   * Get individual schedule items for a specific date
-   */
-  private getScheduleItems(dateStr: string): BrainSidebarItem[] {
-    const scheduleItems = this.scheduleByDate.get(dateStr)
-    if (!scheduleItems) return []
-
-    return scheduleItems.map(scheduleItem => {
-      const hasFile = !!scheduleItem.filePath
-      const item = new BrainSidebarItem(
-        `${scheduleItem.time} ${scheduleItem.description}`,
-        vscode.TreeItemCollapsibleState.None,
-        'meeting',
-        hasFile ? 'person' : 'clock',
-        hasFile ? vscode.Uri.file(scheduleItem.filePath!) : undefined
-      )
-      if (hasFile) {
-        item.command = {
-          command: 'vscode.open',
-          title: 'Open Meeting Note',
-          arguments: [vscode.Uri.file(scheduleItem.filePath!)]
-        }
-      }
-      return item
-    })
   }
 }
