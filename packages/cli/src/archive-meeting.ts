@@ -386,7 +386,8 @@ function processZoomFolder(zoomPath: string): string {
  */
 async function callCopilot(
   transcript: string,
-  promptPath: string
+  promptPath: string,
+  brainDir: string
 ): Promise<string> {
   if (!fs.existsSync(promptPath)) {
     throw new Error(`Prompt file not found: ${promptPath}`)
@@ -395,7 +396,13 @@ async function callCopilot(
   const systemPrompt = fs.readFileSync(promptPath, "utf-8")
   const fullPrompt = `${systemPrompt}\n\n${transcript}`
 
-  const result = await runCommand("copilot", ["-p", fullPrompt, "--allow-all-tools"])
+  const configDir = path.join(process.env.HOME || "", ".copilot")
+  const result = await runCommand("copilot", [
+    "-p", fullPrompt,
+    "--allow-all-tools",
+    "--add-dir", brainDir,
+    "--add-dir", configDir,
+  ])
   return result.trim()
 }
 
@@ -743,8 +750,8 @@ export async function archiveMeeting(
   // Step 4: Generate executive summary and meeting notes concurrently
   console.log("\nGenerating executive summary and meeting notes...")
   const [execSummary, meetingNotes] = await Promise.all([
-    callCopilot(transcriptMd, executiveSummaryPromptPath),
-    callCopilot(transcriptMd, detailedNotesPromptPath),
+    callCopilot(transcriptMd, executiveSummaryPromptPath, brainDir),
+    callCopilot(transcriptMd, detailedNotesPromptPath, brainDir),
   ])
 
   fs.mkdirSync(execSummariesDir, { recursive: true })
