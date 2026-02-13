@@ -21,6 +21,7 @@ const COLLECTION_PATTERNS: Array<{ type: string; pattern: RegExp }> = [
   { type: "daily.project", pattern: /Daily Projects\/\d{4}-\d{2}-\d{2}\// },
   { type: "weekly.note", pattern: /Weekly Notes\/Week of \d{4}-\d{2}-\d{2}\.md$/ },
   { type: "meeting.note", pattern: /Meeting Notes\// },
+  { type: "bookmark", pattern: /Bookmarks\/\d{4}-\d{2}-\d{2}\// },
   { type: "project", pattern: /Projects\// },
   { type: "snippet", pattern: /Snippets\// },
   { type: "transcript", pattern: /Transcripts\/\d{4}-\d{2}-\d{2}\// },

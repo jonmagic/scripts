@@ -7,6 +7,7 @@ import { WikilinkCompletionProvider } from "./features/CompletionProvider"
 import { registerFileRenameHandler } from "./features/FileRenameHandler"
 import { registerOpenDocumentCommand } from "./commands/openDocumentByReference"
 import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
+import { registerCreateBookmarkCommand } from "./commands/createBookmark"
 import { BrainSidebarProvider } from "./sidebar/BrainSidebarProvider"
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -41,6 +42,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Register commands
   registerOpenDocumentCommand(context)
   registerAddFrontmatterCommand(context)
+  registerCreateBookmarkCommand(context)
 
   // Register Brain sidebar tree view
   const brainSidebarProvider = new BrainSidebarProvider()

@@ -8,6 +8,12 @@ export interface FrontmatterData {
   tags?: string[]
   /** Agent session resume command (e.g. "opencode -s ses_abc123"). */
   session?: string
+  /** Bookmark URL. */
+  url?: string
+  /** Page title (auto-fetched or manual). */
+  title?: string
+  /** Where the bookmark was found (e.g. "hacker-news", "slack", "colleague"). */
+  source?: string
   links?: {
     parent?: string[]
     source?: string[]
@@ -35,6 +41,18 @@ export function serializeFrontmatter(fm: FrontmatterData): string {
 
   if (fm.session) {
     lines.push(`session: ${fm.session}`)
+  }
+
+  if (fm.url) {
+    lines.push(`url: ${fm.url}`)
+  }
+
+  if (fm.title) {
+    lines.push(`title: "${fm.title.replace(/"/g, '\\"')}"`)
+  }
+
+  if (fm.source) {
+    lines.push(`source: ${fm.source}`)
   }
 
   if (fm.links) {

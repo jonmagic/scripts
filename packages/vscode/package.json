@@ -29,6 +29,10 @@
         "title": "Jonmagic: Add Frontmatter to Current File"
       },
       {
+        "command": "jonmagic.createBookmark",
+        "title": "Jonmagic: Create Bookmark"
+      },
+      {
         "command": "jonmagic.previousWeek",
         "title": "Brain: Previous Week",
         "icon": "$(arrow-left)"
