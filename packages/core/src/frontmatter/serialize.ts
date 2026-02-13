@@ -6,6 +6,8 @@ export interface FrontmatterData {
   created: string
   updated?: string
   tags?: string[]
+  /** Agent session resume command (e.g. "opencode -s ses_abc123"). */
+  session?: string
   links?: {
     parent?: string[]
     source?: string[]
@@ -29,6 +31,10 @@ export function serializeFrontmatter(fm: FrontmatterData): string {
 
   if (fm.tags && fm.tags.length > 0) {
     lines.push(`tags: [${fm.tags.join(", ")}]`)
+  }
+
+  if (fm.session) {
+    lines.push(`session: ${fm.session}`)
   }
 
   if (fm.links) {

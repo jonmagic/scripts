@@ -2,6 +2,10 @@ import * as fs from "node:fs/promises"
 import * as os from "node:os"
 import * as path from "node:path"
 
+import { generateTid } from "../frontmatter/tid.js"
+import { serializeFrontmatter } from "../frontmatter/serialize.js"
+import { detectSession } from "../session/detectSession.js"
+
 export type CreateDailyProjectNoteOptions = {
   /** Human title shown in the file header; also used to derive filename. */
   title: string;
@@ -13,6 +17,11 @@ export type CreateDailyProjectNoteOptions = {
   updateWeeklyNote?: boolean;
   /** Override weekly note path. If omitted, it is derived from date + brainRoot. */
   weeklyNotePath?: string;
+  /**
+   * Override the session resume command to embed in frontmatter.
+   * If omitted, auto-detection is attempted. Pass `false` to disable.
+   */
+  session?: string | false;
 }
 
 export type CreateDailyProjectNoteResult = {
@@ -20,6 +29,8 @@ export type CreateDailyProjectNoteResult = {
   dateFolder: string;
   filePath: string;
   number: number;
+  uid: string;
+  session?: string;
   weeklyNotePath?: string;
   weeklyNoteUpdated?: boolean;
 }
@@ -206,7 +217,37 @@ export async function createDailyProjectNote(
   const fileName = `${pad2(number)} ${sanitizeTitleForFilename(title)}.md`
   const filePath = path.join(dateFolder, fileName)
 
-  const contents = `# ${title}\n\n`
+  // Generate frontmatter
+  const uid = generateTid()
+  const created = `${ymd}T00:00:00Z`
+
+  // Resolve session: use explicit value, auto-detect, or skip
+  let sessionResume: string | undefined
+  if (options.session === false) {
+    // Explicitly disabled
+  } else if (typeof options.session === "string") {
+    sessionResume = options.session
+  } else {
+    // Auto-detect from environment
+    try {
+      const detected = detectSession(brainRoot)
+      if (detected) {
+        sessionResume = detected.resume
+      }
+    } catch {
+      // Session detection is best-effort; don't fail note creation
+    }
+  }
+
+  const frontmatter = serializeFrontmatter({
+    uid,
+    type: "daily.project",
+    created,
+    tags: [],
+    ...(sessionResume ? { session: sessionResume } : {}),
+  })
+
+  const contents = `${frontmatter}\n\n# ${title}\n\n`
   await fs.writeFile(filePath, contents, { flag: "wx" })
 
   let weeklyNotePath: string | undefined
@@ -227,7 +268,12 @@ export async function createDailyProjectNote(
     brainRoot,
     dateFolder,
     filePath,
-    number
+    number,
+    uid,
+  }
+
+  if (sessionResume) {
+    result.session = sessionResume
   }
 
   if (weeklyNotePath) {
