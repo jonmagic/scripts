@@ -90,4 +90,51 @@ describe("createDailyProjectNote", () => {
     expect(content).not.toContain("session:")
     expect(result.session).toBeUndefined()
   })
+
+  test("does not update weekly note by default", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "brain-"))
+    // Monday 2026-01-19 → week of Sunday 2026-01-18
+    const date = new Date(2026, 0, 19, 12, 0, 0)
+
+    // Create a weekly note so we can verify it's NOT modified
+    const weeklyDir = path.join(tmp, "Weekly Notes")
+    await fs.mkdir(weeklyDir, { recursive: true })
+    const weeklyPath = path.join(weeklyDir, "Week of 2026-01-18.md")
+    const originalContent = "# Week of 2026-01-18\n\n## Monday\n\n## Tuesday\n"
+    await fs.writeFile(weeklyPath, originalContent)
+
+    const result = await createDailyProjectNote({
+      title: "should not touch weekly",
+      brainRoot: tmp,
+      date,
+      session: false,
+    })
+
+    const weeklyContent = await fs.readFile(weeklyPath, "utf8")
+    expect(weeklyContent).toBe(originalContent)
+    expect(result.weeklyNoteUpdated).toBeUndefined()
+  })
+
+  test("updates weekly note when explicitly opted in", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "brain-"))
+    // Monday 2026-01-19 → week of Sunday 2026-01-18
+    const date = new Date(2026, 0, 19, 12, 0, 0)
+
+    const weeklyDir = path.join(tmp, "Weekly Notes")
+    await fs.mkdir(weeklyDir, { recursive: true })
+    const weeklyPath = path.join(weeklyDir, "Week of 2026-01-18.md")
+    await fs.writeFile(weeklyPath, "# Week of 2026-01-18\n\n## Monday\n\n## Tuesday\n")
+
+    const result = await createDailyProjectNote({
+      title: "should update weekly",
+      brainRoot: tmp,
+      date,
+      session: false,
+      updateWeeklyNote: true,
+    })
+
+    const weeklyContent = await fs.readFile(weeklyPath, "utf8")
+    expect(weeklyContent).toContain("[[Daily Projects/2026-01-19/01 should update weekly.md]]")
+    expect(result.weeklyNoteUpdated).toBe(true)
+  })
 })

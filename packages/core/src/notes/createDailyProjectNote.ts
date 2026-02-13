@@ -13,7 +13,7 @@ export type CreateDailyProjectNoteOptions = {
   brainRoot?: string;
   /** Override date (local). Defaults to now. */
   date?: Date;
-  /** When true, add a link to this note in the current weekly note. */
+  /** When true, add a link to this note in the current weekly note. Defaults to false. */
   updateWeeklyNote?: boolean;
   /** Override weekly note path. If omitted, it is derived from date + brainRoot. */
   weeklyNotePath?: string;
@@ -252,7 +252,7 @@ export async function createDailyProjectNote(
 
   let weeklyNotePath: string | undefined
   let weeklyNoteUpdated: boolean | undefined
-  if (options.updateWeeklyNote !== false) {
+  if (options.updateWeeklyNote === true) {
     const updateOptions = {
       brainRoot,
       date,
