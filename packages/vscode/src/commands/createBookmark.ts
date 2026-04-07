@@ -6,9 +6,10 @@ async function generateAiSummary(url: string, title: string): Promise<string | u
   const prompt = `Summarize the content at ${url} (titled "${title}") in 1-3 sentences for a personal bookmark. Write in first person as if explaining why I saved it. Be concise and focus on what makes it interesting or useful. Return only the summary text, no quotes or formatting.`
 
   return new Promise((resolve) => {
-    cp.exec(
-      `copilot -p ${JSON.stringify(prompt)}`,
-      { timeout: 30000 },
+    cp.execFile(
+      "copilot",
+      ["-p", prompt, "-s", "--allow-all", "--no-ask-user"],
+      { timeout: 120000 },
       (error, stdout) => {
         if (error || !stdout.trim()) {
           resolve(undefined)
@@ -95,9 +96,9 @@ export async function addBookmark(): Promise<void> {
 
         const result = await createBookmark({
           url: url.trim(),
-          title,
-          blurb: finalBlurb,
-          source: source.trim() || undefined,
+          ...(title ? { title } : {}),
+          ...(finalBlurb ? { blurb: finalBlurb } : {}),
+          ...(source.trim() ? { source: source.trim() } : {}),
         })
 
         // Open the created file
