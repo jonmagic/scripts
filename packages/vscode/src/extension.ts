@@ -1,8 +1,13 @@
 import * as vscode from "vscode"
+import * as path from "node:path"
 
 import { createDailyProjectNote } from "@jonmagic/scripts-core"
 import { getWorkspaceCache, disposeWorkspaceCache } from "./cache/workspaceCache"
-import { getBrainPath, getBrainRootUri } from "./config/brainPath"
+import {
+  getBrainPath,
+  getBrainRootUri,
+  getRelativeBrainPath,
+} from "./config/brainPath"
 import { WikilinkDocumentLinkProvider } from "./features/DocumentLinkProvider"
 import { WikilinkCompletionProvider } from "./features/CompletionProvider"
 import { registerFileRenameHandler } from "./features/FileRenameHandler"
@@ -19,6 +24,16 @@ interface MarkdownExtensionApi {
   extendMarkdownIt(md: MarkdownItLike): MarkdownItLike
 }
 
+type ResourceTarget = vscode.Uri | { resourceUri?: vscode.Uri }
+
+function getResourceUri(target: ResourceTarget): vscode.Uri | undefined {
+  if (target instanceof vscode.Uri) {
+    return target
+  }
+
+  return target.resourceUri
+}
+
 function createBrainWatcher(onChange: () => void): vscode.FileSystemWatcher {
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(getBrainRootUri(), "**/*.md")
@@ -27,6 +42,161 @@ function createBrainWatcher(onChange: () => void): vscode.FileSystemWatcher {
   watcher.onDidCreate(onChange)
   watcher.onDidDelete(onChange)
   return watcher
+}
+
+async function executeResourceCommand(
+  command: string,
+  resourceUri: vscode.Uri,
+  unavailableMessage: string
+): Promise<void> {
+  const commands = await vscode.commands.getCommands(true)
+  if (!commands.includes(command)) {
+    await vscode.window.showErrorMessage(unavailableMessage)
+    return
+  }
+
+  await vscode.commands.executeCommand(command, resourceUri)
+}
+
+async function openPreview(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  await executeResourceCommand(
+    "markdown.showPreview",
+    resourceUri,
+    "Markdown preview command is not available"
+  )
+}
+
+async function openToSide(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  await vscode.commands.executeCommand("vscode.open", resourceUri, {
+    preview: false,
+    viewColumn: vscode.ViewColumn.Beside,
+  })
+}
+
+async function openWith(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  await executeResourceCommand(
+    "explorer.openWith",
+    resourceUri,
+    "Open With command is not available"
+  )
+}
+
+async function revealInFinder(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  await vscode.commands.executeCommand("revealFileInOS", resourceUri)
+}
+
+async function addFileToChat(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  await executeResourceCommand(
+    "github.copilot.chat.attachFile",
+    resourceUri,
+    "Add File to Chat command is not available"
+  )
+}
+
+async function copyFileContents(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  const content = await vscode.workspace.fs.readFile(resourceUri)
+  await vscode.env.clipboard.writeText(Buffer.from(content).toString("utf-8"))
+  vscode.window.showInformationMessage("File contents copied to clipboard")
+}
+
+async function copyPath(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  await vscode.env.clipboard.writeText(resourceUri.fsPath)
+  vscode.window.showInformationMessage("Path copied to clipboard")
+}
+
+async function copyRelativePath(target: ResourceTarget): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  const relativePath = getRelativeBrainPath(resourceUri.fsPath)
+  if (!relativePath) {
+    vscode.window.showErrorMessage(
+      `File is outside the configured Brain folder: ${getBrainPath()}`
+    )
+    return
+  }
+
+  await vscode.env.clipboard.writeText(relativePath)
+  vscode.window.showInformationMessage("Relative path copied to clipboard")
+}
+
+async function renameFile(
+  target: ResourceTarget,
+  onRenamed: () => void
+): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  const currentName = path.basename(resourceUri.fsPath)
+  const extensionStart = currentName.lastIndexOf(".")
+  const newName = await vscode.window.showInputBox({
+    title: "Rename File",
+    value: currentName,
+    valueSelection: [
+      0,
+      extensionStart > 0 ? extensionStart : currentName.length,
+    ],
+  })
+
+  if (!newName || newName === currentName) {
+    return
+  }
+
+  if (newName.includes("/") || newName.includes("\\")) {
+    vscode.window.showErrorMessage("File name cannot contain path separators")
+    return
+  }
+
+  const newUri = vscode.Uri.file(path.join(path.dirname(resourceUri.fsPath), newName))
+  const edit = new vscode.WorkspaceEdit()
+  edit.renameFile(resourceUri, newUri)
+  const applied = await vscode.workspace.applyEdit(edit)
+  if (!applied) {
+    vscode.window.showErrorMessage(`Could not rename ${currentName}`)
+    return
+  }
+
+  onRenamed()
+}
+
+async function deleteFile(
+  target: ResourceTarget,
+  onDeleted: () => void
+): Promise<void> {
+  const resourceUri = getResourceUri(target)
+  if (!resourceUri) return
+
+  const fileName = path.basename(resourceUri.fsPath)
+  const answer = await vscode.window.showWarningMessage(
+    `Delete "${fileName}"?`,
+    { modal: true },
+    "Delete"
+  )
+  if (answer === "Delete") {
+    await vscode.workspace.fs.delete(resourceUri)
+    onDeleted()
+  }
 }
 
 export async function activate(
@@ -83,34 +253,20 @@ export async function activate(
 
   // Register Brain file context menu commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('jonmagic.deleteFile', async (item: { resourceUri?: vscode.Uri }) => {
-      if (!item.resourceUri) return
-      const fileName = item.resourceUri.fsPath.split('/').pop() || 'this file'
-      const answer = await vscode.window.showWarningMessage(
-        `Delete "${fileName}"?`,
-        { modal: true },
-        'Delete'
-      )
-      if (answer === 'Delete') {
-        await vscode.workspace.fs.delete(item.resourceUri)
-        refreshSidebar()
-      }
-    }),
-    vscode.commands.registerCommand('jonmagic.revealInFinder', (item: { resourceUri?: vscode.Uri }) => {
-      if (!item.resourceUri) return
-      vscode.commands.executeCommand('revealFileInOS', item.resourceUri)
-    }),
-    vscode.commands.registerCommand('jonmagic.copyPath', async (item: { resourceUri?: vscode.Uri }) => {
-      if (!item.resourceUri) return
-      await vscode.env.clipboard.writeText(item.resourceUri.fsPath)
-      vscode.window.showInformationMessage('Path copied to clipboard')
-    }),
-    vscode.commands.registerCommand('jonmagic.copyFileContents', async (item: { resourceUri?: vscode.Uri }) => {
-      if (!item.resourceUri) return
-      const content = await vscode.workspace.fs.readFile(item.resourceUri)
-      await vscode.env.clipboard.writeText(Buffer.from(content).toString('utf-8'))
-      vscode.window.showInformationMessage('File contents copied to clipboard')
-    })
+    vscode.commands.registerCommand("jonmagic.openPreview", openPreview),
+    vscode.commands.registerCommand("jonmagic.openToSide", openToSide),
+    vscode.commands.registerCommand("jonmagic.openWith", openWith),
+    vscode.commands.registerCommand("jonmagic.revealInFinder", revealInFinder),
+    vscode.commands.registerCommand("jonmagic.addFileToChat", addFileToChat),
+    vscode.commands.registerCommand("jonmagic.copyFile", copyFileContents),
+    vscode.commands.registerCommand("jonmagic.copyPath", copyPath),
+    vscode.commands.registerCommand("jonmagic.copyRelativePath", copyRelativePath),
+    vscode.commands.registerCommand("jonmagic.renameFile", (item: ResourceTarget) =>
+      renameFile(item, refreshSidebar)
+    ),
+    vscode.commands.registerCommand("jonmagic.deleteFile", (item: ResourceTarget) =>
+      deleteFile(item, refreshSidebar)
+    )
   )
 
   // Watch for file changes in Brain folder to auto-refresh sidebar
