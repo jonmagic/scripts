@@ -5,6 +5,7 @@ import * as vscode from "vscode"
 import * as path from "node:path"
 import { resolveWikilink, UID_PREFIX } from "@jonmagic/scripts-core"
 import { getWorkspaceCache } from "../cache/workspaceCache"
+import { getBrainPath } from "../config/brainPath"
 
 interface OpenDocumentArgs {
   reference: string
@@ -15,12 +16,7 @@ export async function openDocumentByReference(
 ): Promise<void> {
   const { reference } = args
   const cache = getWorkspaceCache()
-  const workspaceRoot = cache.getWorkspaceRoot()
-
-  if (!workspaceRoot) {
-    vscode.window.showErrorMessage("No workspace folder open")
-    return
-  }
+  const brainRoot = getBrainPath()
 
   // Resolve the reference to a path
   const uidIndex = cache.getUidIndex()
@@ -43,14 +39,14 @@ export async function openDocumentByReference(
       )
 
       if (create === "Create File") {
-        await createAndOpenFile(workspaceRoot, reference)
+        await createAndOpenFile(brainRoot, reference)
       }
     }
     return
   }
 
   // Open the resolved file
-  const absolutePath = path.join(workspaceRoot, resolvedPath)
+  const absolutePath = path.join(brainRoot, resolvedPath)
   try {
     const doc = await vscode.workspace.openTextDocument(absolutePath)
     await vscode.window.showTextDocument(doc)
@@ -60,21 +56,24 @@ export async function openDocumentByReference(
 }
 
 async function createAndOpenFile(
-  workspaceRoot: string,
+  brainRoot: string,
   reference: string
 ): Promise<void> {
   // Ensure reference has .md extension
   const filePath = reference.endsWith(".md") ? reference : `${reference}.md`
-  const absolutePath = path.join(workspaceRoot, filePath)
+  const absolutePath = path.join(brainRoot, filePath)
 
   // Create the file with a basic header
   const title = path.basename(reference, ".md")
   const uri = vscode.Uri.file(absolutePath)
 
   // Create parent directories if needed
-  const edit = new vscode.WorkspaceEdit()
-  edit.createFile(uri, { ignoreIfExists: true })
-  await vscode.workspace.applyEdit(edit)
+  await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(absolutePath)))
+  try {
+    await vscode.workspace.fs.stat(uri)
+  } catch {
+    await vscode.workspace.fs.writeFile(uri, new Uint8Array())
+  }
 
   // Write initial content
   const doc = await vscode.workspace.openTextDocument(uri)

@@ -7,6 +7,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { getWorkspaceCache } from "../cache/workspaceCache"
 import { pathToDisplayPath } from "@jonmagic/scripts-core"
+import { getBrainPath, getRelativeBrainPath } from "../config/brainPath"
 
 /**
  * Register the file rename handler.
@@ -36,11 +37,7 @@ function handleFileRename(
   }
 
   const cache = getWorkspaceCache()
-  const workspaceRoot = cache.getWorkspaceRoot()
-
-  if (!workspaceRoot) {
-    return
-  }
+  const brainRoot = cache.getBrainRoot() ?? getBrainPath()
 
   // Warn if cache not fully loaded
   if (!cache.hasFullIndex()) {
@@ -51,8 +48,13 @@ function handleFileRename(
   }
 
   // Get paths without .md extension (how they appear in wikilinks)
-  const oldRelativePath = path.relative(workspaceRoot, oldUri.fsPath)
-  const newRelativePath = path.relative(workspaceRoot, newUri.fsPath)
+  const oldRelativePath = getRelativeBrainPath(oldUri.fsPath, brainRoot)
+  const newRelativePath = getRelativeBrainPath(newUri.fsPath, brainRoot)
+
+  if (!oldRelativePath || !newRelativePath) {
+    return
+  }
+
   const oldDisplayPath = pathToDisplayPath(oldRelativePath)
   const newDisplayPath = pathToDisplayPath(newRelativePath)
 
@@ -67,7 +69,7 @@ function handleFileRename(
 
   for (const linkingFilePath of backlinks) {
     // Convert display path back to relative path with .md
-    const linkingAbsPath = path.join(workspaceRoot, linkingFilePath + ".md")
+    const linkingAbsPath = path.join(brainRoot, linkingFilePath + ".md")
 
     // Skip if file doesn't exist (might have been renamed itself)
     if (!fs.existsSync(linkingAbsPath)) {
@@ -100,6 +102,7 @@ function handleFileRename(
   }
 
   if (updatedCount > 0) {
+    void cache.refresh()
     vscode.window.showInformationMessage(
       `Updated ${updatedCount} wikilink${updatedCount === 1 ? "" : "s"} to renamed file`
     )

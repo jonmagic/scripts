@@ -1,6 +1,7 @@
 import * as vscode from "vscode"
 import { createBookmark } from "@jonmagic/scripts-core"
 import * as cp from "node:child_process"
+import { getBrainPath } from "../config/brainPath"
 
 async function generateAiSummary(url: string, title: string): Promise<string | undefined> {
   const prompt = `Summarize the content at ${url} (titled "${title}") in 1-3 sentences for a personal bookmark. Write in first person as if explaining why I saved it. Be concise and focus on what makes it interesting or useful. Return only the summary text, no quotes or formatting.`
@@ -96,6 +97,7 @@ export async function addBookmark(): Promise<void> {
 
         const result = await createBookmark({
           url: url.trim(),
+          brainRoot: getBrainPath(),
           ...(title ? { title } : {}),
           ...(finalBlurb ? { blurb: finalBlurb } : {}),
           ...(source.trim() ? { source: source.trim() } : {}),

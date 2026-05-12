@@ -1,18 +1,16 @@
 # Jonmagic Scripts VS Code Extension
 
-Utilities for my Brain repo (Daily Projects, wikilinks, etc.)
+Utilities for my Brain repo, including weekly navigation.
 
 ## Features
 
 ### Brain Sidebar
 
-A dedicated sidebar view for navigating your Brain repository's weekly structure. Access it from the activity bar (book icon).
+A dedicated sidebar view for navigating your Brain repository. Access it from the activity bar (book icon).
 
-The sidebar displays:
+The sidebar includes:
 
-- **Weekly Note** - Quick access to the current week's note
-- **Meeting Notes** - Organized by day with meeting times
-- **Daily Projects** - Organized by day
+- **This Week** - Quick access to the current week's note, meeting notes, and daily projects
 
 ### Week Navigation
 
@@ -32,7 +30,7 @@ Navigate between weeks using the toolbar buttons:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `jonmagic.brain.path` | `~/Brain` | Path to the Brain repository folder |
+| `jonmagic.brainPath` | `~/Brain` | Path to the Brain repository folder. This is the canonical Brain root used by the sidebar, cache, wikilink navigation, and note creation commands. |
 
 ## Commands
 

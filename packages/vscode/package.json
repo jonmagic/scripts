@@ -1,7 +1,7 @@
 {
   "name": "jonmagic-scripts",
   "displayName": "Jonmagic Scripts",
-  "description": "Utilities for my Brain repo (Daily Projects, wikilinks, etc.)",
+  "description": "Utilities for my Brain repo, including weekly navigation",
   "version": "0.0.0",
   "publisher": "jonmagic",
   "repository": {
@@ -14,7 +14,8 @@
     "vscode": "^1.90.0"
   },
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onView:brainWeekView"
   ],
   "categories": ["Other"],
   "main": "./dist/extension.js",

@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as vscode from 'vscode'
 import { formatDate, getDayName, getWeekDays, getWeekLabel, getWeekStart } from './weekUtils'
+import { getBrainPath } from "../config/brainPath"
 
 /**
  * A schedule item parsed from the weekly note
@@ -54,7 +55,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
    * Check if a weekly note exists for a given week start date
    */
   private async weeklyNoteExists(weekStart: Date): Promise<boolean> {
-    const brainPath = this.getBrainPath()
+    const brainPath = getBrainPath()
     const weekLabel = getWeekLabel(weekStart)
     const weeklyNotePath = path.join(brainPath, 'Weekly Notes', `${weekLabel}.md`)
     try {
@@ -110,21 +111,11 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     this._onDidChangeTreeData.fire()
   }
 
-  private getBrainPath(): string {
-    const config = vscode.workspace.getConfiguration('jonmagic')
-    const configuredPath = config.get<string>('brainPath', '~/Brain')
-    if (configuredPath.startsWith('~/')) {
-      const homedir = process.env.HOME ?? ''
-      return path.join(homedir, configuredPath.slice(2))
-    }
-    return configuredPath
-  }
-
   /**
    * Get daily project files for a specific date
    */
   private async getDayProjectFiles(dateStr: string): Promise<BrainSidebarItem[]> {
-    const brainPath = this.getBrainPath()
+    const brainPath = getBrainPath()
     const dayFolder = path.join(brainPath, 'Daily Projects', dateStr)
     const items: BrainSidebarItem[] = []
 
@@ -161,7 +152,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
   }
 
   private async getWeeklyNotePath(): Promise<string | undefined> {
-    const brainPath = this.getBrainPath()
+    const brainPath = getBrainPath()
     const weekLabel = getWeekLabel(this.currentWeekStart)
     const weeklyNotePath = path.join(brainPath, 'Weekly Notes', `${weekLabel}.md`)
     try {
@@ -179,7 +170,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     const weeklyNotePath = await this.getWeeklyNotePath()
     if (!weeklyNotePath) return new Map()
 
-    const brainPath = this.getBrainPath()
+    const brainPath = getBrainPath()
 
     try {
       const content = await fs.promises.readFile(weeklyNotePath, 'utf-8')
@@ -273,7 +264,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
   async getChildren(element?: BrainSidebarItem): Promise<BrainSidebarItem[]> {
     // Root level: week header + 7 day rows
     if (!element) {
-      const brainPath = this.getBrainPath()
+      const brainPath = getBrainPath()
       try {
         await vscode.workspace.fs.stat(vscode.Uri.file(brainPath))
       } catch {

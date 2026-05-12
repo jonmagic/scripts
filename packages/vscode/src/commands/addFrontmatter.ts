@@ -15,6 +15,7 @@ import {
   type FrontmatterData,
 } from "@jonmagic/scripts-core"
 import { getWorkspaceCache } from "../cache/workspaceCache"
+import { getBrainPath, getRelativeBrainPath } from "../config/brainPath"
 
 // Collection type detection based on file path
 const COLLECTION_PATTERNS: Array<{ type: string; pattern: RegExp }> = [
@@ -61,9 +62,12 @@ export async function addFrontmatter(): Promise<void> {
   }
 
   const cache = getWorkspaceCache()
-  const workspaceRoot = cache.getWorkspaceRoot()
-  if (!workspaceRoot) {
-    vscode.window.showErrorMessage("No workspace folder open")
+  const brainRoot = getBrainPath()
+  const relativePath = getRelativeBrainPath(document.uri.fsPath, brainRoot)
+  if (!relativePath) {
+    vscode.window.showErrorMessage(
+      `Current file is outside the configured Brain folder: ${brainRoot}`
+    )
     return
   }
 
@@ -76,7 +80,6 @@ export async function addFrontmatter(): Promise<void> {
   }
 
   const absolutePath = document.uri.fsPath
-  const relativePath = path.relative(workspaceRoot, absolutePath)
 
   // Detect collection type
   const type = detectCollectionType(relativePath)
@@ -111,7 +114,11 @@ export async function addFrontmatter(): Promise<void> {
 
   // Now find and update all links pointing to this file
   const displayPath = pathToDisplayPath(relativePath)
-  const linksUpdated = updateLinksToFile(workspaceRoot, relativePath, displayPath, uid)
+  const linksUpdated = updateLinksToFile(relativePath, displayPath, uid)
+
+  if (linksUpdated > 0) {
+    await cache.refresh()
+  }
 
   if (linksUpdated > 0) {
     vscode.window.showInformationMessage(
@@ -125,7 +132,6 @@ export async function addFrontmatter(): Promise<void> {
 }
 
 function updateLinksToFile(
-  workspaceRoot: string,
   targetRelativePath: string,
   displayPath: string,
   uid: string
@@ -135,12 +141,16 @@ function updateLinksToFile(
   let totalUpdated = 0
 
   // Possible paths that might be used to link to this file
-  const possibleTargets = [
-    targetRelativePath,
-    displayPath,
-    path.basename(displayPath), // short ref
-    path.basename(targetRelativePath),
-  ].map((p) => p.toLowerCase())
+  const possibleTargets = Array.from(
+    new Set(
+      [
+        targetRelativePath,
+        displayPath,
+        path.posix.basename(displayPath), // short ref
+        path.posix.basename(targetRelativePath),
+      ].map((candidate) => candidate.toLowerCase())
+    )
+  )
 
   for (const file of allFiles) {
     // Skip the target file itself
@@ -148,10 +158,9 @@ function updateLinksToFile(
       continue
     }
 
-    const absolutePath = path.join(workspaceRoot, file.relativePath)
     let content: string
     try {
-      content = fs.readFileSync(absolutePath, "utf-8")
+      content = fs.readFileSync(file.absolutePath, "utf-8")
     } catch {
       continue
     }
@@ -182,7 +191,7 @@ function updateLinksToFile(
     }
 
     if (modified) {
-      fs.writeFileSync(absolutePath, newContent, "utf-8")
+      fs.writeFileSync(file.absolutePath, newContent, "utf-8")
     }
   }
 

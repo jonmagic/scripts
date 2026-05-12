@@ -2,6 +2,7 @@ import * as vscode from "vscode"
 
 import { createDailyProjectNote } from "@jonmagic/scripts-core"
 import { getWorkspaceCache, disposeWorkspaceCache } from "./cache/workspaceCache"
+import { getBrainPath, getBrainRootUri } from "./config/brainPath"
 import { WikilinkDocumentLinkProvider } from "./features/DocumentLinkProvider"
 import { WikilinkCompletionProvider } from "./features/CompletionProvider"
 import { registerFileRenameHandler } from "./features/FileRenameHandler"
@@ -9,6 +10,16 @@ import { registerOpenDocumentCommand } from "./commands/openDocumentByReference"
 import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
 import { registerCreateBookmarkCommand } from "./commands/createBookmark"
 import { BrainSidebarProvider } from "./sidebar/BrainSidebarProvider"
+
+function createBrainWatcher(onChange: () => void): vscode.FileSystemWatcher {
+  const watcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(getBrainRootUri(), "**/*.md")
+  )
+  watcher.onDidChange(onChange)
+  watcher.onDidCreate(onChange)
+  watcher.onDidDelete(onChange)
+  return watcher
+}
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Initialize workspace cache - fast init blocks, full init runs in background
@@ -46,14 +57,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Register Brain sidebar tree view
   const brainSidebarProvider = new BrainSidebarProvider()
-  vscode.window.registerTreeDataProvider('brainWeekView', brainSidebarProvider)
+  const refreshSidebar = () => brainSidebarProvider.refresh()
+
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider("brainWeekView", brainSidebarProvider)
+  )
 
   // Register Brain navigation commands
   context.subscriptions.push(
     vscode.commands.registerCommand('jonmagic.previousWeek', () => brainSidebarProvider.previousWeek()),
     vscode.commands.registerCommand('jonmagic.nextWeek', () => brainSidebarProvider.nextWeek()),
     vscode.commands.registerCommand('jonmagic.goToCurrentWeek', () => brainSidebarProvider.goToCurrentWeek()),
-    vscode.commands.registerCommand('jonmagic.refresh', () => brainSidebarProvider.refresh())
+    vscode.commands.registerCommand('jonmagic.refresh', refreshSidebar)
   )
 
   // Register Brain file context menu commands
@@ -68,7 +83,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       )
       if (answer === 'Delete') {
         await vscode.workspace.fs.delete(item.resourceUri)
-        brainSidebarProvider.refresh()
+        refreshSidebar()
       }
     }),
     vscode.commands.registerCommand('jonmagic.revealInFinder', (item: { resourceUri?: vscode.Uri }) => {
@@ -89,13 +104,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   )
 
   // Watch for file changes in Brain folder to auto-refresh sidebar
-  const brainPath = vscode.workspace.getConfiguration('jonmagic').get<string>('brainPath', '~/Brain').replace(/^~/, process.env.HOME || '')
-  const brainUri = vscode.Uri.file(brainPath)
-  const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(brainUri, '**/*.md'))
-  watcher.onDidChange(() => brainSidebarProvider.refresh())
-  watcher.onDidCreate(() => brainSidebarProvider.refresh())
-  watcher.onDidDelete(() => brainSidebarProvider.refresh())
-  context.subscriptions.push(watcher)
+  let watcher = createBrainWatcher(refreshSidebar)
+  context.subscriptions.push({
+    dispose: () => {
+      watcher.dispose()
+    },
+  })
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration("jonmagic.brainPath")) {
+        return
+      }
+
+      watcher.dispose()
+      watcher = createBrainWatcher(refreshSidebar)
+      void cache.refresh().then(() => {
+        refreshSidebar()
+      })
+    })
+  )
 
   // Register daily project note command
   const createNoteDisposable = vscode.commands.registerCommand(
@@ -112,7 +139,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       try {
-        const result = await createDailyProjectNote({ title })
+        const result = await createDailyProjectNote({
+          title,
+          brainRoot: getBrainPath(),
+        })
         const doc = await vscode.workspace.openTextDocument(
           vscode.Uri.file(result.filePath)
         )

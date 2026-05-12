@@ -8,6 +8,7 @@
 // 2. initializeFull() - Background load of all files for complete index
 
 import * as vscode from "vscode"
+import type { Dirent } from "node:fs"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import {
@@ -18,11 +19,16 @@ import {
   extractWikilinks,
   pathToDisplayPath,
 } from "@jonmagic/scripts-core"
+import {
+  getBrainPath,
+  getBrainRootUri,
+  getRelativeBrainPath,
+} from "../config/brainPath"
 
 export interface CachedFile {
   /** Absolute path to the file */
   absolutePath: string
-  /** Relative path from workspace root */
+  /** Relative path from Brain root */
   relativePath: string
   /** File modification time */
   mtime: number
@@ -39,7 +45,7 @@ export class WorkspaceCache {
   private backlinks: Map<string, Set<string>> = new Map()
   /** Meeting Notes folder names for {{pending}} completion */
   private meetingNotesFolders: Set<string> = new Set()
-  private workspaceRoot: string | null = null
+  private brainRoot: string | null = null
   private fileWatcher: vscode.FileSystemWatcher | null = null
   private isInitialized = false
   private isFullyLoaded = false
@@ -49,29 +55,19 @@ export class WorkspaceCache {
    * Call this during extension activation for quick startup.
    */
   async initializeFast(): Promise<void> {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
-    if (!workspaceFolder) {
-      return
-    }
-
-    this.workspaceRoot = workspaceFolder.uri.fsPath
+    this.fileWatcher?.dispose()
+    this.fileWatcher = null
+    this.brainRoot = getBrainPath()
 
     // Load Meeting Notes folder names (for {{pending}} completion)
     await this.loadMeetingNotesFolders()
 
     // Load only files modified in the last 7 days
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-    const mdFiles = await vscode.workspace.findFiles("**/*.md", "**/node_modules/**")
+    const mdFiles = await this.findMarkdownFiles(sevenDaysAgo)
 
-    for (const uri of mdFiles) {
-      try {
-        const stat = await fs.stat(uri.fsPath)
-        if (stat.mtimeMs >= sevenDaysAgo) {
-          await this.addFileAsync(uri.fsPath)
-        }
-      } catch {
-        // File might have been deleted
-      }
+    for (const filePath of mdFiles) {
+      await this.addFileAsync(filePath)
     }
 
     // Rebuild indices with what we have
@@ -79,7 +75,9 @@ export class WorkspaceCache {
     this.rebuildBacklinks()
 
     // Set up file watcher
-    this.fileWatcher = vscode.workspace.createFileSystemWatcher("**/*.md")
+    this.fileWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(getBrainRootUri(), "**/*.md")
+    )
     this.fileWatcher.onDidCreate((uri) => void this.onFileCreated(uri))
     this.fileWatcher.onDidChange((uri) => void this.onFileChanged(uri))
     this.fileWatcher.onDidDelete((uri) => this.onFileDeleted(uri))
@@ -92,16 +90,16 @@ export class WorkspaceCache {
    * Call this in background after fast init for complete index.
    */
   async initializeFull(): Promise<void> {
-    if (!this.workspaceRoot) {
+    if (!this.brainRoot) {
       return
     }
 
     // Find all markdown files not already cached
-    const mdFiles = await vscode.workspace.findFiles("**/*.md", "**/node_modules/**")
+    const mdFiles = await this.findMarkdownFiles()
 
-    for (const uri of mdFiles) {
-      if (!this.files.has(uri.fsPath)) {
-        await this.addFileAsync(uri.fsPath)
+    for (const filePath of mdFiles) {
+      if (!this.files.has(filePath)) {
+        await this.addFileAsync(filePath)
       }
     }
 
@@ -116,9 +114,9 @@ export class WorkspaceCache {
    * Load Meeting Notes folder names for {{pending}} placeholder completion.
    */
   private async loadMeetingNotesFolders(): Promise<void> {
-    if (!this.workspaceRoot) return
+    if (!this.brainRoot) return
 
-    const meetingNotesPath = path.join(this.workspaceRoot, "Meeting Notes")
+    const meetingNotesPath = path.join(this.brainRoot, "Meeting Notes")
     try {
       const entries = await fs.readdir(meetingNotesPath, { withFileTypes: true })
       for (const entry of entries) {
@@ -197,6 +195,8 @@ export class WorkspaceCache {
     this.meetingNotesFolders.clear()
     this.isInitialized = false
     this.isFullyLoaded = false
+    this.fileWatcher?.dispose()
+    this.fileWatcher = null
     await this.initializeFast()
     await this.initializeFull()
   }
@@ -216,32 +216,32 @@ export class WorkspaceCache {
   }
 
   /**
-   * Get workspace root path.
+   * Get Brain root path.
    */
-  getWorkspaceRoot(): string | null {
-    return this.workspaceRoot
+  getBrainRoot(): string | null {
+    return this.brainRoot
   }
 
   // Private methods
 
   private async addFileAsync(absolutePath: string): Promise<void> {
-    if (!this.workspaceRoot) return
+    if (!this.brainRoot) return
 
     try {
       const stat = await fs.stat(absolutePath)
       const content = await fs.readFile(absolutePath, "utf-8")
-      const relativePath = path.relative(this.workspaceRoot, absolutePath)
+      const relativePath = getRelativeBrainPath(absolutePath, this.brainRoot)
+      if (!relativePath) {
+        return
+      }
+
       const uid = extractUid(content)
 
       // Extract outgoing links
       const links = extractWikilinks(content)
-      const outgoingLinks = links.map((link) => {
-        // Handle uid: prefix links by extracting the path from label
-        if (link.isUid && link.label) {
-          return link.label.replace(/\.md$/, "")
-        }
-        return link.target.replace(/\.md$/, "")
-      })
+      const outgoingLinks = links
+        .filter((link) => !link.isUid)
+        .map((link) => link.target.replace(/\.md$/, ""))
 
       this.files.set(absolutePath, {
         absolutePath,
@@ -258,6 +258,59 @@ export class WorkspaceCache {
       }
     } catch {
       // File might have been deleted or is unreadable
+    }
+  }
+
+  private async findMarkdownFiles(modifiedSince?: number): Promise<string[]> {
+    if (!this.brainRoot) {
+      return []
+    }
+
+    const files: string[] = []
+    await this.walkDirectory(this.brainRoot, files, modifiedSince)
+    return files
+  }
+
+  private async walkDirectory(
+    currentPath: string,
+    files: string[],
+    modifiedSince?: number
+  ): Promise<void> {
+    let entries: Dirent[]
+    try {
+      entries = await fs.readdir(currentPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) {
+        continue
+      }
+
+      const fullPath = path.join(currentPath, entry.name)
+
+      if (entry.isDirectory()) {
+        await this.walkDirectory(fullPath, files, modifiedSince)
+        continue
+      }
+
+      if (!entry.isFile() || !entry.name.endsWith(".md")) {
+        continue
+      }
+
+      if (modifiedSince !== undefined) {
+        try {
+          const stat = await fs.stat(fullPath)
+          if (stat.mtimeMs < modifiedSince) {
+            continue
+          }
+        } catch {
+          continue
+        }
+      }
+
+      files.push(fullPath)
     }
   }
 
@@ -317,7 +370,7 @@ export class WorkspaceCache {
 let cacheInstance: WorkspaceCache | null = null
 
 /**
- * Get the global workspace cache instance.
+ * Get the global Brain cache instance.
  */
 export function getWorkspaceCache(): WorkspaceCache {
   if (!cacheInstance) {
