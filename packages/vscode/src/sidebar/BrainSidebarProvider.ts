@@ -13,6 +13,8 @@ interface ScheduleItem {
   filePath?: string   // Only set if it's a Meeting Notes wikilink
 }
 
+type BrainSidebarItemType = 'week' | 'day' | 'file' | 'meeting' | 'projects' | 'folder' | 'error'
+
 /**
  * Tree item representing an element in the Brain sidebar
  */
@@ -20,7 +22,7 @@ export class BrainSidebarItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
     public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly itemType: 'week' | 'day' | 'file' | 'meeting' | 'error' = 'week',
+    public readonly itemType: BrainSidebarItemType = 'week',
     icon?: string,
     resourceUri?: vscode.Uri
   ) {
@@ -149,6 +151,60 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     }
 
     return items
+  }
+
+  /**
+   * Get folder and markdown file items for a Brain directory.
+   */
+  private async getDirectoryItems(directoryPath: string): Promise<BrainSidebarItem[]> {
+    try {
+      const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(directoryPath))
+      const visibleEntries = entries.filter(([name]) => !name.startsWith('.'))
+
+      const folders = visibleEntries
+        .filter(([, type]) => type === vscode.FileType.Directory)
+        .sort(([left], [right]) => left.localeCompare(right))
+
+      const files = visibleEntries
+        .filter(
+          ([name, type]) =>
+            type === vscode.FileType.File && name.toLowerCase().endsWith('.md')
+        )
+        .sort(([left], [right]) => left.localeCompare(right))
+
+      return [
+        ...folders.map(([name]) => {
+          const folderUri = vscode.Uri.file(path.join(directoryPath, name))
+          return new BrainSidebarItem(
+            name,
+            vscode.TreeItemCollapsibleState.Collapsed,
+            'folder',
+            'folder',
+            folderUri
+          )
+        }),
+        ...files.map(([name]) => {
+          const fileUri = vscode.Uri.file(path.join(directoryPath, name))
+          const displayName = name.replace(/\.md$/i, '')
+          const item = new BrainSidebarItem(
+            displayName,
+            vscode.TreeItemCollapsibleState.None,
+            'file',
+            'file-text',
+            fileUri
+          )
+          item.contextValue = 'file'
+          item.command = {
+            command: 'vscode.open',
+            title: 'Open File',
+            arguments: [fileUri]
+          }
+          return item
+        })
+      ]
+    } catch {
+      return []
+    }
   }
 
   private async getWeeklyNotePath(): Promise<string | undefined> {
@@ -325,6 +381,16 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
         items.push(dayItem)
       }
 
+      const projectsUri = vscode.Uri.file(path.join(brainPath, 'Projects'))
+      const projectsItem = new BrainSidebarItem(
+        'Projects',
+        vscode.TreeItemCollapsibleState.Collapsed,
+        'projects',
+        'folder',
+        projectsUri
+      )
+      items.push(projectsItem)
+
       return items
     }
 
@@ -334,6 +400,11 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
       const meetings = this.getScheduleItems(dateStr)
       const projects = await this.getDayProjectFiles(dateStr)
       return [...meetings, ...projects]
+    }
+
+    // Projects level: browse Projects folder recursively
+    if ((element.itemType === 'projects' || element.itemType === 'folder') && element.resourceUri) {
+      return this.getDirectoryItems(element.resourceUri.fsPath)
     }
 
     return []

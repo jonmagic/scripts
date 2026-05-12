@@ -11,6 +11,7 @@ A dedicated sidebar view for navigating your Brain repository. Access it from th
 The sidebar includes:
 
 - **This Week** - Quick access to the current week's note, meeting notes, and daily projects
+- **Projects** - Browse folders and Markdown files under `Projects/`
 
 ### Week Navigation
 
