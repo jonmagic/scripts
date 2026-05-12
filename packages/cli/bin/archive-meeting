@@ -5,7 +5,7 @@
  * Usage:
  *   archive-meeting --brain-dir DIR --input PATH --meeting-notes-target TARGET \
  *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
- *     [--date YYYY-MM-DD] [--dry-run]
+ *     [--model MODEL] [--reasoning-effort LEVEL] [--date YYYY-MM-DD] [--dry-run]
  */
 
 import { parseArgs } from "node:util"
@@ -18,6 +18,8 @@ const { values } = parseArgs({
     "meeting-notes-target": { type: "string" },
     "executive-summary-prompt-path": { type: "string" },
     "detailed-notes-prompt-path": { type: "string" },
+    model: { type: "string" },
+    "reasoning-effort": { type: "string" },
     date: { type: "string" },
     "dry-run": { type: "boolean" },
     help: { type: "boolean", short: "h" },
@@ -34,6 +36,8 @@ Options:
   --meeting-notes-target TARGET        Meeting Notes target basename (optional, fzf if omitted)
   --executive-summary-prompt-path PATH Path to prompt file for executive summary (required)
   --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes (required)
+  --model MODEL                        Copilot model to use for generated summaries
+  --reasoning-effort LEVEL             Copilot reasoning effort: low, medium, high, or xhigh
   --date YYYY-MM-DD                    Override meeting date (defaults to file mtime)
   --dry-run                            Show what would be done without writing files
   -h, --help                           Show this help message
@@ -56,6 +60,8 @@ await archiveMeeting({
   meetingNotesTarget: values["meeting-notes-target"],
   executiveSummaryPromptPath: values["executive-summary-prompt-path"],
   detailedNotesPromptPath: values["detailed-notes-prompt-path"],
+  model: values.model,
+  reasoningEffort: values["reasoning-effort"],
   date: values["date"],
   dryRun: values["dry-run"],
 })

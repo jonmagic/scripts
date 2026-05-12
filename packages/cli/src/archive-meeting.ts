@@ -28,6 +28,8 @@ export interface ArchiveMeetingOptions {
   date?: string
   executiveSummaryPromptPath: string
   detailedNotesPromptPath: string
+  model?: string
+  reasoningEffort?: string
   dryRun?: boolean
 }
 
@@ -387,7 +389,9 @@ function processZoomFolder(zoomPath: string): string {
 async function callCopilot(
   transcript: string,
   promptPath: string,
-  brainDir: string
+  brainDir: string,
+  model?: string,
+  reasoningEffort?: string
 ): Promise<string> {
   if (!fs.existsSync(promptPath)) {
     throw new Error(`Prompt file not found: ${promptPath}`)
@@ -397,12 +401,20 @@ async function callCopilot(
   const fullPrompt = `${systemPrompt}\n\n${transcript}`
 
   const configDir = path.join(process.env.HOME || "", ".copilot")
-  const result = await runCommand("copilot", [
+  const args = [
     "-p", fullPrompt,
     "--allow-all-tools",
     "--add-dir", brainDir,
     "--add-dir", configDir,
-  ])
+  ]
+  if (model) {
+    args.push("--model", model)
+  }
+  if (reasoningEffort) {
+    args.push("--reasoning-effort", reasoningEffort)
+  }
+
+  const result = await runCommand("copilot", args)
   return result.trim()
 }
 
@@ -667,6 +679,8 @@ export async function archiveMeeting(
     brainDir,
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
+    model,
+    reasoningEffort,
     dryRun = false,
   } = options
 
@@ -706,6 +720,12 @@ export async function archiveMeeting(
   console.log(`Processing: ${input}`)
   console.log(`Date: ${meetingDate}`)
   console.log(`Target: Meeting Notes/${meetingNotesTarget}.md`)
+  if (model) {
+    console.log(`Model: ${model}`)
+  }
+  if (reasoningEffort) {
+    console.log(`Reasoning effort: ${reasoningEffort}`)
+  }
 
   // Step 1: Get next file number
   const nextNum = findNextNumber(brainDir, meetingDate)
@@ -750,8 +770,8 @@ export async function archiveMeeting(
   // Step 4: Generate executive summary and meeting notes concurrently
   console.log("\nGenerating executive summary and meeting notes...")
   const [execSummary, meetingNotes] = await Promise.all([
-    callCopilot(transcriptMd, executiveSummaryPromptPath, brainDir),
-    callCopilot(transcriptMd, detailedNotesPromptPath, brainDir),
+    callCopilot(transcriptMd, executiveSummaryPromptPath, brainDir, model, reasoningEffort),
+    callCopilot(transcriptMd, detailedNotesPromptPath, brainDir, model, reasoningEffort),
   ])
 
   fs.mkdirSync(execSummariesDir, { recursive: true })
