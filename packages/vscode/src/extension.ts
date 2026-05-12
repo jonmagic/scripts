@@ -9,7 +9,15 @@ import { registerFileRenameHandler } from "./features/FileRenameHandler"
 import { registerOpenDocumentCommand } from "./commands/openDocumentByReference"
 import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
 import { registerCreateBookmarkCommand } from "./commands/createBookmark"
+import {
+  extendBrainMarkdownIt,
+  type MarkdownItLike,
+} from "./markdown/wikiLinks"
 import { BrainSidebarProvider } from "./sidebar/BrainSidebarProvider"
+
+interface MarkdownExtensionApi {
+  extendMarkdownIt(md: MarkdownItLike): MarkdownItLike
+}
 
 function createBrainWatcher(onChange: () => void): vscode.FileSystemWatcher {
   const watcher = vscode.workspace.createFileSystemWatcher(
@@ -21,7 +29,9 @@ function createBrainWatcher(onChange: () => void): vscode.FileSystemWatcher {
   return watcher
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(
+  context: vscode.ExtensionContext
+): Promise<MarkdownExtensionApi> {
   // Initialize workspace cache - fast init blocks, full init runs in background
   const cache = getWorkspaceCache()
   await cache.initializeFast()
@@ -160,6 +170,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   )
 
   context.subscriptions.push(createNoteDisposable)
+
+  return {
+    extendMarkdownIt(md: MarkdownItLike): MarkdownItLike {
+      return extendBrainMarkdownIt(md)
+    },
+  }
 }
 
 export function deactivate(): void {

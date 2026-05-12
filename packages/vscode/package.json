@@ -1,7 +1,7 @@
 {
   "name": "jonmagic-scripts",
   "displayName": "Jonmagic Scripts",
-  "description": "Utilities for my Brain repo, including weekly navigation",
+  "description": "Utilities for my Brain repo, including weekly navigation and wikilink preview",
   "version": "0.0.0",
   "publisher": "jonmagic",
   "repository": {
@@ -80,6 +80,7 @@
         }
       }
     },
+    "markdown.markdownItPlugins": true,
     "viewsContainers": {
       "activitybar": [
         {

@@ -1,6 +1,6 @@
 # Jonmagic Scripts VS Code Extension
 
-Utilities for my Brain repo, including weekly navigation.
+Utilities for my Brain repo, including weekly navigation and wikilink-aware Markdown preview.
 
 ## Features
 
@@ -25,6 +25,17 @@ Navigate between weeks using the toolbar buttons:
 
 - **Jonmagic: Create Daily Project Note** - Create a new numbered project note for today
 - **Jonmagic: Add Frontmatter to Current File** - Add YAML frontmatter to the current markdown file
+
+### Wikilink Preview
+
+The extension teaches VS Code's native Markdown preview to render Brain wikilinks:
+
+- `[[Wiki/Page]]`
+- `[[Wiki/Page|Custom Label]]`
+- `[[uid:abc123]]`
+- `[[uid:abc123|Custom Label]]`
+
+Resolved wikilinks become clickable preview links. Unresolved wikilinks stay visibly unresolved in the preview instead of becoming dead anchors.
 
 ## Configuration
 
