@@ -6,7 +6,7 @@ import * as vscode from "vscode"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import {
-  generateTid,
+  generateUniqueTid,
   hasFrontmatter,
   serializeFrontmatter,
   extractWikilinks,
@@ -80,6 +80,9 @@ export async function addFrontmatter(): Promise<void> {
   }
 
   const absolutePath = document.uri.fsPath
+  if (!cache.hasFullIndex()) {
+    await cache.refresh()
+  }
 
   // Detect collection type
   const type = detectCollectionType(relativePath)
@@ -90,7 +93,11 @@ export async function addFrontmatter(): Promise<void> {
   const createdDate = pathDate ?? stat.mtime
 
   // Generate TID
-  const uid = generateTid(createdDate)
+  const uid = generateUniqueTid(
+    cache.getUidIndex().byUid.keys(),
+    createdDate,
+    relativePath
+  )
 
   // Build frontmatter
   const frontmatterData: FrontmatterData = {

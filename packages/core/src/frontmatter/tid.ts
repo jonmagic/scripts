@@ -49,3 +49,51 @@ export function generateTid(
 
   return timestampEncoded + clockEncoded
 }
+
+/**
+ * Produce a stable 10-bit clock ID from a seed, usually a relative file path.
+ */
+export function clockIdForSeed(seed: string): number {
+  let hash = 0x811c9dc5
+
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+
+  return (hash >>> 0) & 0x3ff
+}
+
+/**
+ * Generate a TID that does not collide with existing UIDs.
+ *
+ * When many notes share a path-derived created timestamp, a plain random
+ * 10-bit clock ID is collision-prone. This walks the clock space
+ * deterministically, then advances the timestamp by milliseconds if needed.
+ */
+export function generateUniqueTid(
+  existingUids: Iterable<string>,
+  timestamp?: Date,
+  seed = ""
+): string {
+  const existing = existingUids instanceof Set
+    ? existingUids
+    : new Set(existingUids)
+  const baseTimestamp = timestamp ?? new Date()
+  const initialClockId = seed
+    ? clockIdForSeed(seed)
+    : Math.floor(Math.random() * 1024)
+
+  for (let attempt = 0; ; attempt++) {
+    const timestampOffsetMs = Math.floor(attempt / 1024)
+    const clockId = (initialClockId + attempt) % 1024
+    const candidate = generateTid(
+      new Date(baseTimestamp.getTime() + timestampOffsetMs),
+      clockId
+    )
+
+    if (!existing.has(candidate)) {
+      return candidate
+    }
+  }
+}

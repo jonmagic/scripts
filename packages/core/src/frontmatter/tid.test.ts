@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { generateTid, encodeBase32Sortable } from "./tid.js"
+import {
+  clockIdForSeed,
+  generateTid,
+  generateUniqueTid,
+  encodeBase32Sortable,
+} from "./tid.js"
 
 describe("encodeBase32Sortable", () => {
   test("encodes zero correctly", () => {
@@ -71,5 +76,47 @@ describe("generateTid", () => {
     const tid2 = generateTid(t2, 0)
 
     expect(tid1 < tid2).toBe(true)
+  })
+})
+
+describe("clockIdForSeed", () => {
+  test("produces a stable 10-bit clock ID", () => {
+    const clockId = clockIdForSeed("Daily Projects/2026-01-24/01 notes.md")
+
+    expect(clockId).toBe(clockIdForSeed("Daily Projects/2026-01-24/01 notes.md"))
+    expect(clockId).toBeGreaterThanOrEqual(0)
+    expect(clockId).toBeLessThan(1024)
+  })
+})
+
+describe("generateUniqueTid", () => {
+  test("is deterministic with a fixed timestamp and seed", () => {
+    const timestamp = new Date("2026-01-24T12:00:00.000Z")
+    const seed = "Daily Projects/2026-01-24/01 notes.md"
+
+    expect(generateUniqueTid([], timestamp, seed)).toBe(
+      generateUniqueTid([], timestamp, seed)
+    )
+  })
+
+  test("skips an existing TID collision", () => {
+    const timestamp = new Date("2026-01-24T12:00:00.000Z")
+    const seed = "Daily Projects/2026-01-24/01 notes.md"
+    const existing = generateUniqueTid([], timestamp, seed)
+    const next = generateUniqueTid([existing], timestamp, seed)
+
+    expect(next).not.toBe(existing)
+    expect(next.length).toBe(13)
+  })
+
+  test("advances the timestamp after exhausting clock IDs", () => {
+    const timestamp = new Date("2026-01-24T12:00:00.000Z")
+    const existing = Array.from({ length: 1024 }, (_value, clockId) =>
+      generateTid(timestamp, clockId)
+    )
+    const next = generateUniqueTid(existing, timestamp, "same timestamp")
+
+    expect(existing).not.toContain(next)
+    expect(next > generateTid(timestamp, 1023)).toBe(true)
   })
 })

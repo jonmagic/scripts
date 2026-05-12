@@ -1,5 +1,10 @@
 // Frontmatter module exports
-export { generateTid, encodeBase32Sortable } from "./tid.js"
+export {
+  clockIdForSeed,
+  generateTid,
+  generateUniqueTid,
+  encodeBase32Sortable,
+} from "./tid.js"
 export {
   hasFrontmatter,
   parseFrontmatter,
