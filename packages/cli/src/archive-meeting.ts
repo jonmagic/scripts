@@ -4,8 +4,8 @@
  * Archives a single meeting by:
  * 1. Processing input (VTT file or Zoom folder) into markdown transcript
  * 2. Adding frontmatter with uid, type, created
- * 3. Generating executive summary using copilot CLI
- * 4. Generating detailed meeting notes using copilot CLI
+ * 3. Generating executive summary using llm
+ * 4. Generating detailed meeting notes using llm
  * 5. Updating the appropriate Meeting Notes file
  * 6. Checking off the meeting in Weekly Notes (if found)
  *
@@ -384,37 +384,29 @@ function processZoomFolder(zoomPath: string): string {
 }
 
 /**
- * Call copilot CLI with a system prompt and input
+ * Call llm with a system prompt and transcript input
  */
-async function callCopilot(
+async function callLlm(
   transcript: string,
   promptPath: string,
-  brainDir: string,
-  model?: string,
-  reasoningEffort?: string
+  model?: string
 ): Promise<string> {
   if (!fs.existsSync(promptPath)) {
     throw new Error(`Prompt file not found: ${promptPath}`)
   }
 
   const systemPrompt = fs.readFileSync(promptPath, "utf-8")
-  const fullPrompt = `${systemPrompt}\n\n${transcript}`
-
-  const configDir = path.join(process.env.HOME || "", ".copilot")
   const args = [
-    "-p", fullPrompt,
-    "--allow-all-tools",
-    "--add-dir", brainDir,
-    "--add-dir", configDir,
+    "prompt",
+    "--no-log",
+    "--no-stream",
+    "--system", systemPrompt,
   ]
   if (model) {
     args.push("--model", model)
   }
-  if (reasoningEffort) {
-    args.push("--reasoning-effort", reasoningEffort)
-  }
 
-  const result = await runCommand("copilot", args)
+  const result = await runCommand("llm", args, transcript)
   return result.trim()
 }
 
@@ -680,7 +672,6 @@ export async function archiveMeeting(
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
     model,
-    reasoningEffort,
     dryRun = false,
   } = options
 
@@ -722,9 +713,6 @@ export async function archiveMeeting(
   console.log(`Target: Meeting Notes/${meetingNotesTarget}.md`)
   if (model) {
     console.log(`Model: ${model}`)
-  }
-  if (reasoningEffort) {
-    console.log(`Reasoning effort: ${reasoningEffort}`)
   }
 
   // Step 1: Get next file number
@@ -770,8 +758,8 @@ export async function archiveMeeting(
   // Step 4: Generate executive summary and meeting notes concurrently
   console.log("\nGenerating executive summary and meeting notes...")
   const [execSummary, meetingNotes] = await Promise.all([
-    callCopilot(transcriptMd, executiveSummaryPromptPath, brainDir, model, reasoningEffort),
-    callCopilot(transcriptMd, detailedNotesPromptPath, brainDir, model, reasoningEffort),
+    callLlm(transcriptMd, executiveSummaryPromptPath, model),
+    callLlm(transcriptMd, detailedNotesPromptPath, model),
   ])
 
   fs.mkdirSync(execSummariesDir, { recursive: true })

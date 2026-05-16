@@ -5,7 +5,7 @@
  * Usage:
  *   archive-meeting --brain-dir DIR --input PATH --meeting-notes-target TARGET \
  *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
- *     [--model MODEL] [--reasoning-effort LEVEL] [--date YYYY-MM-DD] [--dry-run]
+ *     [--model MODEL] [--date YYYY-MM-DD] [--dry-run]
  */
 
 import { parseArgs } from "node:util"
@@ -36,8 +36,8 @@ Options:
   --meeting-notes-target TARGET        Meeting Notes target basename (optional, fzf if omitted)
   --executive-summary-prompt-path PATH Path to prompt file for executive summary (required)
   --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes (required)
-  --model MODEL                        Copilot model to use for generated summaries
-  --reasoning-effort LEVEL             Copilot reasoning effort: low, medium, high, or xhigh
+  --model MODEL                        llm model to use for generated summaries
+  --reasoning-effort LEVEL             Deprecated; accepted for compatibility and ignored
   --date YYYY-MM-DD                    Override meeting date (defaults to file mtime)
   --dry-run                            Show what would be done without writing files
   -h, --help                           Show this help message
