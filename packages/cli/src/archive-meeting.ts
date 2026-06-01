@@ -264,6 +264,39 @@ function findNextNumber(brainDir: string, date: string): number {
   return Math.max(...allNums) + 1
 }
 
+function findWeeklyNoteForDate(brainDir: string, date: string): string | null {
+  const weeklyNotesDir = path.join(brainDir, "Weekly Notes")
+  if (!fs.existsSync(weeklyNotesDir)) {
+    return null
+  }
+
+  const meetingDt = new Date(date)
+  const weeklyNoteRe = /^Week of (\d{4}-\d{2}-\d{2})\.md$/
+  const candidates: { weekStart: Date; path: string }[] = []
+
+  for (const entry of fs.readdirSync(weeklyNotesDir)) {
+    const match = weeklyNoteRe.exec(entry)
+    if (match) {
+      candidates.push({
+        weekStart: new Date(match[1]!),
+        path: path.join(weeklyNotesDir, entry),
+      })
+    }
+  }
+
+  candidates.sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime())
+
+  for (const { weekStart, path: notePath } of candidates) {
+    const weekEnd = new Date(weekStart)
+    weekEnd.setDate(weekEnd.getDate() + 6)
+    if (meetingDt >= weekStart && meetingDt <= weekEnd) {
+      return notePath
+    }
+  }
+
+  return null
+}
+
 /**
  * Get date from file mtime
  */
@@ -471,7 +504,7 @@ function updateMeetingNotes(options: {
 /**
  * Check off meeting in Weekly Notes
  */
-function checkOffWeeklyNote(
+export function checkOffWeeklyNote(
   brainDir: string,
   target: string,
   meetingDate: string
@@ -481,41 +514,18 @@ function checkOffWeeklyNote(
     return "Weekly Notes directory not found"
   }
 
-  const meetingDt = new Date(meetingDate)
-  const weeklyNoteRe = /^Week of (\d{4}-\d{2}-\d{2})\.md$/
-
-  const candidates: { weekStart: Date; path: string }[] = []
-  for (const entry of fs.readdirSync(weeklyNotesDir)) {
-    const match = weeklyNoteRe.exec(entry)
-    if (match) {
-      candidates.push({
-        weekStart: new Date(match[1]!),
-        path: path.join(weeklyNotesDir, entry),
-      })
-    }
-  }
-
-  if (candidates.length === 0) {
+  const weeklyNoteNames = fs.readdirSync(weeklyNotesDir)
+  if (!weeklyNoteNames.some((entry) => /^Week of \d{4}-\d{2}-\d{2}\.md$/.test(entry))) {
     return "No Weekly Notes found"
   }
 
-  candidates.sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime())
-
-  let weeklyNote: string | null = null
-  for (const { weekStart, path: notePath } of candidates) {
-    const weekEnd = new Date(weekStart)
-    weekEnd.setDate(weekEnd.getDate() + 6)
-    if (meetingDt >= weekStart && meetingDt <= weekEnd) {
-      weeklyNote = notePath
-      break
-    }
-  }
-
+  const weeklyNote = findWeeklyNoteForDate(brainDir, meetingDate)
   if (!weeklyNote) {
     return `No Weekly Note found containing date ${meetingDate}`
   }
 
-  let content = fs.readFileSync(weeklyNote, "utf-8")
+  const originalContent = fs.readFileSync(weeklyNote, "utf-8")
+  let content = originalContent
   const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const pattern = new RegExp(
     `^(\\s*- \\[) (\\] \\d{4} \\[\\[Meeting Notes\\/${escapedTarget}(?:\\|[^\\]]+)?\\]\\].*?)$`,
@@ -524,13 +534,16 @@ function checkOffWeeklyNote(
 
   let count = 0
   content = content.replace(pattern, (_, prefix, suffix) => {
+    if (count > 0) {
+      return `${prefix} ${suffix}`
+    }
     count++
     return `${prefix}x${suffix}`
   })
 
   if (count > 0) {
     fs.writeFileSync(weeklyNote, content, "utf-8")
-    return `Checked off ${count} item(s) in ${path.basename(weeklyNote)}`
+    return `Checked off ${count} item in ${path.basename(weeklyNote)}`
   }
 
   return `No matching checklist item found in ${path.basename(weeklyNote)}`
@@ -540,7 +553,7 @@ function checkOffWeeklyNote(
  * Replace pending meeting placeholders in Weekly Notes
  * Converts {{Meeting Notes/<target>}} to [[Meeting Notes/<target>/<date>/<number>]]
  */
-function replacePendingPlaceholders(
+export function replacePendingPlaceholders(
   brainDir: string,
   target: string,
   meetingDate: string,
@@ -551,38 +564,34 @@ function replacePendingPlaceholders(
     return "Weekly Notes directory not found"
   }
 
-  // Find all weekly notes files
-  const weeklyNoteRe = /^Week of \d{4}-\d{2}-\d{2}\.md$/
-  const results: string[] = []
-
-  for (const entry of fs.readdirSync(weeklyNotesDir)) {
-    if (!weeklyNoteRe.test(entry)) continue
-
-    const filePath = path.join(weeklyNotesDir, entry)
-    let content = fs.readFileSync(filePath, "utf-8")
-
-    // Match {{Meeting Notes/<target>}} - case insensitive for target
-    const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    const pattern = new RegExp(
-      `\\{\\{Meeting Notes\\/${escapedTarget}\\}\\}`,
-      "gi"
-    )
-
-    const newWikilink = `[[Meeting Notes/${target}/${meetingDate}/${fileNumber}]]`
-    let count = 0
-
-    content = content.replace(pattern, () => {
-      count++
-      return newWikilink
-    })
-
-    if (count > 0) {
-      fs.writeFileSync(filePath, content, "utf-8")
-      results.push(`Replaced ${count} placeholder(s) in ${entry}`)
-    }
+  const weeklyNoteNames = fs.readdirSync(weeklyNotesDir)
+  if (!weeklyNoteNames.some((entry) => /^Week of \d{4}-\d{2}-\d{2}\.md$/.test(entry))) {
+    return "No Weekly Notes found"
   }
 
-  return results.length > 0 ? results.join("\n") : "No pending placeholders found"
+  const weeklyNote = findWeeklyNoteForDate(brainDir, meetingDate)
+  if (!weeklyNote) {
+    return `No Weekly Note found containing date ${meetingDate}`
+  }
+
+  const originalContent = fs.readFileSync(weeklyNote, "utf-8")
+  let content = originalContent
+
+  // Match {{Meeting Notes/<target>}} - case insensitive for target
+  const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const pattern = new RegExp(
+    `\\{\\{Meeting Notes\\/${escapedTarget}\\}\\}`,
+    "i"
+  )
+  const newWikilink = `[[Meeting Notes/${target}/${meetingDate}/${fileNumber}]]`
+
+  content = content.replace(pattern, newWikilink)
+  if (content !== originalContent) {
+    fs.writeFileSync(weeklyNote, content, "utf-8")
+    return `Replaced 1 placeholder in ${path.basename(weeklyNote)}`
+  }
+
+  return `No pending placeholders found in ${path.basename(weeklyNote)}`
 }
 
 /**
