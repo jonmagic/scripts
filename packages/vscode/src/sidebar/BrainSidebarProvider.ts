@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as vscode from 'vscode'
 import { formatDate, getDayName, getWeekDays, getWeekLabel, getWeekStart } from './weekUtils'
+import { getWorkspaceCache } from "../cache/workspaceCache"
 import { getBrainPath } from "../config/brainPath"
 
 /**
@@ -120,6 +121,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     const brainPath = getBrainPath()
     const dayFolder = path.join(brainPath, 'Daily Projects', dateStr)
     const items: BrainSidebarItem[] = []
+    const cache = getWorkspaceCache()
 
     try {
       const folderUri = vscode.Uri.file(dayFolder)
@@ -130,6 +132,10 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
 
       for (const [name] of files) {
         const fileUri = vscode.Uri.file(path.join(dayFolder, name))
+        if (await cache.isIgnoredPath(fileUri.fsPath)) {
+          continue
+        }
+
         const displayName = name.replace(/\.[^.]+$/, '')
         const item = new BrainSidebarItem(
           displayName,
@@ -158,14 +164,25 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
    */
   private async getDirectoryItems(directoryPath: string): Promise<BrainSidebarItem[]> {
     try {
+      const cache = getWorkspaceCache()
       const entries = await vscode.workspace.fs.readDirectory(vscode.Uri.file(directoryPath))
       const visibleEntries = entries.filter(([name]) => !name.startsWith('.'))
+      const ignoredEntries = await Promise.all(
+        visibleEntries.map(async ([name, type]) => [
+          name,
+          type,
+          await cache.isIgnoredPath(path.join(directoryPath, name), {
+            isDirectory: type === vscode.FileType.Directory
+          })
+        ] as const)
+      )
+      const includedEntries = ignoredEntries.filter(([, , ignored]) => !ignored)
 
-      const folders = visibleEntries
+      const folders = includedEntries
         .filter(([, type]) => type === vscode.FileType.Directory)
         .sort(([left], [right]) => left.localeCompare(right))
 
-      const files = visibleEntries
+      const files = includedEntries
         .filter(
           ([name, type]) =>
             type === vscode.FileType.File && name.toLowerCase().endsWith('.md')

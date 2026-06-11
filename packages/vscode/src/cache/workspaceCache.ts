@@ -24,6 +24,7 @@ import {
   getBrainRootUri,
   getRelativeBrainPath,
 } from "../config/brainPath"
+import { GitignoreMatcher } from "./gitignore"
 
 export interface CachedFile {
   /** Absolute path to the file */
@@ -47,6 +48,8 @@ export class WorkspaceCache {
   private meetingNotesFolders: Set<string> = new Set()
   private brainRoot: string | null = null
   private fileWatcher: vscode.FileSystemWatcher | null = null
+  private gitignoreWatcher: vscode.FileSystemWatcher | null = null
+  private ignoreMatcher: GitignoreMatcher | null = null
   private isInitialized = false
   private isFullyLoaded = false
 
@@ -57,7 +60,10 @@ export class WorkspaceCache {
   async initializeFast(): Promise<void> {
     this.fileWatcher?.dispose()
     this.fileWatcher = null
+    this.gitignoreWatcher?.dispose()
+    this.gitignoreWatcher = null
     this.brainRoot = getBrainPath()
+    this.ignoreMatcher = new GitignoreMatcher(this.brainRoot)
 
     // Load Meeting Notes folder names (for {{pending}} completion)
     await this.loadMeetingNotesFolders()
@@ -80,7 +86,15 @@ export class WorkspaceCache {
     )
     this.fileWatcher.onDidCreate((uri) => void this.onFileCreated(uri))
     this.fileWatcher.onDidChange((uri) => void this.onFileChanged(uri))
-    this.fileWatcher.onDidDelete((uri) => this.onFileDeleted(uri))
+    this.fileWatcher.onDidDelete((uri) => void this.onFileDeleted(uri))
+
+    this.gitignoreWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(getBrainRootUri(), "**/.gitignore")
+    )
+    const refreshIgnoredFiles = () => void this.refresh()
+    this.gitignoreWatcher.onDidCreate(refreshIgnoredFiles)
+    this.gitignoreWatcher.onDidChange(refreshIgnoredFiles)
+    this.gitignoreWatcher.onDidDelete(refreshIgnoredFiles)
 
     this.isInitialized = true
   }
@@ -134,6 +148,7 @@ export class WorkspaceCache {
    */
   dispose(): void {
     this.fileWatcher?.dispose()
+    this.gitignoreWatcher?.dispose()
   }
 
   /**
@@ -197,6 +212,9 @@ export class WorkspaceCache {
     this.isFullyLoaded = false
     this.fileWatcher?.dispose()
     this.fileWatcher = null
+    this.gitignoreWatcher?.dispose()
+    this.gitignoreWatcher = null
+    this.ignoreMatcher = null
     await this.initializeFast()
     await this.initializeFull()
   }
@@ -222,10 +240,22 @@ export class WorkspaceCache {
     return this.brainRoot
   }
 
+  async isIgnoredPath(
+    absolutePath: string,
+    options: { isDirectory?: boolean } = {}
+  ): Promise<boolean> {
+    return this.shouldIgnorePath(absolutePath, options.isDirectory ?? false)
+  }
+
   // Private methods
 
   private async addFileAsync(absolutePath: string): Promise<void> {
     if (!this.brainRoot) return
+
+    if (await this.shouldIgnorePath(absolutePath, false)) {
+      this.files.delete(absolutePath)
+      return
+    }
 
     try {
       const stat = await fs.stat(absolutePath)
@@ -291,11 +321,18 @@ export class WorkspaceCache {
       const fullPath = path.join(currentPath, entry.name)
 
       if (entry.isDirectory()) {
+        if (await this.shouldIgnorePath(fullPath, true)) {
+          continue
+        }
         await this.walkDirectory(fullPath, files, modifiedSince)
         continue
       }
 
       if (!entry.isFile() || !entry.name.endsWith(".md")) {
+        continue
+      }
+
+      if (await this.shouldIgnorePath(fullPath, false)) {
         continue
       }
 
@@ -312,6 +349,26 @@ export class WorkspaceCache {
 
       files.push(fullPath)
     }
+  }
+
+  private async shouldIgnorePath(
+    absolutePath: string,
+    isDirectory: boolean
+  ): Promise<boolean> {
+    if (!this.brainRoot || !this.ignoreMatcher) {
+      return false
+    }
+
+    const relativePath = getRelativeBrainPath(absolutePath, this.brainRoot)
+    if (!relativePath) {
+      return true
+    }
+
+    if (relativePath.split("/").some((part) => part.startsWith("."))) {
+      return true
+    }
+
+    return this.ignoreMatcher.isIgnored(absolutePath, { isDirectory })
   }
 
   private rebuildUidIndex(): void {
@@ -348,18 +405,33 @@ export class WorkspaceCache {
   }
 
   private async onFileCreated(uri: vscode.Uri): Promise<void> {
+    if (await this.shouldIgnorePath(uri.fsPath, false)) {
+      return
+    }
+
     await this.addFileAsync(uri.fsPath)
     this.rebuildUidIndex()
     this.rebuildBacklinks()
   }
 
   private async onFileChanged(uri: vscode.Uri): Promise<void> {
+    if (await this.shouldIgnorePath(uri.fsPath, false)) {
+      this.files.delete(uri.fsPath)
+      this.rebuildUidIndex()
+      this.rebuildBacklinks()
+      return
+    }
+
     await this.addFileAsync(uri.fsPath)
     this.rebuildUidIndex()
     this.rebuildBacklinks()
   }
 
-  private onFileDeleted(uri: vscode.Uri): void {
+  private async onFileDeleted(uri: vscode.Uri): Promise<void> {
+    if (await this.shouldIgnorePath(uri.fsPath, false)) {
+      return
+    }
+
     this.files.delete(uri.fsPath)
     this.rebuildUidIndex()
     this.rebuildBacklinks()

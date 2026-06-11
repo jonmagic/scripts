@@ -34,13 +34,23 @@ function getResourceUri(target: ResourceTarget): vscode.Uri | undefined {
   return target.resourceUri
 }
 
-function createBrainWatcher(onChange: () => void): vscode.FileSystemWatcher {
+function createBrainWatcher(
+  onChange: () => void,
+  shouldIgnore: (uri: vscode.Uri) => Thenable<boolean>
+): vscode.FileSystemWatcher {
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(getBrainRootUri(), "**/*.md")
   )
-  watcher.onDidChange(onChange)
-  watcher.onDidCreate(onChange)
-  watcher.onDidDelete(onChange)
+  const handleChange = (uri: vscode.Uri) => {
+    void shouldIgnore(uri).then((ignored) => {
+      if (!ignored) {
+        onChange()
+      }
+    })
+  }
+  watcher.onDidChange(handleChange)
+  watcher.onDidCreate(handleChange)
+  watcher.onDidDelete(handleChange)
   return watcher
 }
 
@@ -238,6 +248,8 @@ export async function activate(
   // Register Brain sidebar tree view
   const brainSidebarProvider = new BrainSidebarProvider()
   const refreshSidebar = () => brainSidebarProvider.refresh()
+  const shouldIgnoreSidebarUri = (uri: vscode.Uri) =>
+    cache.isIgnoredPath(uri.fsPath)
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider("brainWeekView", brainSidebarProvider)
@@ -270,7 +282,7 @@ export async function activate(
   )
 
   // Watch for file changes in Brain folder to auto-refresh sidebar
-  let watcher = createBrainWatcher(refreshSidebar)
+  let watcher = createBrainWatcher(refreshSidebar, shouldIgnoreSidebarUri)
   context.subscriptions.push({
     dispose: () => {
       watcher.dispose()
@@ -283,7 +295,7 @@ export async function activate(
       }
 
       watcher.dispose()
-      watcher = createBrainWatcher(refreshSidebar)
+      watcher = createBrainWatcher(refreshSidebar, shouldIgnoreSidebarUri)
       void cache.refresh().then(() => {
         refreshSidebar()
       })
