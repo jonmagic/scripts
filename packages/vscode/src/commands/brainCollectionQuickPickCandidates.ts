@@ -57,6 +57,12 @@ interface ProjectFile {
   relativePath: string
 }
 
+interface DateFolderCandidate {
+  candidate: BrainCollectionCandidate
+  date: string
+  fileName: string
+}
+
 interface ProjectDirectoryQueueItem {
   depth: number
   directoryPath: string
@@ -299,17 +305,28 @@ async function candidatesFromDateFolders(
         .sort((left, right) => right.name.localeCompare(left.name))
         .slice(0, options.maxFilesPerFolder)
 
-      return files.map((file) =>
-        createCandidate(
+      return files.map((file): DateFolderCandidate => ({
+        candidate: createCandidate(
           brainRoot,
           path.join(folder.absolutePath, file.name),
           descriptionForFolder(folder)
-        )
-      )
+        ),
+        date: folder.date,
+        fileName: file.name,
+      }))
     })
   )
 
-  return groups.flat().slice(0, options.limit)
+  return groups
+    .flat()
+    .sort(
+      (left, right) =>
+        right.date.localeCompare(left.date) ||
+        right.fileName.localeCompare(left.fileName) ||
+        left.candidate.relativePath.localeCompare(right.candidate.relativePath)
+    )
+    .slice(0, options.limit)
+    .map((item) => item.candidate)
 }
 
 async function getDateCollectionCandidates(

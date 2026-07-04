@@ -83,22 +83,35 @@ describe("getBrainCollectionCandidates", () => {
 
   test("sorts Meeting Notes by meeting date before person and path", async () => {
     const brainRoot = await createTempBrain()
-    await writeBrainFile(brainRoot, "Meeting Notes/alice/2026-07-04/02.md")
-    await writeBrainFile(brainRoot, "Meeting Notes/alice/2026-07-03/02.md")
-    await writeBrainFile(brainRoot, "Meeting Notes/bob/2026-07-04/01.md")
-    await writeBrainFile(brainRoot, "Meeting Notes/alice/2026-07-04/01.md")
+    await writeBrainFile(brainRoot, "Meeting Notes/blakechasen/2026-07-01/02.md")
+    await writeBrainFile(brainRoot, "Meeting Notes/Copilot/2026-07-01/04.md")
+    await writeBrainFile(brainRoot, "Meeting Notes/ieatkimchi/2026-07-01/05.md")
+    await writeBrainFile(
+      brainRoot,
+      "Meeting Notes/melissamcdonough/2026-07-01/06.md"
+    )
+    await writeBrainFile(brainRoot, "Meeting Notes/OCISO/2026-07-01/03.md")
+    await writeBrainFile(brainRoot, "Meeting Notes/tgthorley/2026-07-01/01.md")
+    await writeBrainFile(brainRoot, "Meeting Notes/buckelij/2026-06-30/02.md")
+    await writeBrainFile(brainRoot, "Meeting Notes/tcarn/2026-06-30/01.md")
     await writeBrainFile(brainRoot, "Meeting Notes/.hidden/2026-07-05/01.md")
     await writeBrainFile(brainRoot, "Meeting Notes/bob/not-a-date/01.md")
 
     const result = await getBrainCollectionCandidates(brainRoot, "meetingNotes")
 
     expect(result.candidates.map((candidate) => candidate.relativePath)).toEqual([
-      "Meeting Notes/alice/2026-07-04/02.md",
-      "Meeting Notes/alice/2026-07-04/01.md",
-      "Meeting Notes/bob/2026-07-04/01.md",
-      "Meeting Notes/alice/2026-07-03/02.md",
+      "Meeting Notes/melissamcdonough/2026-07-01/06.md",
+      "Meeting Notes/ieatkimchi/2026-07-01/05.md",
+      "Meeting Notes/Copilot/2026-07-01/04.md",
+      "Meeting Notes/OCISO/2026-07-01/03.md",
+      "Meeting Notes/blakechasen/2026-07-01/02.md",
+      "Meeting Notes/tgthorley/2026-07-01/01.md",
+      "Meeting Notes/buckelij/2026-06-30/02.md",
+      "Meeting Notes/tcarn/2026-06-30/01.md",
     ])
-    expect(result.candidates[0].description).toBe("alice · 2026-07-04")
+    expect(result.candidates[0].description).toBe(
+      "melissamcdonough · 2026-07-01"
+    )
   })
 
   test("sorts Bookmarks by date folder descending and filters non-markdown files", async () => {
