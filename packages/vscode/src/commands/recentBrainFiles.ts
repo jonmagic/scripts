@@ -9,6 +9,7 @@ interface RecentBrainQuickPickItem extends vscode.QuickPickItem {
 }
 
 const RECENT_FILE_LIMIT = 50
+const GIT_LIST_TIMEOUT_MS = 100
 
 function execFile(
   command: string,
@@ -27,51 +28,28 @@ function execFile(
   })
 }
 
-function parseGitStatusLine(line: string): [string, string] | null {
-  if (line.length < 4) {
-    return null
-  }
-
-  const status = line.slice(0, 2).trim()
-  const rawPath = line.slice(3)
-  const renamedPath = rawPath.includes(" -> ")
-    ? rawPath.slice(rawPath.lastIndexOf(" -> ") + 4)
-    : rawPath
-  const relativePath = renamedPath.replace(/^"|"$/g, "")
-
-  if (!relativePath.endsWith(".md")) {
-    return null
-  }
-
-  return [relativePath, status || "modified"]
-}
-
 export async function getGitMarkdownStatuses(
   brainRoot: string
 ): Promise<Map<string, string>> {
-  const output = await execFile(
-    "git",
-    [
-      "-C",
-      brainRoot,
-      "-c",
-      "core.quotePath=false",
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-    ],
-    { timeout: 10000 }
-  )
+  const gitPrefix = ["-C", brainRoot, "-c", "core.quotePath=false"]
+  const [unstaged, staged] = await Promise.all([
+    execFile("git", [...gitPrefix, "diff", "--name-only", "--", "*.md"], {
+      timeout: GIT_LIST_TIMEOUT_MS,
+    }),
+    execFile(
+      "git",
+      [...gitPrefix, "diff", "--name-only", "--cached", "--", "*.md"],
+      { timeout: GIT_LIST_TIMEOUT_MS }
+    ),
+  ])
   const statuses = new Map<string, string>()
 
-  for (const line of output.split(/\r?\n/)) {
-    const parsed = parseGitStatusLine(line)
-    if (!parsed) {
+  for (const relativePath of `${staged}\n${unstaged}`.split(/\r?\n/)) {
+    if (!relativePath.endsWith(".md")) {
       continue
     }
 
-    const [relativePath, status] = parsed
-    statuses.set(relativePath, status)
+    statuses.set(relativePath, "modified")
   }
 
   return statuses
@@ -97,15 +75,8 @@ export async function openRecentBrainFile(): Promise<void> {
   const cache = getWorkspaceCache()
   const brainRoot = getBrainPath()
 
-  if (!cache.hasFullIndex()) {
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "Loading Brain files...",
-        cancellable: false,
-      },
-      () => cache.initializeFull()
-    )
+  if (!cache.isReady()) {
+    await cache.initializeFast()
   }
 
   let gitStatuses = new Map<string, string>()
