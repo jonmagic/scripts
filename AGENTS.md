@@ -91,7 +91,7 @@ Agents working on `packages/vscode` are responsible for testing UX without relyi
 2. For UI behavior, create the smallest reproducible Brain fixture or use the configured local Brain only when necessary.
 3. Use static VS Code contribution checks where possible: verify contributed command IDs, menu registrations, activation events, view IDs, and configuration keys in `packages/vscode/package.json` match registrations in `src/extension.ts`.
 4. Validate user-visible flows against the built extension, not only TypeScript types. Runtime TreeView, command execution, menu enablement, activation, and editor behavior need an installed-extension smoke check or a future extension-host test harness.
-5. Install unreviewed builds into an isolated VS Code Insiders profile or extension directory for smoke checks. Before finishing any user-visible VS Code extension change, run `bin/install-vscode-extension` from the repository root and confirm `code-insiders --list-extensions` includes `jonmagic.jonmagic-scripts`, unless @jonmagic explicitly asks not to install it. The isolated install is useful evidence, but it is not a substitute for the project install script.
+5. Install unreviewed builds into an isolated VS Code Insiders profile or extension directory for smoke checks. Before finishing any user-visible VS Code extension change, run `bin/install-vscode-extension` from the repository root, confirm `code-insiders --list-extensions` includes `jonmagic.jonmagic-scripts`, then restart or reload VS Code Insiders so the updated extension activates, unless @jonmagic explicitly asks not to install or restart it. The isolated install is useful evidence, but it is not a substitute for the project install script and activation restart.
 6. If a UI change cannot be fully automated, capture concrete evidence: command output, macOS screenshot, accessible tree/text output, or a short reproduction artifact.
 7. Do not ask @jonmagic to test routine navigation, build, packaging, or visual smoke checks. Ask only for product judgment, credentials, or a choice that cannot be inferred from the repo.
 
@@ -132,5 +132,5 @@ Recommended defaults:
 1. The closest available validation passes.
 2. Behavior is verified automatically or with concrete UX evidence.
 3. Documentation is updated when commands, behavior, workflow, or constraints change.
-4. User-visible VS Code extension changes have been installed with `bin/install-vscode-extension` and confirmed in VS Code Insiders, unless explicitly skipped.
+4. User-visible VS Code extension changes have been installed with `bin/install-vscode-extension`, confirmed in VS Code Insiders, and followed by a VS Code Insiders restart or reload, unless explicitly skipped.
 5. Handoff names changed files and any remaining risks.
