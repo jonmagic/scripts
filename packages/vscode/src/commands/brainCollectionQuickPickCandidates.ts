@@ -295,10 +295,9 @@ async function candidatesFromDateFolders(
 ): Promise<BrainCollectionCandidate[]> {
   const groups = await Promise.all(
     folders.map(async (folder) => {
-      const files = (await listMarkdownFiles(folder.absolutePath)).slice(
-        0,
-        options.maxFilesPerFolder
-      )
+      const files = (await listMarkdownFiles(folder.absolutePath))
+        .sort((left, right) => right.name.localeCompare(left.name))
+        .slice(0, options.maxFilesPerFolder)
 
       return files.map((file) =>
         createCandidate(

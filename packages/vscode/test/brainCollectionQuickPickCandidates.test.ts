@@ -43,7 +43,10 @@ describe("getBrainCollectionCandidates", () => {
       brainRoot,
       "Daily Projects/2025-03-26-phe-survey/01 survey.md"
     )
-    await writeBrainFile(brainRoot, "Daily Projects/2026-07-04/02 plan.md")
+    await writeBrainFile(brainRoot, "Daily Projects/2026-07-04/07 plan.md")
+    await writeBrainFile(brainRoot, "Daily Projects/2026-07-04/08 follow-up.md")
+    await writeBrainFile(brainRoot, "Daily Projects/2026-07-03/03 bar.md")
+    await writeBrainFile(brainRoot, "Daily Projects/2026-07-03/04 foo.md")
     await writeBrainFile(brainRoot, "Daily Projects/not-a-date/01 ignored.md")
     await writeBrainFile(brainRoot, "Daily Projects/.hidden/01 ignored.md")
     await writeBrainFile(brainRoot, "Daily Projects/2026-07-04/notes.txt")
@@ -54,10 +57,13 @@ describe("getBrainCollectionCandidates", () => {
     )
 
     expect(result.candidates.map((candidate) => candidate.relativePath)).toEqual([
-      "Daily Projects/2026-07-04/02 plan.md",
+      "Daily Projects/2026-07-04/08 follow-up.md",
+      "Daily Projects/2026-07-04/07 plan.md",
+      "Daily Projects/2026-07-03/04 foo.md",
+      "Daily Projects/2026-07-03/03 bar.md",
       "Daily Projects/2025-03-26-phe-survey/01 survey.md",
     ])
-    expect(result.candidates[1].description).toBe("2025-03-26-phe-survey")
+    expect(result.candidates.at(-1)?.description).toBe("2025-03-26-phe-survey")
   })
 
   test("sorts Weekly Notes by week date descending and applies limits", async () => {
@@ -77,6 +83,7 @@ describe("getBrainCollectionCandidates", () => {
 
   test("sorts Meeting Notes by meeting date before person and path", async () => {
     const brainRoot = await createTempBrain()
+    await writeBrainFile(brainRoot, "Meeting Notes/alice/2026-07-04/02.md")
     await writeBrainFile(brainRoot, "Meeting Notes/alice/2026-07-03/02.md")
     await writeBrainFile(brainRoot, "Meeting Notes/bob/2026-07-04/01.md")
     await writeBrainFile(brainRoot, "Meeting Notes/alice/2026-07-04/01.md")
@@ -86,6 +93,7 @@ describe("getBrainCollectionCandidates", () => {
     const result = await getBrainCollectionCandidates(brainRoot, "meetingNotes")
 
     expect(result.candidates.map((candidate) => candidate.relativePath)).toEqual([
+      "Meeting Notes/alice/2026-07-04/02.md",
       "Meeting Notes/alice/2026-07-04/01.md",
       "Meeting Notes/bob/2026-07-04/01.md",
       "Meeting Notes/alice/2026-07-03/02.md",
@@ -97,11 +105,13 @@ describe("getBrainCollectionCandidates", () => {
     const brainRoot = await createTempBrain()
     await writeBrainFile(brainRoot, "Bookmarks/2026-07-03/01 old.md")
     await writeBrainFile(brainRoot, "Bookmarks/2026-07-04/01 new.md")
+    await writeBrainFile(brainRoot, "Bookmarks/2026-07-04/02 newer.md")
     await writeBrainFile(brainRoot, "Bookmarks/2026-07-04/readme.txt")
 
     const result = await getBrainCollectionCandidates(brainRoot, "bookmarks")
 
     expect(result.candidates.map((candidate) => candidate.relativePath)).toEqual([
+      "Bookmarks/2026-07-04/02 newer.md",
       "Bookmarks/2026-07-04/01 new.md",
       "Bookmarks/2026-07-03/01 old.md",
     ])
