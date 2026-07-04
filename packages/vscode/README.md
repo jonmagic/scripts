@@ -25,6 +25,11 @@ Navigate between weeks using the toolbar buttons:
 ### Other Commands
 
 - **Brain: Open Recent Brain File** - Quick-open recently edited Brain Markdown files, with git-modified files first
+- **Brain: Open Daily Project** - Quick-open recent Daily Project notes from date-prefixed folders
+- **Brain: Open Weekly Note** - Quick-open Weekly Notes by week date
+- **Brain: Open Project Note** - Quick-open Markdown notes under `Projects/` without opening Explorer
+- **Brain: Open Meeting Note** - Quick-open recent Meeting Notes by meeting date
+- **Brain: Open Bookmark** - Quick-open recent Brain bookmarks by date
 - **Jonmagic: Create Daily Project Note** - Create a new numbered project note for today
 - **Jonmagic: Add Frontmatter to Current File** - Add YAML frontmatter to the current markdown file
 
@@ -54,6 +59,11 @@ Resolved wikilinks become clickable preview links. Unresolved wikilinks stay vis
 | `Brain: Go to Current Week` | Jump back to the current week |
 | `Brain: Refresh` | Refresh the sidebar content |
 | `Brain: Open Recent Brain File` | Quick-open recently edited Brain Markdown files, with git-modified files first |
+| `Brain: Open Daily Project` | Quick-open recent Daily Project notes from date-prefixed folders |
+| `Brain: Open Weekly Note` | Quick-open Weekly Notes by week date |
+| `Brain: Open Project Note` | Quick-open Markdown notes under `Projects/` without opening Explorer |
+| `Brain: Open Meeting Note` | Quick-open recent Meeting Notes by meeting date |
+| `Brain: Open Bookmark` | Quick-open recent Brain bookmarks by date |
 | `Jonmagic: Create Daily Project Note` | Create a new daily project note |
 | `Jonmagic: Add Frontmatter to Current File` | Add frontmatter to current file |
 

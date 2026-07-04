@@ -15,6 +15,11 @@
   },
   "activationEvents": [
     "onLanguage:markdown",
+    "onCommand:jonmagic.openDailyProject",
+    "onCommand:jonmagic.openWeeklyNote",
+    "onCommand:jonmagic.openProjectNote",
+    "onCommand:jonmagic.openMeetingNote",
+    "onCommand:jonmagic.openBookmark",
     "onCommand:jonmagic.openRecentBrainFile"
   ],
   "categories": ["Other"],
@@ -36,6 +41,26 @@
       {
         "command": "jonmagic.openRecentBrainFile",
         "title": "Brain: Open Recent Brain File"
+      },
+      {
+        "command": "jonmagic.openDailyProject",
+        "title": "Brain: Open Daily Project"
+      },
+      {
+        "command": "jonmagic.openWeeklyNote",
+        "title": "Brain: Open Weekly Note"
+      },
+      {
+        "command": "jonmagic.openProjectNote",
+        "title": "Brain: Open Project Note"
+      },
+      {
+        "command": "jonmagic.openMeetingNote",
+        "title": "Brain: Open Meeting Note"
+      },
+      {
+        "command": "jonmagic.openBookmark",
+        "title": "Brain: Open Bookmark"
       },
       {
         "command": "jonmagic.previousWeek",

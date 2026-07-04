@@ -14,6 +14,7 @@ import { registerFileRenameHandler } from "./features/FileRenameHandler"
 import { registerOpenDocumentCommand } from "./commands/openDocumentByReference"
 import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
 import { registerCreateBookmarkCommand } from "./commands/createBookmark"
+import { registerBrainCollectionQuickPickCommands } from "./commands/brainCollectionQuickPicks"
 import { registerRecentBrainFilesCommand } from "./commands/recentBrainFiles"
 import {
   extendBrainMarkdownIt,
@@ -244,6 +245,7 @@ export function activate(
   registerOpenDocumentCommand(context)
   registerAddFrontmatterCommand(context)
   registerCreateBookmarkCommand(context)
+  registerBrainCollectionQuickPickCommands(context)
   registerRecentBrainFilesCommand(context)
 
   // Register Brain sidebar tree view
