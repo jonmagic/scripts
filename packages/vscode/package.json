@@ -14,7 +14,8 @@
     "vscode": "^1.90.0"
   },
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:markdown",
+    "onCommand:jonmagic.openRecentBrainFile"
   ],
   "categories": ["Other"],
   "main": "./dist/extension.js",
@@ -31,6 +32,10 @@
       {
         "command": "jonmagic.createBookmark",
         "title": "Jonmagic: Create Bookmark"
+      },
+      {
+        "command": "jonmagic.openRecentBrainFile",
+        "title": "Brain: Open Recent Brain File"
       },
       {
         "command": "jonmagic.previousWeek",

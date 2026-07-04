@@ -14,6 +14,7 @@ import { registerFileRenameHandler } from "./features/FileRenameHandler"
 import { registerOpenDocumentCommand } from "./commands/openDocumentByReference"
 import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
 import { registerCreateBookmarkCommand } from "./commands/createBookmark"
+import { registerRecentBrainFilesCommand } from "./commands/recentBrainFiles"
 import {
   extendBrainMarkdownIt,
   type MarkdownItLike,
@@ -244,6 +245,7 @@ export async function activate(
   registerOpenDocumentCommand(context)
   registerAddFrontmatterCommand(context)
   registerCreateBookmarkCommand(context)
+  registerRecentBrainFilesCommand(context)
 
   // Register Brain sidebar tree view
   const brainSidebarProvider = new BrainSidebarProvider()

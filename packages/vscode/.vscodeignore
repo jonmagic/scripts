@@ -1,0 +1,6 @@
+src/**
+test/**
+scripts/**
+*.tsbuildinfo
+tsconfig.json
+jonmagic-scripts-*.vsix
