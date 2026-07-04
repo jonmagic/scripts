@@ -130,9 +130,11 @@ describe("getBrainCollectionCandidates", () => {
     ])
   })
 
-  test("sorts Project Notes by depth and path without relying on mtime", async () => {
+  test("sorts Project Notes by depth, folder, and newest numbered files", async () => {
     const brainRoot = await createTempBrain()
     await writeBrainFile(brainRoot, "Projects/zeta/nested/deep.md")
+    await writeBrainFile(brainRoot, "Projects/alpha/07 update.md")
+    await writeBrainFile(brainRoot, "Projects/alpha/08 follow-up.md")
     await writeBrainFile(brainRoot, "Projects/alpha/references.md")
     await writeBrainFile(brainRoot, "Projects/alpha/nested/context.md")
     await writeBrainFile(brainRoot, "Projects/.hidden/secret.md")
@@ -141,6 +143,8 @@ describe("getBrainCollectionCandidates", () => {
     const result = await getBrainCollectionCandidates(brainRoot, "projectNotes")
 
     expect(result.candidates.map((candidate) => candidate.relativePath)).toEqual([
+      "Projects/alpha/08 follow-up.md",
+      "Projects/alpha/07 update.md",
       "Projects/alpha/references.md",
       "Projects/alpha/nested/context.md",
       "Projects/zeta/nested/deep.md",
@@ -160,7 +164,7 @@ describe("getBrainCollectionCandidates", () => {
 
     expect(result.candidates.map((candidate) => candidate.relativePath)).toEqual([
       "Projects/zeta/PROJECT.md",
-      "Projects/alpha/nested/01.md",
+      "Projects/alpha/nested/02.md",
     ])
   })
 

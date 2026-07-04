@@ -53,7 +53,9 @@ interface MeetingDateFolder extends DateFolder {
 
 interface ProjectFile {
   absolutePath: string
+  directoryPath: string
   depth: number
+  fileName: string
   relativePath: string
 }
 
@@ -83,6 +85,7 @@ interface ErrorWithCode extends Error {
 }
 
 const DATE_PREFIX_PATTERN = /^(\d{4}-\d{2}-\d{2})(?:$|-.*)/
+const FILE_NUMBER_PREFIX_PATTERN = /^(\d+)/
 const WEEKLY_NOTE_PATTERN = /^Week of (\d{4}-\d{2}-\d{2})\.md$/
 
 const DEFAULT_OPTIONS: RequiredBrainCollectionCandidateOptions = {
@@ -244,6 +247,30 @@ function labelFromRelativePath(relativePath: string): string {
   return path.basename(relativePath, ".md")
 }
 
+function getFileNumberPrefix(fileName: string): number | null {
+  const number = fileName.match(FILE_NUMBER_PREFIX_PATTERN)?.[1]
+  return number ? Number.parseInt(number, 10) : null
+}
+
+function compareNoteFileNames(left: string, right: string): number {
+  const leftNumber = getFileNumberPrefix(left)
+  const rightNumber = getFileNumberPrefix(right)
+
+  if (leftNumber !== null && rightNumber !== null && leftNumber !== rightNumber) {
+    return rightNumber - leftNumber
+  }
+
+  if (leftNumber !== null && rightNumber === null) {
+    return -1
+  }
+
+  if (leftNumber === null && rightNumber !== null) {
+    return 1
+  }
+
+  return left.localeCompare(right)
+}
+
 function createCandidate(
   brainRoot: string,
   absolutePath: string,
@@ -302,7 +329,7 @@ async function candidatesFromDateFolders(
   const groups = await Promise.all(
     folders.map(async (folder) => {
       const files = (await listMarkdownFiles(folder.absolutePath))
-        .sort((left, right) => right.name.localeCompare(left.name))
+        .sort((left, right) => compareNoteFileNames(left.name, right.name))
         .slice(0, options.maxFilesPerFolder)
 
       return files.map((file): DateFolderCandidate => ({
@@ -322,7 +349,7 @@ async function candidatesFromDateFolders(
     .sort(
       (left, right) =>
         right.date.localeCompare(left.date) ||
-        right.fileName.localeCompare(left.fileName) ||
+        compareNoteFileNames(left.fileName, right.fileName) ||
         left.candidate.relativePath.localeCompare(right.candidate.relativePath)
     )
     .slice(0, options.limit)
@@ -462,29 +489,32 @@ async function collectProjectMarkdownFiles(
 
     const entries = await readDirectoryIfExists(current.directoryPath)
 
-    for (const entry of entries) {
-      if (entry.name.startsWith(".")) {
-        continue
-      }
+    const filesInDirectory = entries
+      .filter(isVisibleMarkdownFile)
+      .sort((left, right) => compareNoteFileNames(left.name, right.name))
+    const directoriesInDirectory = entries
+      .filter(isVisibleDirectory)
+      .sort((left, right) => left.name.localeCompare(right.name))
 
+    for (const entry of filesInDirectory) {
       const entryPath = path.join(current.directoryPath, entry.name)
+      const relativePath = getRelativePath(brainRoot, entryPath)
+      files.push({
+        absolutePath: entryPath,
+        directoryPath: normalizePath(path.dirname(relativePath)),
+        depth: relativePath.split("/").length,
+        fileName: entry.name,
+        relativePath,
+      })
 
-      if (entry.isFile() && entry.name.endsWith(".md")) {
-        const relativePath = getRelativePath(brainRoot, entryPath)
-        files.push({
-          absolutePath: entryPath,
-          depth: relativePath.split("/").length,
-          relativePath,
-        })
-
-        if (files.length >= options.maxProjectFiles) {
-          break
-        }
-
-        continue
+      if (files.length >= options.maxProjectFiles) {
+        break
       }
+    }
 
-      if (entry.isDirectory() && current.depth < options.maxProjectDepth) {
+    for (const entry of directoriesInDirectory) {
+      const entryPath = path.join(current.directoryPath, entry.name)
+      if (current.depth < options.maxProjectDepth) {
         directoryCount += 1
         if (directoryCount > options.maxProjectDirectories) {
           break
@@ -513,6 +543,8 @@ async function getProjectNoteCandidates(
     .sort(
       (left, right) =>
         left.depth - right.depth ||
+        left.directoryPath.localeCompare(right.directoryPath) ||
+        compareNoteFileNames(left.fileName, right.fileName) ||
         left.relativePath.localeCompare(right.relativePath)
     )
     .slice(0, options.limit)
