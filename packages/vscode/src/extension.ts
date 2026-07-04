@@ -210,13 +210,12 @@ async function deleteFile(
   }
 }
 
-export async function activate(
+export function activate(
   context: vscode.ExtensionContext
-): Promise<MarkdownExtensionApi> {
-  // Initialize workspace cache - fast init blocks, full init runs in background
+): MarkdownExtensionApi {
+  // Initialize workspace cache in the background so command activation stays fast.
   const cache = getWorkspaceCache()
-  await cache.initializeFast()
-  void cache.initializeFull()
+  void cache.initializeFast().then(() => cache.initializeFull())
 
   // Register document link provider for wikilinks
   const linkProvider = new WikilinkDocumentLinkProvider()
