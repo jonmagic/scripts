@@ -4,6 +4,7 @@ import * as path from "node:path"
 
 interface CommandContribution {
   command: string
+  title: string
 }
 
 interface ViewContribution {
@@ -122,6 +123,16 @@ describe("VS Code contributions", () => {
       for (const view of views) {
         expect(registeredViews.has(view.id)).toBe(true)
       }
+    }
+  })
+
+  test("keeps Brain commands user-facing as Brain commands", async () => {
+    const packageJson = JSON.parse(
+      await fs.readFile(path.join(packageRoot, "package.json"), "utf8")
+    ) as VscodePackageJson
+
+    for (const command of packageJson.contributes.commands) {
+      expect(command.title.startsWith("Jonmagic:")).toBe(false)
     }
   })
 })
