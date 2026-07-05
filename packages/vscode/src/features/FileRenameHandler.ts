@@ -5,7 +5,10 @@
 import * as vscode from "vscode"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { getWorkspaceCache } from "../cache/workspaceCache"
+import {
+  getWorkspaceCache,
+  initializeWorkspaceCache,
+} from "../cache/workspaceCache"
 import { pathToDisplayPath } from "@jonmagic/scripts-core"
 import { getBrainPath, getRelativeBrainPath } from "../config/brainPath"
 
@@ -17,7 +20,12 @@ export function registerFileRenameHandler(
 ): void {
   const disposable = vscode.workspace.onDidRenameFiles((event) => {
     for (const { oldUri, newUri } of event.files) {
-      handleFileRename(oldUri, newUri)
+      void handleFileRename(oldUri, newUri).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        vscode.window.showErrorMessage(
+          `Could not update wikilinks after rename: ${message}`
+        )
+      })
     }
   })
 
@@ -27,31 +35,32 @@ export function registerFileRenameHandler(
 /**
  * Handle a single file rename event.
  */
-function handleFileRename(
+async function handleFileRename(
   oldUri: vscode.Uri,
   newUri: vscode.Uri
-): void {
+): Promise<void> {
   // Only process markdown files
   if (!oldUri.fsPath.endsWith(".md")) {
     return
   }
 
+  // Get paths without .md extension (how they appear in wikilinks)
+  const brainRoot = getBrainPath()
+  const oldRelativePath = getRelativeBrainPath(oldUri.fsPath, brainRoot)
+  const newRelativePath = getRelativeBrainPath(newUri.fsPath, brainRoot)
+
+  if (!oldRelativePath || !newRelativePath) {
+    return
+  }
+
+  await initializeWorkspaceCache()
   const cache = getWorkspaceCache()
-  const brainRoot = cache.getBrainRoot() ?? getBrainPath()
 
   // Warn if cache not fully loaded
   if (!cache.hasFullIndex()) {
     vscode.window.showWarningMessage(
       "Wikilink backlinks not updated - file index still loading. Try again in a moment."
     )
-    return
-  }
-
-  // Get paths without .md extension (how they appear in wikilinks)
-  const oldRelativePath = getRelativeBrainPath(oldUri.fsPath, brainRoot)
-  const newRelativePath = getRelativeBrainPath(newUri.fsPath, brainRoot)
-
-  if (!oldRelativePath || !newRelativePath) {
     return
   }
 

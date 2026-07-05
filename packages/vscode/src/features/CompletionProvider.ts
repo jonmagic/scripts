@@ -7,7 +7,11 @@
 import * as vscode from "vscode"
 import * as fs from "node:fs"
 import { pathToDisplayPath } from "@jonmagic/scripts-core"
-import { getWorkspaceCache, type CachedFile } from "../cache/workspaceCache"
+import {
+  getWorkspaceCache,
+  startWorkspaceCacheInitialization,
+  type CachedFile,
+} from "../cache/workspaceCache"
 
 type LinkStyle = "wikilink" | "pending"
 
@@ -53,6 +57,7 @@ export class WikilinkCompletionProvider implements vscode.CompletionItemProvider
 
     const cache = getWorkspaceCache()
     if (!cache.isReady()) {
+      startWorkspaceCacheInitialization()
       return undefined
     }
 

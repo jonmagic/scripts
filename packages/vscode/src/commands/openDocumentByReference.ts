@@ -4,7 +4,10 @@
 import * as vscode from "vscode"
 import * as path from "node:path"
 import { resolveWikilink, UID_PREFIX } from "@jonmagic/scripts-core"
-import { getWorkspaceCache } from "../cache/workspaceCache"
+import {
+  getWorkspaceCache,
+  initializeWorkspaceCache,
+} from "../cache/workspaceCache"
 import { getBrainPath } from "../config/brainPath"
 
 interface OpenDocumentArgs {
@@ -15,6 +18,7 @@ export async function openDocumentByReference(
   args: OpenDocumentArgs
 ): Promise<void> {
   const { reference } = args
+  await initializeWorkspaceCache()
   const cache = getWorkspaceCache()
   const brainRoot = getBrainPath()
 

@@ -25,7 +25,8 @@
     "onCommand:jonmagic.copyUidWikilink",
     "onCommand:jonmagic.appendWeeklyTodo",
     "onCommand:jonmagic.addReferenceToProject",
-    "onCommand:jonmagic.rebuildIndex"
+    "onCommand:jonmagic.rebuildIndex",
+    "onView:brainWeekView"
   ],
   "categories": ["Other"],
   "main": "./dist/extension.js",
@@ -250,69 +251,29 @@
       ],
       "view/item/context": [
         {
-          "command": "jonmagic.openPreview",
-          "when": "view == brainWeekView && viewItem == file",
+          "command": "jonmagic.openToSide",
+          "when": "view == brainWeekView && viewItem == brainFile",
           "group": "1_open@1"
         },
         {
-          "command": "jonmagic.openToSide",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "1_open@2"
-        },
-        {
-          "command": "jonmagic.openWith",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "1_open@3"
-        },
-        {
-          "command": "jonmagic.revealInFinder",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "1_open@4"
-        },
-        {
           "command": "jonmagic.addFileToChat",
-          "when": "view == brainWeekView && viewItem == file",
+          "when": "view == brainWeekView && viewItem == brainFile",
           "group": "4_chat@1"
         },
         {
-          "command": "jonmagic.copyFile",
-          "when": "view == brainWeekView && viewItem == file",
+          "command": "jonmagic.copyPathWikilink",
+          "when": "view == brainWeekView && viewItem == brainFile",
           "group": "5_cutcopypaste@1"
         },
         {
-          "command": "jonmagic.copyPath",
-          "when": "view == brainWeekView && viewItem == file",
+          "command": "jonmagic.copyUidWikilink",
+          "when": "view == brainWeekView && viewItem == brainFile",
           "group": "5_cutcopypaste@2"
         },
         {
-          "command": "jonmagic.copyRelativePath",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "5_cutcopypaste@3"
-        },
-        {
-          "command": "jonmagic.copyPathWikilink",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "5_cutcopypaste@4"
-        },
-        {
-          "command": "jonmagic.copyUidWikilink",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "5_cutcopypaste@5"
-        },
-        {
           "command": "jonmagic.addReferenceToProject",
-          "when": "view == brainWeekView && viewItem == file",
+          "when": "view == brainWeekView && viewItem == brainFile",
           "group": "6_brain@1"
-        },
-        {
-          "command": "jonmagic.renameFile",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "7_modification@1"
-        },
-        {
-          "command": "jonmagic.deleteFile",
-          "when": "view == brainWeekView && viewItem == file",
-          "group": "7_modification@2"
         }
       ]
     }

@@ -3,9 +3,9 @@
 // for fast wikilink resolution and completion.
 // Also tracks backlinks (which files link to which) for rename support.
 //
-// Two-phase initialization:
+// Two-phase initialization for cache-dependent Markdown features:
 // 1. initializeFast() - Quick load of Meeting Notes folders + recent files (7 days)
-// 2. initializeFull() - Background load of all files for complete index
+// 2. initializeFull() - Load all files for complete wikilink/backlink resolution
 
 import * as vscode from "vscode"
 import type { Dirent } from "node:fs"
@@ -55,7 +55,7 @@ export class WorkspaceCache {
 
   /**
    * Fast initialization - only loads Meeting Notes folders and recent files.
-   * Call this during extension activation for quick startup.
+   * Keep this out of sidebar-only activation paths.
    */
   async initializeFast(): Promise<void> {
     this.fileWatcher?.dispose()
@@ -101,7 +101,7 @@ export class WorkspaceCache {
 
   /**
    * Full initialization - loads all markdown files.
-   * Call this in background after fast init for complete index.
+   * Call this only when cache-backed Markdown features need the complete index.
    */
   async initializeFull(): Promise<void> {
     if (!this.brainRoot) {
@@ -204,6 +204,19 @@ export class WorkspaceCache {
    * Force a full refresh of the cache.
    */
   async refresh(): Promise<void> {
+    const refresh = queueCacheOperation(() => this.refreshInternal())
+    cacheInitialization = refresh
+
+    try {
+      await refresh
+    } finally {
+      if (cacheInitialization === refresh) {
+        cacheInitialization = null
+      }
+    }
+  }
+
+  private async refreshInternal(): Promise<void> {
     this.files.clear()
     this.uidIndex = { byUid: new Map(), byPath: new Map() }
     this.backlinks.clear()
@@ -440,6 +453,14 @@ export class WorkspaceCache {
 
 // Singleton instance
 let cacheInstance: WorkspaceCache | null = null
+let cacheInitialization: Promise<void> | null = null
+let cacheOperation: Promise<void> = Promise.resolve()
+
+function queueCacheOperation(operation: () => Promise<void>): Promise<void> {
+  const queued = cacheOperation.catch(() => undefined).then(operation)
+  cacheOperation = queued.catch(() => undefined)
+  return queued
+}
 
 /**
  * Get the global Brain cache instance.
@@ -451,10 +472,44 @@ export function getWorkspaceCache(): WorkspaceCache {
   return cacheInstance
 }
 
+export async function initializeWorkspaceCache(): Promise<void> {
+  const cache = getWorkspaceCache()
+  if (cache.hasFullIndex()) {
+    return
+  }
+
+  if (!cacheInitialization) {
+    const initialization = queueCacheOperation(async () => {
+      if (cache.hasFullIndex()) {
+        return
+      }
+
+      await cache.initializeFast()
+      await cache.initializeFull()
+    })
+      .finally(() => {
+        if (cacheInitialization === initialization) {
+          cacheInitialization = null
+        }
+      })
+    cacheInitialization = initialization
+  }
+
+  await cacheInitialization
+}
+
+export function startWorkspaceCacheInitialization(): void {
+  void initializeWorkspaceCache().catch((error: unknown) => {
+    console.error("Failed to initialize Brain workspace cache", error)
+  })
+}
+
 /**
  * Dispose of the global cache instance.
  */
 export function disposeWorkspaceCache(): void {
   cacheInstance?.dispose()
   cacheInstance = null
+  cacheInitialization = null
+  cacheOperation = Promise.resolve()
 }

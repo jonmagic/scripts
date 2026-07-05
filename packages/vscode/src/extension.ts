@@ -6,7 +6,11 @@ import {
   formatLocalDateYYYYMMDD,
   parseLocalDateYYYYMMDD,
 } from "@jonmagic/scripts-core"
-import { getWorkspaceCache, disposeWorkspaceCache } from "./cache/workspaceCache"
+import {
+  getWorkspaceCache,
+  disposeWorkspaceCache,
+  startWorkspaceCacheInitialization,
+} from "./cache/workspaceCache"
 import {
   getBrainPath,
   getBrainRootUri,
@@ -72,6 +76,28 @@ function createBrainWatcher(
   watcher.onDidCreate(handleChange)
   watcher.onDidDelete(handleChange)
   return watcher
+}
+
+function shouldInitializeWorkspaceCacheForEditor(
+  editor: vscode.TextEditor | undefined
+): boolean {
+  if (!editor || editor.document.languageId !== "markdown") {
+    return false
+  }
+
+  if (editor.document.uri.scheme !== "file") {
+    return false
+  }
+
+  return getRelativeBrainPath(editor.document.uri.fsPath) !== null
+}
+
+function startWorkspaceCacheForEditor(
+  editor: vscode.TextEditor | undefined
+): void {
+  if (shouldInitializeWorkspaceCacheForEditor(editor)) {
+    startWorkspaceCacheInitialization()
+  }
 }
 
 async function executeResourceCommand(
@@ -232,9 +258,8 @@ async function deleteFile(
 export function activate(
   context: vscode.ExtensionContext
 ): MarkdownExtensionApi {
-  // Initialize workspace cache in the background so command activation stays fast.
   const cache = getWorkspaceCache()
-  void cache.initializeFast().then(() => cache.initializeFull())
+  startWorkspaceCacheForEditor(vscode.window.activeTextEditor)
 
   // Register document link provider for wikilinks
   const linkProvider = new WikilinkDocumentLinkProvider()
@@ -275,6 +300,12 @@ export function activate(
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider("brainWeekView", brainSidebarProvider)
+  )
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      brainSidebarProvider.setActiveEditor(editor)
+      startWorkspaceCacheForEditor(editor)
+    })
   )
 
   // Register Brain navigation commands

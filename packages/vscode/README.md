@@ -10,8 +10,12 @@ A dedicated sidebar view for navigating your Brain repository. Access it from th
 
 The sidebar includes:
 
-- **This Week** - Quick access to the current week's note, meeting notes, and daily projects
-- **Projects** - Browse folders and Markdown files under `Projects/`
+- **Today** - Quick access to today's meeting notes and Daily Project files
+- **Week of YYYY-MM-DD** - Lazy access to the selected week's note and daily rows
+- **Recent Files** - A bounded, recent-first list of Brain Markdown files
+- **Active Context** - The active Brain Markdown file when one is open
+
+Broad Project navigation stays in **Brain: Open Project Note** so the sidebar does not become a full Brain Explorer.
 
 ### Week Navigation
 

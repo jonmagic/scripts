@@ -17,6 +17,7 @@ interface ViewContainerContribution {
 
 interface MenuContribution {
   command: string
+  when?: string
 }
 
 interface VscodePackageJson {
@@ -134,5 +135,38 @@ describe("VS Code contributions", () => {
     for (const command of packageJson.contributes.commands) {
       expect(command.title.startsWith("Jonmagic:")).toBe(false)
     }
+  })
+
+  test("keeps Brain sidebar item menus scoped to the provider context value", async () => {
+    const packageJson = JSON.parse(
+      await fs.readFile(path.join(packageRoot, "package.json"), "utf8")
+    ) as VscodePackageJson
+    const sourceText = await readSourceTree(sourceRoot)
+    const sidebarMenuItems =
+      packageJson.contributes.menus?.["view/item/context"]?.filter((item) =>
+        item.when?.includes("view == brainWeekView")
+      ) ?? []
+
+    expect(sourceText).toContain('BRAIN_FILE_CONTEXT_VALUE = "brainFile"')
+    expect(sidebarMenuItems.length).toBeGreaterThan(0)
+
+    for (const item of sidebarMenuItems) {
+      expect(item.when).toContain("viewItem == brainFile")
+      expect(item.when).not.toContain("viewItem == file")
+    }
+  })
+
+  test("keeps Brain sidebar activation from eagerly initializing the full cache", async () => {
+    const packageJson = JSON.parse(
+      await fs.readFile(path.join(packageRoot, "package.json"), "utf8")
+    ) as VscodePackageJson
+    const extensionSource = await fs.readFile(
+      path.join(sourceRoot, "extension.ts"),
+      "utf8"
+    )
+
+    expect(packageJson.activationEvents).toContain("onView:brainWeekView")
+    expect(extensionSource).toContain("startWorkspaceCacheForEditor")
+    expect(extensionSource).not.toContain("initializeFast().then")
   })
 })
