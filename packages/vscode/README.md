@@ -30,7 +30,12 @@ Navigate between weeks using the toolbar buttons:
 - **Brain: Open Project Note** - Quick-open Markdown notes under `Projects/` without opening Explorer
 - **Brain: Open Meeting Note** - Quick-open recent Meeting Notes by meeting date
 - **Brain: Open Bookmark** - Quick-open recent Brain bookmarks by date
-- **Jonmagic: Create Daily Project Note** - Create a new numbered project note for today
+- **Brain: Copy Path Wikilink** - Copy a path-based wikilink for the selected or active Brain Markdown file
+- **Brain: Copy UID Wikilink** - Copy a UID wikilink for the selected or active Brain Markdown file; fails if the file has no `uid` frontmatter
+- **Brain: Append Weekly Note TODO** - Append a `- [ ]` item under `## TODO` in the current Weekly Note; fails if the weekly note or heading is missing
+- **Brain: Add Reference to Project** - Add the selected Brain file or a URL to an existing Project `references.md` under a chosen `##` heading
+- **Brain: Rebuild Index** - Rebuild the Brain Markdown, UID, and backlink index used by wikilinks and navigation
+- **Jonmagic: Create Daily Project Note** - Create a new numbered project note for a selected date
 - **Jonmagic: Add Frontmatter to Current File** - Add YAML frontmatter to the current markdown file
 
 ### Wikilink Preview
@@ -64,7 +69,12 @@ Resolved wikilinks become clickable preview links. Unresolved wikilinks stay vis
 | `Brain: Open Project Note` | Quick-open Markdown notes under `Projects/` without opening Explorer |
 | `Brain: Open Meeting Note` | Quick-open recent Meeting Notes by meeting date |
 | `Brain: Open Bookmark` | Quick-open recent Brain bookmarks by date |
-| `Jonmagic: Create Daily Project Note` | Create a new daily project note |
+| `Brain: Copy Path Wikilink` | Copy a path-based wikilink for the selected or active Brain Markdown file |
+| `Brain: Copy UID Wikilink` | Copy a UID wikilink for the selected or active Brain Markdown file |
+| `Brain: Append Weekly Note TODO` | Append a lightweight checkbox TODO to the current Weekly Note |
+| `Brain: Add Reference to Project` | Add a selected Brain file or URL to an existing Project `references.md` heading |
+| `Brain: Rebuild Index` | Rebuild the Brain Markdown, UID, and backlink index |
+| `Jonmagic: Create Daily Project Note` | Create a new daily project note for a selected date |
 | `Jonmagic: Add Frontmatter to Current File` | Add frontmatter to current file |
 
 ## Installation

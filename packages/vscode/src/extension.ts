@@ -1,7 +1,11 @@
 import * as vscode from "vscode"
 import * as path from "node:path"
 
-import { createDailyProjectNote } from "@jonmagic/scripts-core"
+import {
+  createDailyProjectNote,
+  formatLocalDateYYYYMMDD,
+  parseLocalDateYYYYMMDD,
+} from "@jonmagic/scripts-core"
 import { getWorkspaceCache, disposeWorkspaceCache } from "./cache/workspaceCache"
 import {
   getBrainPath,
@@ -16,6 +20,7 @@ import { registerAddFrontmatterCommand } from "./commands/addFrontmatter"
 import { registerCreateBookmarkCommand } from "./commands/createBookmark"
 import { registerBrainCollectionQuickPickCommands } from "./commands/brainCollectionQuickPicks"
 import { registerRecentBrainFilesCommand } from "./commands/recentBrainFiles"
+import { registerTypedBrainActionCommands } from "./commands/typedBrainActions"
 import {
   extendBrainMarkdownIt,
   type MarkdownItLike,
@@ -34,6 +39,19 @@ function getResourceUri(target: ResourceTarget): vscode.Uri | undefined {
   }
 
   return target.resourceUri
+}
+
+function getDefaultDailyProjectDateInput(): string {
+  return formatLocalDateYYYYMMDD(new Date())
+}
+
+function validateDailyProjectDateInput(value: string): string | null {
+  try {
+    parseLocalDateYYYYMMDD(value)
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
 }
 
 function createBrainWatcher(
@@ -253,6 +271,7 @@ export function activate(
   const refreshSidebar = () => brainSidebarProvider.refresh()
   const shouldIgnoreSidebarUri = (uri: vscode.Uri) =>
     cache.isIgnoredPath(uri.fsPath)
+  registerTypedBrainActionCommands(context, refreshSidebar)
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider("brainWeekView", brainSidebarProvider)
@@ -319,10 +338,23 @@ export function activate(
         return
       }
 
+      const dateInput = await vscode.window.showInputBox({
+        title: "Create Daily Project Note",
+        prompt: "Date for the new Daily Project note",
+        value: getDefaultDailyProjectDateInput(),
+        validateInput: validateDailyProjectDateInput,
+      })
+
+      if (dateInput === undefined) {
+        return
+      }
+
       try {
+        const date = parseLocalDateYYYYMMDD(dateInput)
         const result = await createDailyProjectNote({
           title,
           brainRoot: getBrainPath(),
+          date,
         })
         const doc = await vscode.workspace.openTextDocument(
           vscode.Uri.file(result.filePath)

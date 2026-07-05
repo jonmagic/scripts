@@ -20,7 +20,12 @@
     "onCommand:jonmagic.openProjectNote",
     "onCommand:jonmagic.openMeetingNote",
     "onCommand:jonmagic.openBookmark",
-    "onCommand:jonmagic.openRecentBrainFile"
+    "onCommand:jonmagic.openRecentBrainFile",
+    "onCommand:jonmagic.copyPathWikilink",
+    "onCommand:jonmagic.copyUidWikilink",
+    "onCommand:jonmagic.appendWeeklyTodo",
+    "onCommand:jonmagic.addReferenceToProject",
+    "onCommand:jonmagic.rebuildIndex"
   ],
   "categories": ["Other"],
   "main": "./dist/extension.js",
@@ -61,6 +66,27 @@
       {
         "command": "jonmagic.openBookmark",
         "title": "Brain: Open Bookmark"
+      },
+      {
+        "command": "jonmagic.copyPathWikilink",
+        "title": "Brain: Copy Path Wikilink"
+      },
+      {
+        "command": "jonmagic.copyUidWikilink",
+        "title": "Brain: Copy UID Wikilink"
+      },
+      {
+        "command": "jonmagic.appendWeeklyTodo",
+        "title": "Brain: Append Weekly Note TODO"
+      },
+      {
+        "command": "jonmagic.addReferenceToProject",
+        "title": "Brain: Add Reference to Project"
+      },
+      {
+        "command": "jonmagic.rebuildIndex",
+        "title": "Brain: Rebuild Index",
+        "icon": "$(sync)"
       },
       {
         "command": "jonmagic.previousWeek",
@@ -215,6 +241,11 @@
           "command": "jonmagic.refresh",
           "when": "view == brainWeekView",
           "group": "navigation@4"
+        },
+        {
+          "command": "jonmagic.rebuildIndex",
+          "when": "view == brainWeekView",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -257,6 +288,21 @@
           "command": "jonmagic.copyRelativePath",
           "when": "view == brainWeekView && viewItem == file",
           "group": "5_cutcopypaste@3"
+        },
+        {
+          "command": "jonmagic.copyPathWikilink",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "5_cutcopypaste@4"
+        },
+        {
+          "command": "jonmagic.copyUidWikilink",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "5_cutcopypaste@5"
+        },
+        {
+          "command": "jonmagic.addReferenceToProject",
+          "when": "view == brainWeekView && viewItem == file",
+          "group": "6_brain@1"
         },
         {
           "command": "jonmagic.renameFile",
