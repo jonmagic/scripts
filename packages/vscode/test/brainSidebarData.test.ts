@@ -7,6 +7,8 @@ import {
   getActiveContextFile,
   getDailyProjectFiles,
   getRecentSidebarFiles,
+  getSidebarDayItemId,
+  getSidebarSectionItemId,
   getWeeklyScheduleItems,
 } from "../src/sidebar/brainSidebarData.js"
 
@@ -39,6 +41,14 @@ afterEach(async () => {
 })
 
 describe("Brain sidebar data helpers", () => {
+  test("uses stable TreeItem IDs for collapsible sidebar rows", () => {
+    expect(getSidebarSectionItemId("today")).toBe("section:today")
+    expect(getSidebarSectionItemId("week")).toBe("section:week")
+    expect(getSidebarSectionItemId("recent")).toBe("section:recent")
+    expect(getSidebarSectionItemId("active")).toBe("section:active")
+    expect(getSidebarDayItemId("2026-07-05")).toBe("day:2026-07-05")
+  })
+
   test("sorts today's Daily Projects newest numbered file first", async () => {
     const brainRoot = await createTempBrain()
     await writeBrainFile(brainRoot, "Daily Projects/2026-07-05/01 first.md")

@@ -12,6 +12,8 @@ import { formatDate, getDayName, getWeekDays, getWeekLabel } from "./weekUtils"
 export const BRAIN_FILE_CONTEXT_VALUE = "brainFile"
 export const SIDEBAR_RECENT_FILE_LIMIT = 10
 
+export type BrainSidebarSection = "today" | "week" | "recent" | "active"
+
 export interface SidebarFileCandidate {
   absolutePath: string
   description: string
@@ -126,6 +128,16 @@ function createFileCandidate(
     label: labelFromPath(relativePath),
     relativePath,
   }
+}
+
+export function getSidebarSectionItemId(
+  section: BrainSidebarSection
+): string {
+  return `section:${section}`
+}
+
+export function getSidebarDayItemId(date: string): string {
+  return `day:${date}`
 }
 
 export function getWeekDayInfos(weekStart: Date, today = new Date()): WeekDayInfo[] {

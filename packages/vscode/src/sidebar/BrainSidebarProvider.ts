@@ -4,6 +4,8 @@ import * as vscode from "vscode"
 import { getBrainPath } from "../config/brainPath"
 import {
   BRAIN_FILE_CONTEXT_VALUE,
+  getSidebarDayItemId,
+  getSidebarSectionItemId,
   getActiveContextFile,
   getDailyProjectFiles,
   getRecentSidebarFiles,
@@ -12,6 +14,7 @@ import {
   getWeeklyScheduleItems,
   type SidebarFileCandidate,
   type SidebarScheduleItem,
+  type BrainSidebarSection,
 } from "./brainSidebarData"
 import { formatDate, getWeekLabel, getWeekStart } from "./weekUtils"
 
@@ -22,11 +25,11 @@ type BrainSidebarItemType =
   | "schedule"
   | "empty"
   | "error"
-type BrainSidebarSection = "today" | "week" | "recent" | "active"
 
 interface BrainSidebarItemOptions {
   date?: string
   icon?: string
+  id?: string
   itemType?: BrainSidebarItemType
   resourceUri?: vscode.Uri
   sectionId?: BrainSidebarSection
@@ -46,6 +49,10 @@ export class BrainSidebarItem extends vscode.TreeItem {
     this.date = options.date
     this.itemType = options.itemType ?? "section"
     this.sectionId = options.sectionId
+
+    if (options.id) {
+      this.id = options.id
+    }
 
     if (options.icon) {
       this.iconPath = new vscode.ThemeIcon(options.icon)
@@ -247,6 +254,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
         {
           date: day.date,
           icon: day.isToday ? "circle-filled" : "circle-outline",
+          id: getSidebarDayItemId(day.date),
           itemType: "day",
         }
       )
@@ -329,6 +337,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
   ): BrainSidebarItem {
     const item = new BrainSidebarItem(label, collapsibleState, {
       icon,
+      id: getSidebarSectionItemId(sectionId),
       itemType: "section",
       sectionId,
     })
