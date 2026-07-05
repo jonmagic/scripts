@@ -82,6 +82,7 @@ There is not yet a VS Code extension-host test runner in this repo. Bun tests ca
 - The VS Code extension's canonical Brain root comes from `jonmagic.brainPath`, defaulting to `~/Brain`.
 - Brain writes should be typed and deterministic. Prefer explicit actions such as creating a Daily Project, appending a Weekly Note TODO, or adding a Project reference over generic "save to Brain" flows.
 - Treat AI classification, summarization, or routing as untrusted. Use structured contracts, validate paths and output types, then perform deterministic file writes.
+- Treat unbounded persisted state for staleable data as an agent miss. Any saved UI state, cache, index, history, or derived state that can go stale needs a bounded lifecycle such as TTL, caps, pruning, invalidation, or an explicit reason it is finite.
 
 ## VS Code Extension UX Harness
 

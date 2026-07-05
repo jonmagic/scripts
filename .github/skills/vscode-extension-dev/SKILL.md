@@ -50,6 +50,7 @@ Do not claim runtime TreeView, activation, menu, or command behavior is fully au
 - Do not write to real Brain content during tests unless the user explicitly asks.
 - Brain writes must be typed actions, not generic saves.
 - Validate paths stay inside the configured Brain root before reading, copying, renaming, deleting, or writing.
+- Do not add unbounded persisted state for data that can go stale. Saved UI state, caches, indexes, histories, and derived state need TTL, caps, pruning, invalidation, or a clearly finite keyspace.
 
 ## Useful Product Direction
 
@@ -64,3 +65,4 @@ Do not claim runtime TreeView, activation, menu, or command behavior is fully au
 1. Targeted validation passed for the changed behavior.
 2. UX behavior has concrete evidence beyond "it compiles" when the user can see or click it.
 3. README, package contributions, and this skill are updated if workflow or commands changed.
+4. Any new persisted/cached state has a bounded lifecycle, or the finite scope is documented in the implementation or tests.
