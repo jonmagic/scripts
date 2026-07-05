@@ -35,8 +35,9 @@ Navigate between weeks using the toolbar buttons:
 - **Brain: Append Weekly Note TODO** - Append a `- [ ]` item under `## TODO` in the current Weekly Note; fails if the weekly note or heading is missing
 - **Brain: Add Reference to Project** - Add the selected Brain file or a URL to an existing Project `references.md` under a chosen `##` heading
 - **Brain: Rebuild Index** - Rebuild the Brain Markdown, UID, and backlink index used by wikilinks and navigation
-- **Jonmagic: Create Daily Project Note** - Create a new numbered project note for a selected date
-- **Jonmagic: Add Frontmatter to Current File** - Add YAML frontmatter to the current markdown file
+- **Brain: Create Daily Project Note** - Create a new numbered project note for a selected date
+- **Brain: Add Frontmatter to Current File** - Add YAML frontmatter to the current markdown file
+- **Brain: Create Bookmark** - Create a new Brain bookmark from a URL
 
 ### Wikilink Preview
 
@@ -74,8 +75,9 @@ Resolved wikilinks become clickable preview links. Unresolved wikilinks stay vis
 | `Brain: Append Weekly Note TODO` | Append a lightweight checkbox TODO to the current Weekly Note |
 | `Brain: Add Reference to Project` | Add a selected Brain file or URL to an existing Project `references.md` heading |
 | `Brain: Rebuild Index` | Rebuild the Brain Markdown, UID, and backlink index |
-| `Jonmagic: Create Daily Project Note` | Create a new daily project note for a selected date |
-| `Jonmagic: Add Frontmatter to Current File` | Add frontmatter to current file |
+| `Brain: Create Daily Project Note` | Create a new daily project note for a selected date |
+| `Brain: Add Frontmatter to Current File` | Add frontmatter to current file |
+| `Brain: Create Bookmark` | Create a new Brain bookmark from a URL |
 
 ## Installation
 

@@ -33,15 +33,15 @@
     "commands": [
       {
         "command": "jonmagic.createDailyProjectNote",
-        "title": "Jonmagic: Create Daily Project Note"
+        "title": "Brain: Create Daily Project Note"
       },
       {
         "command": "jonmagic.addFrontmatter",
-        "title": "Jonmagic: Add Frontmatter to Current File"
+        "title": "Brain: Add Frontmatter to Current File"
       },
       {
         "command": "jonmagic.createBookmark",
-        "title": "Jonmagic: Create Bookmark"
+        "title": "Brain: Create Bookmark"
       },
       {
         "command": "jonmagic.openRecentBrainFile",
