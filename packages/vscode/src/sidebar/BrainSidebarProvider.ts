@@ -26,6 +26,8 @@ type BrainSidebarItemType =
   | "empty"
   | "error"
 
+const EXPANDED_STATE_KEY = "jonmagic.brainSidebar.expandedItems"
+
 interface BrainSidebarItemOptions {
   date?: string
   icon?: string
@@ -95,10 +97,15 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
   private activeFilePath = getActiveEditorFilePath(vscode.window.activeTextEditor)
   private activeSectionItem: BrainSidebarItem | null = null
   private currentWeekStart: Date
+  private expandedItems: Record<string, boolean>
   private recentFilesCache: BrainSidebarItem[] | null = null
 
-  constructor() {
+  constructor(private readonly state: vscode.Memento) {
     this.currentWeekStart = getWeekStart(new Date())
+    this.expandedItems = state.get<Record<string, boolean>>(
+      EXPANDED_STATE_KEY,
+      {}
+    )
     void this.updateNavigationContext()
   }
 
@@ -156,6 +163,18 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     this._onDidChangeTreeData.fire()
   }
 
+  setItemExpanded(item: BrainSidebarItem, expanded: boolean): void {
+    if (!item.id) {
+      return
+    }
+
+    this.expandedItems = {
+      ...this.expandedItems,
+      [item.id]: expanded,
+    }
+    void this.state.update(EXPANDED_STATE_KEY, this.expandedItems)
+  }
+
   getTreeItem(element: BrainSidebarItem): vscode.TreeItem {
     return element
   }
@@ -208,7 +227,10 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
       "Active Context",
       "active",
       "target",
-      vscode.TreeItemCollapsibleState.Collapsed,
+      this.getCollapsibleState(
+        getSidebarSectionItemId("active"),
+        vscode.TreeItemCollapsibleState.Collapsed
+      ),
       "active Brain file"
     )
     this.activeSectionItem = activeSectionItem
@@ -218,21 +240,30 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
         `Today (${formatDate(new Date())})`,
         "today",
         "circle-filled",
-        vscode.TreeItemCollapsibleState.Expanded,
+        this.getCollapsibleState(
+          getSidebarSectionItemId("today"),
+          vscode.TreeItemCollapsibleState.Expanded
+        ),
         "meetings and daily projects"
       ),
       this.createSectionItem(
         getWeekLabel(this.currentWeekStart),
         "week",
         "calendar",
-        vscode.TreeItemCollapsibleState.Collapsed,
+        this.getCollapsibleState(
+          getSidebarSectionItemId("week"),
+          vscode.TreeItemCollapsibleState.Collapsed
+        ),
         "weekly note and days"
       ),
       this.createSectionItem(
         "Recent Files",
         "recent",
         "history",
-        vscode.TreeItemCollapsibleState.Collapsed,
+        this.getCollapsibleState(
+          getSidebarSectionItemId("recent"),
+          vscode.TreeItemCollapsibleState.Collapsed
+        ),
         "bounded, recent-first"
       ),
       activeSectionItem,
@@ -250,7 +281,10 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     const dayItems = getWeekDayInfos(this.currentWeekStart).map((day) => {
       const item = new BrainSidebarItem(
         `${day.dayName} (${day.date})`,
-        vscode.TreeItemCollapsibleState.Collapsed,
+        this.getCollapsibleState(
+          getSidebarDayItemId(day.date),
+          vscode.TreeItemCollapsibleState.Collapsed
+        ),
         {
           date: day.date,
           icon: day.isToday ? "circle-filled" : "circle-outline",
@@ -343,6 +377,20 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     })
     item.description = description
     return item
+  }
+
+  private getCollapsibleState(
+    itemId: string,
+    defaultState: vscode.TreeItemCollapsibleState
+  ): vscode.TreeItemCollapsibleState {
+    const storedState = this.expandedItems[itemId]
+    if (storedState === undefined) {
+      return defaultState
+    }
+
+    return storedState
+      ? vscode.TreeItemCollapsibleState.Expanded
+      : vscode.TreeItemCollapsibleState.Collapsed
   }
 
   private createFileItem(

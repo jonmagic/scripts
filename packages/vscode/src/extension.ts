@@ -292,14 +292,23 @@ export function activate(
   registerRecentBrainFilesCommand(context)
 
   // Register Brain sidebar tree view
-  const brainSidebarProvider = new BrainSidebarProvider()
+  const brainSidebarProvider = new BrainSidebarProvider(context.globalState)
   const refreshSidebar = () => brainSidebarProvider.refresh()
   const shouldIgnoreSidebarUri = (uri: vscode.Uri) =>
     cache.isIgnoredPath(uri.fsPath)
   registerTypedBrainActionCommands(context, refreshSidebar)
 
+  const brainTreeView = vscode.window.createTreeView("brainWeekView", {
+    treeDataProvider: brainSidebarProvider,
+  })
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider("brainWeekView", brainSidebarProvider)
+    brainTreeView,
+    brainTreeView.onDidExpandElement((event) =>
+      brainSidebarProvider.setItemExpanded(event.element, true)
+    ),
+    brainTreeView.onDidCollapseElement((event) =>
+      brainSidebarProvider.setItemExpanded(event.element, false)
+    )
   )
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {

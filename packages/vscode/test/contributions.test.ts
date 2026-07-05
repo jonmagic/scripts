@@ -80,6 +80,7 @@ describe("VS Code contributions", () => {
         ...sourceText.matchAll(
           /registerTreeDataProvider\(\s*["']([^"']+)["']/g
         ),
+        ...sourceText.matchAll(/createTreeView\(\s*["']([^"']+)["']/g),
       ].map((match) => match[1])
     )
     const contributedViewContainers = new Set(
@@ -168,5 +169,24 @@ describe("VS Code contributions", () => {
     expect(packageJson.activationEvents).toContain("onView:brainWeekView")
     expect(extensionSource).toContain("startWorkspaceCacheForEditor")
     expect(extensionSource).not.toContain("initializeFast().then")
+  })
+
+  test("persists Brain sidebar expanded state explicitly", async () => {
+    const extensionSource = await fs.readFile(
+      path.join(sourceRoot, "extension.ts"),
+      "utf8"
+    )
+    const sidebarSource = await fs.readFile(
+      path.join(sourceRoot, "sidebar", "BrainSidebarProvider.ts"),
+      "utf8"
+    )
+
+    expect(extensionSource).toContain("createTreeView(\"brainWeekView\"")
+    expect(extensionSource).toContain("onDidExpandElement")
+    expect(extensionSource).toContain("onDidCollapseElement")
+    expect(sidebarSource).toContain(
+      'EXPANDED_STATE_KEY = "jonmagic.brainSidebar.expandedItems"'
+    )
+    expect(sidebarSource).toContain("setItemExpanded")
   })
 })
