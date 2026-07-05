@@ -16,7 +16,7 @@ The sidebar includes:
 - **Active Context** - The active Brain Markdown file when one is open
 
 Broad Project navigation stays in **Brain: Open Project Note** so the sidebar does not become a full Brain Explorer.
-VS Code preserves expanded and collapsed section state between reloads.
+VS Code preserves expanded and collapsed section state between reloads, with stale dynamic rows pruned so saved state stays bounded.
 
 ### Week Navigation
 

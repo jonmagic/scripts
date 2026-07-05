@@ -11,8 +11,16 @@ import { formatDate, getDayName, getWeekDays, getWeekLabel } from "./weekUtils"
 
 export const BRAIN_FILE_CONTEXT_VALUE = "brainFile"
 export const SIDEBAR_RECENT_FILE_LIMIT = 10
+export const SIDEBAR_EXPANDED_STATE_MAX_DYNAMIC_ITEMS = 128
+export const SIDEBAR_EXPANDED_STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export type BrainSidebarSection = "today" | "week" | "recent" | "active"
+export type SidebarExpandedState = Record<string, SidebarExpandedStateEntry>
+
+export interface SidebarExpandedStateEntry {
+  expanded: boolean
+  updatedAt: string
+}
 
 export interface SidebarFileCandidate {
   absolutePath: string
@@ -38,6 +46,12 @@ interface ErrorWithCode extends Error {
 }
 
 const FILE_NUMBER_PREFIX_PATTERN = /^(\d+)/
+const SIDEBAR_SECTIONS: BrainSidebarSection[] = [
+  "today",
+  "week",
+  "recent",
+  "active",
+]
 
 function isErrorWithCode(error: unknown): error is ErrorWithCode {
   return error instanceof Error && "code" in error
@@ -138,6 +152,99 @@ export function getSidebarSectionItemId(
 
 export function getSidebarDayItemId(date: string): string {
   return `day:${date}`
+}
+
+function getSidebarSectionItemIds(): Set<string> {
+  return new Set(SIDEBAR_SECTIONS.map(getSidebarSectionItemId))
+}
+
+function toExpandedStateEntry(
+  value: unknown,
+  now: Date
+): SidebarExpandedStateEntry | null {
+  if (typeof value === "boolean") {
+    return {
+      expanded: value,
+      updatedAt: now.toISOString(),
+    }
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return null
+  }
+
+  const maybeEntry = value as Partial<SidebarExpandedStateEntry>
+  if (typeof maybeEntry.expanded !== "boolean") {
+    return null
+  }
+
+  const updatedAt =
+    typeof maybeEntry.updatedAt === "string" &&
+    !Number.isNaN(Date.parse(maybeEntry.updatedAt))
+      ? maybeEntry.updatedAt
+      : now.toISOString()
+
+  return {
+    expanded: maybeEntry.expanded,
+    updatedAt,
+  }
+}
+
+export function pruneSidebarExpandedState(
+  rawState: Record<string, unknown>,
+  now = new Date()
+): SidebarExpandedState {
+  const sectionIds = getSidebarSectionItemIds()
+  const cutoff = now.getTime() - SIDEBAR_EXPANDED_STATE_TTL_MS
+  const sectionEntries: SidebarExpandedState = {}
+  const dynamicEntries: Array<[string, SidebarExpandedStateEntry]> = []
+
+  for (const [itemId, rawValue] of Object.entries(rawState)) {
+    const entry = toExpandedStateEntry(rawValue, now)
+    if (!entry) {
+      continue
+    }
+
+    if (sectionIds.has(itemId)) {
+      sectionEntries[itemId] = entry
+      continue
+    }
+
+    if (Date.parse(entry.updatedAt) < cutoff) {
+      continue
+    }
+
+    dynamicEntries.push([itemId, entry])
+  }
+
+  dynamicEntries.sort(
+    ([leftId, left], [rightId, right]) =>
+      Date.parse(right.updatedAt) - Date.parse(left.updatedAt) ||
+      leftId.localeCompare(rightId)
+  )
+
+  return Object.fromEntries([
+    ...Object.entries(sectionEntries),
+    ...dynamicEntries.slice(0, SIDEBAR_EXPANDED_STATE_MAX_DYNAMIC_ITEMS),
+  ])
+}
+
+export function setSidebarExpandedStateItem(
+  rawState: Record<string, unknown>,
+  itemId: string,
+  expanded: boolean,
+  now = new Date()
+): SidebarExpandedState {
+  return pruneSidebarExpandedState(
+    {
+      ...rawState,
+      [itemId]: {
+        expanded,
+        updatedAt: now.toISOString(),
+      },
+    },
+    now
+  )
 }
 
 export function getWeekDayInfos(weekStart: Date, today = new Date()): WeekDayInfo[] {

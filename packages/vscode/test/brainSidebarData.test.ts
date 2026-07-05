@@ -9,6 +9,9 @@ import {
   getRecentSidebarFiles,
   getSidebarDayItemId,
   getSidebarSectionItemId,
+  pruneSidebarExpandedState,
+  setSidebarExpandedStateItem,
+  SIDEBAR_EXPANDED_STATE_MAX_DYNAMIC_ITEMS,
   getWeeklyScheduleItems,
 } from "../src/sidebar/brainSidebarData.js"
 
@@ -47,6 +50,58 @@ describe("Brain sidebar data helpers", () => {
     expect(getSidebarSectionItemId("recent")).toBe("section:recent")
     expect(getSidebarSectionItemId("active")).toBe("section:active")
     expect(getSidebarDayItemId("2026-07-05")).toBe("day:2026-07-05")
+  })
+
+  test("prunes stale and excessive dynamic expanded state", () => {
+    const now = new Date("2026-07-05T12:00:00.000Z")
+    const rawState: Record<string, unknown> = {
+      "section:today": false,
+      "day:2026-01-01": {
+        expanded: true,
+        updatedAt: "2026-01-01T12:00:00.000Z",
+      },
+      "day:2026-07-05": {
+        expanded: true,
+        updatedAt: "2026-07-05T11:00:00.000Z",
+      },
+      invalid: {
+        expanded: "yes",
+        updatedAt: "2026-07-05T11:00:00.000Z",
+      },
+    }
+
+    expect(pruneSidebarExpandedState(rawState, now)).toEqual({
+      "section:today": {
+        expanded: false,
+        updatedAt: now.toISOString(),
+      },
+      "day:2026-07-05": {
+        expanded: true,
+        updatedAt: "2026-07-05T11:00:00.000Z",
+      },
+    })
+  })
+
+  test("caps dynamic expanded state entries by most recently updated", () => {
+    const now = new Date("2026-07-05T12:00:00.000Z")
+    let state: Record<string, unknown> = {}
+
+    for (let index = 0; index < SIDEBAR_EXPANDED_STATE_MAX_DYNAMIC_ITEMS + 2; index += 1) {
+      const date = `2026-07-${String(index + 1).padStart(2, "0")}`
+      state = setSidebarExpandedStateItem(
+        state,
+        getSidebarDayItemId(date),
+        true,
+        new Date(now.getTime() + index)
+      )
+    }
+
+    const pruned = pruneSidebarExpandedState(state, now)
+    expect(Object.keys(pruned)).toHaveLength(
+      SIDEBAR_EXPANDED_STATE_MAX_DYNAMIC_ITEMS
+    )
+    expect(pruned[getSidebarDayItemId("2026-07-01")]).toBeUndefined()
+    expect(pruned[getSidebarDayItemId("2026-07-02")]).toBeUndefined()
   })
 
   test("sorts today's Daily Projects newest numbered file first", async () => {

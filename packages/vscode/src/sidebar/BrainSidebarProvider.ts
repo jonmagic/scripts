@@ -6,6 +6,8 @@ import {
   BRAIN_FILE_CONTEXT_VALUE,
   getSidebarDayItemId,
   getSidebarSectionItemId,
+  pruneSidebarExpandedState,
+  setSidebarExpandedStateItem,
   getActiveContextFile,
   getDailyProjectFiles,
   getRecentSidebarFiles,
@@ -14,6 +16,7 @@ import {
   getWeeklyScheduleItems,
   type SidebarFileCandidate,
   type SidebarScheduleItem,
+  type SidebarExpandedState,
   type BrainSidebarSection,
 } from "./brainSidebarData"
 import { formatDate, getWeekLabel, getWeekStart } from "./weekUtils"
@@ -97,15 +100,15 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
   private activeFilePath = getActiveEditorFilePath(vscode.window.activeTextEditor)
   private activeSectionItem: BrainSidebarItem | null = null
   private currentWeekStart: Date
-  private expandedItems: Record<string, boolean>
+  private expandedItems: SidebarExpandedState
   private recentFilesCache: BrainSidebarItem[] | null = null
 
   constructor(private readonly state: vscode.Memento) {
     this.currentWeekStart = getWeekStart(new Date())
-    this.expandedItems = state.get<Record<string, boolean>>(
-      EXPANDED_STATE_KEY,
-      {}
+    this.expandedItems = pruneSidebarExpandedState(
+      state.get<Record<string, unknown>>(EXPANDED_STATE_KEY, {})
     )
+    void this.state.update(EXPANDED_STATE_KEY, this.expandedItems)
     void this.updateNavigationContext()
   }
 
@@ -168,10 +171,11 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
       return
     }
 
-    this.expandedItems = {
-      ...this.expandedItems,
-      [item.id]: expanded,
-    }
+    this.expandedItems = setSidebarExpandedStateItem(
+      this.expandedItems,
+      item.id,
+      expanded
+    )
     void this.state.update(EXPANDED_STATE_KEY, this.expandedItems)
   }
 
@@ -383,7 +387,7 @@ export class BrainSidebarProvider implements vscode.TreeDataProvider<BrainSideba
     itemId: string,
     defaultState: vscode.TreeItemCollapsibleState
   ): vscode.TreeItemCollapsibleState {
-    const storedState = this.expandedItems[itemId]
+    const storedState = this.expandedItems[itemId]?.expanded
     if (storedState === undefined) {
       return defaultState
     }
