@@ -19,6 +19,25 @@ export interface ParseResult {
   body: string
 }
 
+function stripWrappingQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1)
+  }
+
+  return value
+}
+
+function parseInlineArrayItems(value: string): string[] {
+  return value
+    .slice(1, -1)
+    .split(",")
+    .map((s) => stripWrappingQuotes(s.trim()))
+    .filter((s) => s.length > 0)
+}
+
 /**
  * Check if content starts with YAML frontmatter delimiter.
  */
@@ -61,6 +80,7 @@ export function parseFrontmatter(content: string): ParseResult {
   // Simple YAML parsing for our known structure
   const frontmatter: ParsedFrontmatter = {}
   let inLinks = false
+  let currentLinksKey: string | null = null
 
   for (const line of frontmatterLines) {
     // Skip empty lines
@@ -70,23 +90,42 @@ export function parseFrontmatter(content: string): ParseResult {
     if (line === "links:") {
       frontmatter.links = {}
       inLinks = true
+      currentLinksKey = null
       continue
     }
 
-    // Handle indented link arrays (e.g., "  parent: [uid1, uid2]")
+    // Handle indented link arrays:
+    //   parent: [uid1, uid2]
+    //   related:
+    //     - "[[uid:abc|Path]]"
     if (inLinks && line.startsWith("  ")) {
       const trimmed = line.trim()
+
+      if (trimmed.startsWith("- ")) {
+        if (currentLinksKey && frontmatter.links) {
+          const value = stripWrappingQuotes(trimmed.slice(2).trim())
+          if (value.length > 0) {
+            const links = frontmatter.links as Record<string, string[]>
+            const currentLinks = links[currentLinksKey] ?? []
+            currentLinks.push(value)
+            links[currentLinksKey] = currentLinks
+          }
+        }
+        continue
+      }
+
       const colonIdx = trimmed.indexOf(":")
       if (colonIdx !== -1) {
         const key = trimmed.slice(0, colonIdx).trim()
         const value = trimmed.slice(colonIdx + 1).trim()
+        const links = frontmatter.links as Record<string, string[]>
+        currentLinksKey = key
         if (value.startsWith("[") && value.endsWith("]")) {
-          const items = value
-            .slice(1, -1)
-            .split(",")
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0)
-          ;(frontmatter.links as Record<string, string[]>)[key] = items
+          links[key] = parseInlineArrayItems(value)
+        } else if (value === "") {
+          links[key] ??= []
+        } else {
+          links[key] = [stripWrappingQuotes(value)]
         }
       }
       continue
@@ -104,21 +143,11 @@ export function parseFrontmatter(content: string): ParseResult {
     let value = line.slice(colonIdx + 1).trim()
 
     // Remove quotes if present
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1)
-    }
+    value = stripWrappingQuotes(value)
 
     // Handle inline arrays like "tags: [foo, bar]"
     if (value.startsWith("[") && value.endsWith("]")) {
-      const items = value
-        .slice(1, -1)
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-      frontmatter[key] = items
+      frontmatter[key] = parseInlineArrayItems(value)
     } else if (value === "") {
       // Could be start of a block, we'll handle simple cases
       frontmatter[key] = value

@@ -18,6 +18,12 @@ The sidebar includes:
 Broad Project navigation stays in **Brain: Open Project Note** so the sidebar does not become a full Brain Explorer.
 VS Code preserves expanded and collapsed section state between reloads, with stale dynamic rows pruned so saved state stays bounded.
 
+### Brain Context Workbench
+
+A dedicated right-side Secondary Side Bar view for context around the active Brain Markdown file. Open **Brain Context** from the right-side side bar to see a small set of related links from frontmatter, source trails, outgoing wikilinks, available backlinks from the existing workspace cache, and current project reference files when they exist.
+
+If the active file is outside the configured Brain folder, the view says so and does not read context. Backlinks use the existing workspace cache only when it has already loaded; the workbench does not create a new index or start broad scans on its own.
+
 ### Week Navigation
 
 Navigate between weeks using the toolbar buttons:
@@ -40,6 +46,7 @@ Navigate between weeks using the toolbar buttons:
 - **Brain: Append Weekly Note TODO** - Append a `- [ ]` item under `## TODO` in the current Weekly Note; fails if the weekly note or heading is missing
 - **Brain: Add Reference to Project** - Add the selected Brain file or a URL to an existing Project `references.md` under a chosen `##` heading
 - **Brain: Rebuild Index** - Rebuild the Brain Markdown, UID, and backlink index used by wikilinks and navigation
+- **Brain: Refresh Context Workbench** - Refresh the right-side context view for the active Brain file
 - **Brain: Create Daily Project Note** - Create a new numbered project note for a selected date
 - **Brain: Add Frontmatter to Current File** - Add YAML frontmatter to the current markdown file
 - **Brain: Create Bookmark** - Create a new Brain bookmark from a URL
@@ -80,6 +87,7 @@ Resolved wikilinks become clickable preview links. Unresolved wikilinks stay vis
 | `Brain: Append Weekly Note TODO` | Append a lightweight checkbox TODO to the current Weekly Note |
 | `Brain: Add Reference to Project` | Add a selected Brain file or URL to an existing Project `references.md` heading |
 | `Brain: Rebuild Index` | Rebuild the Brain Markdown, UID, and backlink index |
+| `Brain: Refresh Context Workbench` | Refresh the right-side context view for the active Brain file |
 | `Brain: Create Daily Project Note` | Create a new daily project note for a selected date |
 | `Brain: Add Frontmatter to Current File` | Add frontmatter to current file |
 | `Brain: Create Bookmark` | Create a new Brain bookmark from a URL |

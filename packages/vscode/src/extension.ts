@@ -9,7 +9,6 @@ import {
 import {
   getWorkspaceCache,
   disposeWorkspaceCache,
-  startWorkspaceCacheInitialization,
 } from "./cache/workspaceCache"
 import {
   getBrainPath,
@@ -30,6 +29,7 @@ import {
   type MarkdownItLike,
 } from "./markdown/wikiLinks"
 import { BrainSidebarProvider } from "./sidebar/BrainSidebarProvider"
+import { BrainContextWorkbenchProvider } from "./context/BrainContextWorkbenchProvider"
 
 interface MarkdownExtensionApi {
   extendMarkdownIt(md: MarkdownItLike): MarkdownItLike
@@ -76,28 +76,6 @@ function createBrainWatcher(
   watcher.onDidCreate(handleChange)
   watcher.onDidDelete(handleChange)
   return watcher
-}
-
-function shouldInitializeWorkspaceCacheForEditor(
-  editor: vscode.TextEditor | undefined
-): boolean {
-  if (!editor || editor.document.languageId !== "markdown") {
-    return false
-  }
-
-  if (editor.document.uri.scheme !== "file") {
-    return false
-  }
-
-  return getRelativeBrainPath(editor.document.uri.fsPath) !== null
-}
-
-function startWorkspaceCacheForEditor(
-  editor: vscode.TextEditor | undefined
-): void {
-  if (shouldInitializeWorkspaceCacheForEditor(editor)) {
-    startWorkspaceCacheInitialization()
-  }
 }
 
 async function executeResourceCommand(
@@ -259,7 +237,6 @@ export function activate(
   context: vscode.ExtensionContext
 ): MarkdownExtensionApi {
   const cache = getWorkspaceCache()
-  startWorkspaceCacheForEditor(vscode.window.activeTextEditor)
 
   // Register document link provider for wikilinks
   const linkProvider = new WikilinkDocumentLinkProvider()
@@ -301,8 +278,17 @@ export function activate(
   const brainTreeView = vscode.window.createTreeView("brainWeekView", {
     treeDataProvider: brainSidebarProvider,
   })
+  const brainContextWorkbenchProvider = new BrainContextWorkbenchProvider()
+  const brainContextTreeView = vscode.window.createTreeView(
+    "brainContextWorkbenchView",
+    {
+      treeDataProvider: brainContextWorkbenchProvider,
+    }
+  )
   context.subscriptions.push(
     brainTreeView,
+    brainContextTreeView,
+    brainContextWorkbenchProvider,
     brainTreeView.onDidExpandElement((event) =>
       brainSidebarProvider.setItemExpanded(event.element, true)
     ),
@@ -313,7 +299,12 @@ export function activate(
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       brainSidebarProvider.setActiveEditor(editor)
-      startWorkspaceCacheForEditor(editor)
+      brainContextWorkbenchProvider.setActiveEditor(editor)
+    }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (vscode.window.activeTextEditor?.document === event.document) {
+        brainContextWorkbenchProvider.refreshSoon()
+      }
     })
   )
 
@@ -322,7 +313,10 @@ export function activate(
     vscode.commands.registerCommand('jonmagic.previousWeek', () => brainSidebarProvider.previousWeek()),
     vscode.commands.registerCommand('jonmagic.nextWeek', () => brainSidebarProvider.nextWeek()),
     vscode.commands.registerCommand('jonmagic.goToCurrentWeek', () => brainSidebarProvider.goToCurrentWeek()),
-    vscode.commands.registerCommand('jonmagic.refresh', refreshSidebar)
+    vscode.commands.registerCommand('jonmagic.refresh', refreshSidebar),
+    vscode.commands.registerCommand('jonmagic.refreshContextWorkbench', () =>
+      brainContextWorkbenchProvider.refresh()
+    )
   )
 
   // Register Brain file context menu commands

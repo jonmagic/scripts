@@ -26,7 +26,8 @@
     "onCommand:jonmagic.appendWeeklyTodo",
     "onCommand:jonmagic.addReferenceToProject",
     "onCommand:jonmagic.rebuildIndex",
-    "onView:brainWeekView"
+    "onView:brainWeekView",
+    "onView:brainContextWorkbenchView"
   ],
   "categories": ["Other"],
   "main": "./dist/extension.js",
@@ -110,6 +111,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "jonmagic.refreshContextWorkbench",
+        "title": "Brain: Refresh Context Workbench",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "jonmagic.openPreview",
         "title": "Open Preview"
       },
@@ -168,6 +174,13 @@
           "title": "Brain",
           "icon": "$(book)"
         }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "brain-context-workbench",
+          "title": "Brain Context",
+          "icon": "$(references)"
+        }
       ]
     },
     "views": {
@@ -176,6 +189,13 @@
           "id": "brainWeekView",
           "name": "This Week",
           "contextualTitle": "Brain"
+        }
+      ],
+      "brain-context-workbench": [
+        {
+          "id": "brainContextWorkbenchView",
+          "name": "Context",
+          "contextualTitle": "Brain Context"
         }
       ]
     },
@@ -247,6 +267,11 @@
           "command": "jonmagic.rebuildIndex",
           "when": "view == brainWeekView",
           "group": "navigation@5"
+        },
+        {
+          "command": "jonmagic.refreshContextWorkbench",
+          "when": "view == brainContextWorkbenchView",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [

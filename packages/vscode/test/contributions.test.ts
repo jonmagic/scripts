@@ -157,7 +157,7 @@ describe("VS Code contributions", () => {
     }
   })
 
-  test("keeps Brain sidebar activation from eagerly initializing the full cache", async () => {
+  test("keeps Brain views from eagerly initializing the full cache", async () => {
     const packageJson = JSON.parse(
       await fs.readFile(path.join(packageRoot, "package.json"), "utf8")
     ) as VscodePackageJson
@@ -167,8 +167,25 @@ describe("VS Code contributions", () => {
     )
 
     expect(packageJson.activationEvents).toContain("onView:brainWeekView")
-    expect(extensionSource).toContain("startWorkspaceCacheForEditor")
-    expect(extensionSource).not.toContain("initializeFast().then")
+    expect(packageJson.activationEvents).toContain("onView:brainContextWorkbenchView")
+    expect(extensionSource).not.toContain("startWorkspaceCacheForEditor")
+    expect(extensionSource).not.toContain("startWorkspaceCacheInitialization")
+    expect(extensionSource).not.toContain("initializeWorkspaceCache")
+  })
+
+  test("uses the supported secondary side bar contribution point", async () => {
+    const packageJson = JSON.parse(
+      await fs.readFile(path.join(packageRoot, "package.json"), "utf8")
+    ) as VscodePackageJson
+
+    expect(
+      packageJson.contributes.viewsContainers?.secondarySidebar?.map(
+        (container) => container.id
+      )
+    ).toContain("brain-context-workbench")
+    expect(packageJson.contributes.viewsContainers).not.toHaveProperty(
+      "auxiliarybar"
+    )
   })
 
   test("persists Brain sidebar expanded state explicitly", async () => {
@@ -188,5 +205,36 @@ describe("VS Code contributions", () => {
       'EXPANDED_STATE_KEY = "jonmagic.brainSidebar.expandedItems"'
     )
     expect(sidebarSource).toContain("setItemExpanded")
+  })
+
+  test("debounces active-buffer Brain context refreshes", async () => {
+    const extensionSource = await fs.readFile(
+      path.join(sourceRoot, "extension.ts"),
+      "utf8"
+    )
+    const providerSource = await fs.readFile(
+      path.join(sourceRoot, "context", "BrainContextWorkbenchProvider.ts"),
+      "utf8"
+    )
+
+    expect(extensionSource).toContain("onDidChangeTextDocument")
+    expect(extensionSource).toContain("brainContextWorkbenchProvider.refreshSoon()")
+    expect(providerSource).toContain("refreshSoon(delayMs = 200)")
+    expect(providerSource).toContain("clearTimeout(this.refreshTimer)")
+  })
+
+  test("keeps Brain context reads tied to one active editor version", async () => {
+    const providerSource = await fs.readFile(
+      path.join(sourceRoot, "context", "BrainContextWorkbenchProvider.ts"),
+      "utf8"
+    )
+
+    expect(providerSource).toContain("private activeEditorVersion = 0")
+    expect(providerSource).toContain("const document = editor?.document")
+    expect(providerSource).toContain(
+      "this.activeEditorVersion !== activeEditorVersion"
+    )
+    expect(providerSource).toContain("continue")
+    expect(providerSource).toContain("content: document?.getText() ?? \"\"")
   })
 })

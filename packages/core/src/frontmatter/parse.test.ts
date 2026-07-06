@@ -105,6 +105,31 @@ Content`
     })
   })
 
+  test("parses block-list links with quoted wikilinks", () => {
+    const content = `---
+uid: 3mptvhhdstwsc
+links:
+  parent:
+    - "[[uid:3mptpqmby3ea7|Daily Projects/2026-07-04/02 scripts brain extension ideas and requirements]]"
+  source: []
+  related:
+    - "[[uid:3mptr4wb275dl|Daily Projects/2026-07-04/03 scripts brain quick open execution plan]]"
+---
+
+Content`
+    const { frontmatter } = parseFrontmatter(content)
+
+    expect(frontmatter?.links).toEqual({
+      parent: [
+        "[[uid:3mptpqmby3ea7|Daily Projects/2026-07-04/02 scripts brain extension ideas and requirements]]",
+      ],
+      source: [],
+      related: [
+        "[[uid:3mptr4wb275dl|Daily Projects/2026-07-04/03 scripts brain quick open execution plan]]",
+      ],
+    })
+  })
+
   test("handles quoted values", () => {
     const content = `---
 uid: "quoted-uid"
