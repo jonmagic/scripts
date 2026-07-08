@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#
+# Exercise the native Weekly Focus app against a temporary Brain.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+TMPDIR="$(mktemp -d)"
+LAUNCH_FILE="/tmp/weekly-focus-app-launch-self-test.txt"
+
+cleanup() {
+  for workspace in $(cmux workspace list 2>/dev/null | awk '/Self-test launch/ {print $1}'); do
+    cmux workspace close "$workspace" >/dev/null 2>&1 || true
+  done
+  rm -rf "$TMPDIR"
+  rm -f "$LAUNCH_FILE"
+}
+trap cleanup EXIT
+
+mkdir -p "$TMPDIR/Weekly Notes"
+WEEKLY_NOTE="$TMPDIR/Weekly Notes/Week of 2026-07-05.md"
+
+cat >"$WEEKLY_NOTE" <<'MARKDOWN'
+# Week
+
+## TODO
+- [ ] One
+- [ ] Two
+
+## Captured
+MARKDOWN
+
+rm -f "$LAUNCH_FILE"
+
+BRAIN_ROOT="$TMPDIR" swift run \
+  --package-path "$ROOT_DIR/packages/focus-app" \
+  weekly-focus-app \
+  --self-test \
+  --self-test-launch
+
+grep -q 'Self-test capture' "$WEEKLY_NOTE"
+grep -q -- '- \[x\] One' "$WEEKLY_NOTE"
+
+for _ in {1..20}; do
+  if [[ -f "$LAUNCH_FILE" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+
+grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
+
+echo "weekly-focus app self-test passed"

@@ -103,6 +103,14 @@ focus area instead of becoming primary actions. Press `C` to quick-capture into
 bin/weekly-focus-app
 ```
 
+The native app has a self-test that creates a temporary Brain, focuses the
+capture field, appends a capture, marks a TODO done, and asks cmux to open a
+harmless workspace command:
+
+```bash
+bin/test-weekly-focus-app
+```
+
 ## Raycast Commands
 
 The Raycast extension includes quick Brain actions for the same weekly-note workflow:

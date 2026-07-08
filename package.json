@@ -17,6 +17,7 @@
     "build:raycast": "cd packages/raycast && bun run build",
     "build:focus-app": "bin/build-weekly-focus-app >/dev/null",
     "test:focus-app": "swift test --package-path packages/focus-app",
+    "test:focus-app:ui": "bin/test-weekly-focus-app",
     "lint": "bun eslint \"**/*.{ts,tsx,js,mjs,cjs}\"",
     "test": "bun test",
     "typecheck": "bun tsc -b"

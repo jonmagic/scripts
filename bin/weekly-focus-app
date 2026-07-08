@@ -11,7 +11,7 @@ APP_DIR="$PACKAGE_DIR/.build/Weekly Focus.app"
 APP_EXECUTABLE="$APP_DIR/Contents/MacOS/Weekly Focus"
 
 case "${1:-}" in
-  --print-focus)
+  --print-focus|--self-test|--self-test-launch|--self-test-copilot-launch)
     swift run --package-path "$PACKAGE_DIR" weekly-focus-app "$@"
     ;;
   --help)
@@ -19,8 +19,11 @@ case "${1:-}" in
 Usage: weekly-focus-app [--print-focus]
 
 Options:
-  --print-focus  Print the weekly focus card and exit
-  --help         Show this help message
+  --print-focus                 Print the weekly focus card and exit
+  --self-test                   Run the AppKit capture/done self-test
+  --self-test-launch            Include harmless cmux launch in self-test
+  --self-test-copilot-launch    Launch a real cmux Copilot smoke workspace
+  --help                        Show this help message
 USAGE
     ;;
   *)

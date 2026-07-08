@@ -16,11 +16,39 @@ if CommandLine.arguments.contains("--print-focus") {
     printFocusAndExit()
 }
 
+if CommandLine.arguments.contains("--self-test-copilot-launch") {
+    let todo = "Weekly Focus Copilot Smoke \(UUID().uuidString)"
+    do {
+        try CmuxFocusLauncher.launch(
+            todo: todo,
+            brainRoot: WeeklyFocusReader().brainRoot,
+            focus: false
+        )
+        print(todo)
+        exit(0)
+    } catch {
+        fputs("\(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
+}
+
+final class FocusWindow: NSWindow {
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override var canBecomeMain: Bool {
+        true
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var snapshot: WeeklyFocusSnapshot?
     private var keyMonitor: Any?
+    private let selfTestMode = CommandLine.arguments.contains("--self-test")
+    private let selfTestLaunchMode = CommandLine.arguments.contains("--self-test-launch")
     private let titleLabel = NSTextField(labelWithString: "Weekly Focus")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let contentStack = NSStackView()
@@ -45,6 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+
+        if selfTestMode {
+            DispatchQueue.main.async {
+                self.runSelfTest()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -60,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func createWindow() {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
-        let window = NSWindow(
+        let window = FocusWindow(
             contentRect: frame,
             styleMask: [.borderless, .resizable],
             backing: .buffered,
@@ -73,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.delegate = self
         window.contentView = buildRootView()
         window.makeKeyAndOrderFront(nil)
+        window.makeMain()
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
     }
@@ -385,6 +420,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.runModal()
+    }
+
+    private func runSelfTest() {
+        do {
+            guard let window else {
+                throw WeeklyFocusError.launchFailed("self-test window missing")
+            }
+
+            guard window.canBecomeKey, window.isKeyWindow || window.makeFirstResponder(captureField) else {
+                throw WeeklyFocusError.launchFailed("self-test window cannot focus capture field")
+            }
+
+            captureField.stringValue = "Self-test capture"
+            captureSubmitted(self)
+
+            guard let afterCapture = snapshot, afterCapture.capturedCount > 0 else {
+                throw WeeklyFocusError.launchFailed("self-test capture did not refresh snapshot")
+            }
+
+            let firstTodo = afterCapture.todos.first
+            if firstTodo != nil {
+                markDone(at: 0)
+                let afterDone = try WeeklyFocusReader().read(todoLimit: 5)
+                if afterDone.todos.first == firstTodo {
+                    throw WeeklyFocusError.launchFailed("self-test mark done did not update TODO list")
+                }
+            }
+
+            if selfTestLaunchMode {
+                let launchFile = "/tmp/weekly-focus-app-launch-self-test.txt"
+                try? FileManager.default.removeItem(atPath: launchFile)
+                try CmuxFocusLauncher.launch(
+                    todo: "Self-test launch",
+                    brainRoot: FileManager.default.homeDirectoryForCurrentUser
+                        .appendingPathComponent("Brain")
+                        .path,
+                    commandOverride: "printf weekly-focus-launch-ok > \(launchFile)",
+                    focus: false
+                )
+            }
+
+            print("weekly-focus self-test ok")
+            NSApp.terminate(nil)
+        } catch {
+            fputs("weekly-focus self-test failed: \(error.localizedDescription)\n", stderr)
+            NSApp.terminate(nil)
+            exit(1)
+        }
     }
 }
 

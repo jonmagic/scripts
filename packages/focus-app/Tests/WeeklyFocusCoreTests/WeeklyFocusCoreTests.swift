@@ -84,10 +84,30 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--cwd")! + 1], "/tmp/Brain")
         XCTAssertEqual(
             command.arguments[command.arguments.firstIndex(of: "--command")! + 1],
-            #"zsh -lic 'c -i "$WEEKLY_FOCUS_PROMPT" || copilot --allow-all -i "$WEEKLY_FOCUS_PROMPT"'"#
+            #"zsh -lic 'if alias c >/dev/null 2>&1; then c -i "$WEEKLY_FOCUS_PROMPT"; else copilot --allow-all -i "$WEEKLY_FOCUS_PROMPT"; fi'"#
         )
-        XCTAssertTrue(command.arguments[command.arguments.firstIndex(of: "--env")! + 1].contains(todo))
         XCTAssertFalse(command.arguments[command.arguments.firstIndex(of: "--command")! + 1].contains(todo))
+    }
+
+    func testBuildsScriptedLaunchCommandWithoutInterpolatingTodoIntoShellCommand() throws {
+        let todo = #"Fix $(touch /tmp/nope) and "quote" this"#
+        let command = try CmuxFocusLauncher.buildScriptedCopilotCommand(todo: todo)
+
+        XCTAssertTrue(command.hasPrefix("zsh -lic "))
+        XCTAssertFalse(command.contains(todo))
+    }
+
+    func testBuildsLaunchCommandWithSelfTestOverride() {
+        let command = CmuxFocusLauncher.buildCommand(
+            todo: "Self test",
+            brainRoot: "/tmp/Brain",
+            cmuxPath: "/bin/cmux",
+            commandOverride: "echo ok",
+            focus: false
+        )
+
+        XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--command")! + 1], "echo ok")
+        XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--focus")! + 1], "false")
     }
 
     func testMarksSelectedTodoDoneInWeeklyNote() throws {

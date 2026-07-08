@@ -374,7 +374,7 @@ public enum WeeklyFocusFormatter {
 public enum CmuxFocusLauncher {
     public static let promptEnvironmentName = "WEEKLY_FOCUS_PROMPT"
     public static let copilotCommand =
-        "zsh -lic 'c -i \"$WEEKLY_FOCUS_PROMPT\" || copilot --allow-all -i \"$WEEKLY_FOCUS_PROMPT\"'"
+        "zsh -lic 'if alias c >/dev/null 2>&1; then c -i \"$WEEKLY_FOCUS_PROMPT\"; else copilot --allow-all -i \"$WEEKLY_FOCUS_PROMPT\"; fi'"
     public static let cmuxCandidates = [
         "/Applications/cmux.app/Contents/Resources/bin/cmux",
         "/opt/homebrew/bin/cmux",
@@ -394,9 +394,10 @@ public enum CmuxFocusLauncher {
     public static func buildCommand(
         todo: String,
         brainRoot: String,
-        cmuxPath: String? = nil
+        cmuxPath: String? = nil,
+        commandOverride: String? = nil,
+        focus: Bool = true
     ) -> LaunchCommand {
-        let prompt = buildPrompt(todo: todo)
         return LaunchCommand(
             executable: resolveCmuxPath(cmuxPath),
             arguments: [
@@ -406,12 +407,10 @@ public enum CmuxFocusLauncher {
                 workspaceTitle(for: todo),
                 "--cwd",
                 brainRoot,
-                "--env",
-                "\(promptEnvironmentName)=\(prompt)",
                 "--command",
-                copilotCommand,
+                commandOverride ?? copilotCommand,
                 "--focus",
-                "true"
+                focus ? "true" : "false"
             ]
         )
     }
@@ -428,8 +427,19 @@ public enum CmuxFocusLauncher {
         return "/usr/bin/env"
     }
 
-    public static func launch(todo: String, brainRoot: String) throws {
-        let command = buildCommand(todo: todo, brainRoot: brainRoot)
+    public static func launch(
+        todo: String,
+        brainRoot: String,
+        commandOverride: String? = nil,
+        focus: Bool = true
+    ) throws {
+        let commandText = try commandOverride ?? buildScriptedCopilotCommand(todo: todo)
+        let command = buildCommand(
+            todo: todo,
+            brainRoot: brainRoot,
+            commandOverride: commandText,
+            focus: focus
+        )
         let process = Process()
         let errorPipe = Pipe()
 
@@ -440,6 +450,7 @@ public enum CmuxFocusLauncher {
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = command.arguments
         }
+        process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         process.standardError = errorPipe
 
         try process.run()
@@ -451,6 +462,32 @@ public enum CmuxFocusLauncher {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
         }
+    }
+
+    static func buildScriptedCopilotCommand(todo: String) throws -> String {
+        let tempDirectory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("weekly-focus-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: tempDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let promptPath = tempDirectory.appendingPathComponent("prompt.txt")
+        let scriptPath = tempDirectory.appendingPathComponent("launch.zsh")
+        try buildPrompt(todo: todo).write(to: promptPath, atomically: true, encoding: .utf8)
+        try [
+            "cleanup() { rm -rf \(shellQuote(tempDirectory.path)); }",
+            "trap cleanup EXIT",
+            "prompt=$(cat \(shellQuote(promptPath.path)))",
+            "if alias c >/dev/null 2>&1; then",
+            "  c -i \"$prompt\"",
+            "else",
+            "  copilot --allow-all -i \"$prompt\"",
+            "fi",
+            ""
+        ].joined(separator: "\n").write(to: scriptPath, atomically: true, encoding: .utf8)
+
+        return "zsh -lic \(shellQuote("source \(shellQuote(scriptPath.path))"))"
     }
 
     private static func workspaceTitle(for todo: String) -> String {
@@ -465,5 +502,9 @@ public enum CmuxFocusLauncher {
         }
 
         return "\(normalized.prefix(57))..."
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
