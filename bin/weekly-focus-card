@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wrapper for weekly-focus-card CLI
+exec "$(dirname "$0")/../packages/cli/bin/weekly-focus-card" "$@"

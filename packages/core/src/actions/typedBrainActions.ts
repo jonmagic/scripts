@@ -54,6 +54,7 @@ export interface AppendWeeklyNoteCaptureResult {
 export interface ParseWeeklyNoteFocusOptions {
   brainRoot?: string
   date?: Date
+  todoLimit?: number
   waitingLimit?: number
   weeklyNotePath?: string
 }
@@ -63,6 +64,7 @@ export interface WeeklyNoteFocus {
   weeklyNotePath: string
   now?: string
   next?: string
+  todos: string[]
   waiting: string[]
   capturedCount: number
 }
@@ -505,7 +507,11 @@ export async function parseWeeklyNoteFocus(
   const resolved = await resolveWeeklyNote(options)
   const content = await fs.readFile(resolved.absolutePath, "utf8")
   const lines = content.split(/\r?\n/)
-  const todos = uncheckedSectionItems(lines, "## TODO")
+  const todoLimit = options.todoLimit ?? 5
+  const todos = uncheckedSectionItems(lines, "## TODO").slice(
+    0,
+    Math.max(0, todoLimit)
+  )
   const waitingLimit = options.waitingLimit ?? 3
   const waiting = uncheckedSectionItems(lines, "## Waiting").slice(
     0,
@@ -516,6 +522,7 @@ export async function parseWeeklyNoteFocus(
   const focus: WeeklyNoteFocus = {
     brainRoot: resolved.brainRoot,
     weeklyNotePath: resolved.absolutePath,
+    todos,
     waiting,
     capturedCount,
   }

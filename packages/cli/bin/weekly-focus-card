@@ -1,0 +1,38 @@
+#!/usr/bin/env bun
+/**
+ * weekly-focus-card: Print a sparse weekly focus card capped at five TODO items.
+ *
+ * Usage:
+ *   weekly-focus-card [--brain-root PATH]
+ */
+
+import { parseArgs } from "node:util"
+import { formatWeeklyFocusCard, runWeeklyFocus } from "../src/weekly-note-commitments.js"
+
+const { values } = parseArgs({
+  options: {
+    "brain-root": { type: "string" },
+    "weekly-note-path": { type: "string" },
+    help: { type: "boolean", short: "h" },
+  },
+})
+
+if (values.help) {
+  console.log(`
+Usage: weekly-focus-card [options]
+
+Options:
+  --brain-root PATH        Override Brain root directory
+  --weekly-note-path PATH  Override the weekly note path
+  -h, --help               Show this help message
+`)
+  process.exit(0)
+}
+
+const focus = await runWeeklyFocus({
+  brainRoot: values["brain-root"],
+  todoLimit: 5,
+  weeklyNotePath: values["weekly-note-path"],
+})
+
+console.log(formatWeeklyFocusCard(focus))

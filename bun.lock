@@ -21,6 +21,13 @@
       "version": "0.0.0",
       "bin": {
         "archive-meeting": "./bin/archive-meeting",
+        "capture-weekly-note": "./bin/capture-weekly-note",
+        "list-recent-meetings": "./bin/list-recent-meetings",
+        "skill-manager": "./bin/skill-manager",
+        "sm": "./bin/skill-manager",
+        "create-daily-project-note": "./bin/create-daily-project-note",
+        "weekly-focus": "./bin/weekly-focus",
+        "weekly-focus-card": "./bin/weekly-focus-card",
       },
       "dependencies": {
         "@jonmagic/scripts-core": "workspace:*",
@@ -46,6 +53,7 @@
       "name": "jonmagic-scripts-raycast",
       "version": "0.0.0",
       "dependencies": {
+        "@jonmagic/scripts-cli": "workspace:*",
         "@jonmagic/scripts-core": "workspace:*",
         "@raycast/api": "^1.82.1",
         "react": "^19.0.0",

@@ -1,7 +1,7 @@
 {
   "name": "jonmagic-scripts-raycast",
   "title": "Jonmagic Scripts",
-  "description": "Create Daily Project notes in my Brain repo",
+  "description": "Fast Brain capture and focus actions",
   "icon": "assets/extension-icon.png",
   "author": "jonmagic",
   "license": "MIT",
@@ -12,6 +12,18 @@
       "name": "create-daily-project-note",
       "title": "Create Daily Project Note",
       "description": "Creates a numbered note in Daily Projects/YYYY-MM-DD",
+      "mode": "view"
+    },
+    {
+      "name": "capture-weekly-note",
+      "title": "Capture Weekly Note",
+      "description": "Captures a rough commitment under ## Captured in the current weekly note",
+      "mode": "view"
+    },
+    {
+      "name": "weekly-focus",
+      "title": "Weekly Focus",
+      "description": "Shows up to five weekly note TODOs and launches Copilot work sessions",
       "mode": "view"
     }
   ],
@@ -27,6 +39,7 @@
     "typecheck": "bun tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@jonmagic/scripts-cli": "workspace:*",
     "@jonmagic/scripts-core": "workspace:*",
     "@raycast/api": "^1.82.1",
     "react": "^19.0.0"

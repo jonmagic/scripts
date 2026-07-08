@@ -86,6 +86,17 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 | `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |
 | `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
 | `weekly-focus` | Print a low-noise Now/Next/Waiting/Captured view from the current weekly note | bun |
+| `weekly-focus-card` | Print a sparse focus card capped at five current weekly-note TODOs | bun |
+
+## Raycast Commands
+
+The Raycast extension includes quick Brain actions for the same weekly-note workflow:
+
+| Command | Description |
+|---------|-------------|
+| `Create Daily Project Note` | Create a numbered Daily Project note |
+| `Capture Weekly Note` | Capture a rough commitment with optional source under `## Captured` |
+| `Weekly Focus` | Show up to five weekly-note TODOs and launch a cmux Copilot workspace for a selected item |
 
 ## License
 

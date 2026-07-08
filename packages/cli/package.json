@@ -12,7 +12,8 @@
     "skill-manager": "./bin/skill-manager",
     "sm": "./bin/skill-manager",
     "create-daily-project-note": "./bin/create-daily-project-note",
-    "weekly-focus": "./bin/weekly-focus"
+    "weekly-focus": "./bin/weekly-focus",
+    "weekly-focus-card": "./bin/weekly-focus-card"
   },
   "scripts": {
     "build": "bun tsc -p tsconfig.json",

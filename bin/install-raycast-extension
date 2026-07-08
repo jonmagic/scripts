@@ -10,11 +10,11 @@ RAYCAST_DIR="$ROOT_DIR/packages/raycast"
 
 cd "$RAYCAST_DIR"
 
-echo "==> Installing Raycast extension via ray develop..."
+echo "==> Installing Raycast extension via bun run ray develop..."
 echo "    This will open Raycast and link the extension for development."
 echo ""
 
-ray develop
+bun run ray develop
 
 echo ""
 echo "==> Done! The extension should now be available in Raycast."

@@ -10,10 +10,11 @@
     "packages/raycast"
   ],
   "scripts": {
-    "build": "bun run build:core && bun run build:cli && bun run build:vscode",
+    "build": "bun run build:core && bun run build:cli && bun run build:vscode && bun run build:raycast",
     "build:core": "cd packages/core && bun run build",
     "build:cli": "cd packages/cli && bun run build",
     "build:vscode": "cd packages/vscode && bun run build",
+    "build:raycast": "cd packages/raycast && bun run build",
     "lint": "bun eslint \"**/*.{ts,tsx,js,mjs,cjs}\"",
     "test": "bun test",
     "typecheck": "bun tsc -b"

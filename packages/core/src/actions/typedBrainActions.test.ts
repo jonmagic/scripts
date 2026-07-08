@@ -286,6 +286,7 @@ describe("typed Brain actions", () => {
 
     expect(focus.now).toBe("Current task")
     expect(focus.next).toBe("Next task")
+    expect(focus.todos).toEqual(["Current task", "Next task"])
     expect(focus.waiting).toEqual(["Waiting on review"])
     expect(focus.capturedCount).toBe(1)
     expect(focus.weeklyNotePath).toBe(await fs.realpath(weeklyPath))
@@ -305,8 +306,40 @@ describe("typed Brain actions", () => {
 
     expect(focus.now).toBeUndefined()
     expect(focus.next).toBeUndefined()
+    expect(focus.todos).toEqual([])
     expect(focus.waiting).toEqual([])
     expect(focus.capturedCount).toBe(0)
+  })
+
+  test("limits weekly focus TODOs while keeping now and next fields", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(
+      weeklyPath,
+      [
+        "# Week of 2026-07-05",
+        "",
+        "## TODO",
+        "- [ ] One",
+        "- [ ] Two",
+        "- [ ] Three",
+        "- [ ] Four",
+        "- [ ] Five",
+        "- [ ] Six",
+        "",
+      ].join("\n")
+    )
+
+    const focus = await parseWeeklyNoteFocus({ brainRoot, todoLimit: 5 })
+
+    expect(focus.now).toBe("One")
+    expect(focus.next).toBe("Two")
+    expect(focus.todos).toEqual(["One", "Two", "Three", "Four", "Five"])
   })
 
   test("extracts level-two headings and appends project references under a selected heading", async () => {

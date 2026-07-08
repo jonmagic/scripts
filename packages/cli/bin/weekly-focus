@@ -13,6 +13,7 @@ const { values } = parseArgs({
   options: {
     "brain-root": { type: "string" },
     "weekly-note-path": { type: "string" },
+    limit: { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 })
@@ -24,13 +25,26 @@ Usage: weekly-focus [options]
 Options:
   --brain-root PATH        Override Brain root directory
   --weekly-note-path PATH  Override the weekly note path
+  --limit N                Max TODO items to read (default: 5)
   -h, --help               Show this help message
 `)
   process.exit(0)
 }
 
+const limit =
+  values.limit === undefined ? undefined : Number.parseInt(values.limit, 10)
+
+if (
+  values.limit !== undefined &&
+  (!Number.isInteger(limit) || limit < 0 || String(limit) !== values.limit)
+) {
+  console.error("--limit must be a non-negative integer")
+  process.exit(1)
+}
+
 const focus = await runWeeklyFocus({
   brainRoot: values["brain-root"],
+  todoLimit: limit,
   weeklyNotePath: values["weekly-note-path"],
 })
 
