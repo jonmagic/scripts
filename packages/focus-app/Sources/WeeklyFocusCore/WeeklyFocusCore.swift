@@ -71,7 +71,7 @@ public struct WeeklyFocusReader {
     ) {
         let resolvedBrainRoot = WeeklyFocusReader.resolveHome(brainRoot)
         self.brainRoot = resolvedBrainRoot
-        self.weeklyNotePath = weeklyNotePath ?? WeeklyFocusReader.weeklyNotePath(
+        self.weeklyNotePath = weeklyNotePath ?? WeeklyFocusReader.currentOrLatestWeeklyNotePath(
             brainRoot: resolvedBrainRoot,
             date: date,
             calendar: calendar
@@ -229,6 +229,32 @@ public struct WeeklyFocusReader {
             .path
     }
 
+    public static func currentOrLatestWeeklyNotePath(
+        brainRoot: String,
+        date: Date,
+        calendar: Calendar = .current
+    ) -> String {
+        let currentPath = weeklyNotePath(
+            brainRoot: brainRoot,
+            date: date,
+            calendar: calendar
+        )
+
+        if FileManager.default.fileExists(atPath: currentPath) {
+            return currentPath
+        }
+
+        guard let latestPath = latestWeeklyNotePath(
+            brainRoot: brainRoot,
+            beforeOrOn: date,
+            calendar: calendar
+        ) else {
+            return currentPath
+        }
+
+        return latestPath
+    }
+
     public static func parse(
         _ content: String,
         brainRoot: String,
@@ -264,6 +290,49 @@ public struct WeeklyFocusReader {
         let startOfDay = calendar.startOfDay(for: date)
         let weekday = calendar.component(.weekday, from: startOfDay)
         return calendar.date(byAdding: .day, value: -(weekday - 1), to: startOfDay) ?? startOfDay
+    }
+
+    private static func latestWeeklyNotePath(
+        brainRoot: String,
+        beforeOrOn date: Date,
+        calendar: Calendar
+    ) -> String? {
+        let weeklyNotesDirectory = URL(fileURLWithPath: brainRoot)
+            .appendingPathComponent("Weekly Notes")
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: weeklyNotesDirectory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return nil
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        let currentWeekStart = startOfWeekSunday(date, calendar: calendar)
+        let prefix = "Week of "
+        let suffix = ".md"
+
+        let candidates = entries.compactMap { url -> (date: Date, path: String)? in
+            let name = url.lastPathComponent
+            guard name.hasPrefix(prefix), name.hasSuffix(suffix) else {
+                return nil
+            }
+
+            let start = name.index(name.startIndex, offsetBy: prefix.count)
+            let end = name.index(name.endIndex, offsetBy: -suffix.count)
+            let dateText = String(name[start..<end])
+            guard let weekStart = formatter.date(from: dateText),
+                  weekStart <= currentWeekStart else {
+                return nil
+            }
+
+            return (weekStart, url.path)
+        }
+
+        return candidates.sorted { $0.date > $1.date }.first?.path
     }
 
     private static func uncheckedItems(in lines: [String], heading: String) -> [String] {

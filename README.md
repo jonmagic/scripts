@@ -96,10 +96,16 @@ fills the current monitor by default, and shows at most five unchecked `## TODO`
 items. Click an item, press `1`-`5`, or press `⌘1`-`⌘5` to briefly highlight
 the row, open a new cmux workspace in `~/Brain`, and bring cmux forward with
 `c` started on that TODO. Command-click an item to mark it complete in the
-weekly note. The app also watches the weekly note and refreshes automatically
-when an external markdown edit checks off or adds TODOs. Items after the top
-five fade below the main focus area. Type in the empty field and press Return
-to add a new TODO. Press `R` to refresh and `Q`, `Esc`, or `⌘Q` to quit.
+weekly note. Links inside TODO text open directly when clicked. Press `⌘O` to
+open the source weekly note in VS Code Insiders. The app also watches the
+weekly note and refreshes automatically when an external markdown edit checks
+off or adds TODOs. Items after the top five fade below the main focus area.
+Type in the empty field and press Return to add a new TODO. Press `R` to
+refresh and `Q`, `Esc`, or `⌘Q` to quit.
+
+Weekly Focus reads the current week's note when it exists. If the current week
+file has not been created yet, it falls back to the latest existing weekly note
+instead of failing on Sunday morning.
 
 ```bash
 bin/weekly-focus-app

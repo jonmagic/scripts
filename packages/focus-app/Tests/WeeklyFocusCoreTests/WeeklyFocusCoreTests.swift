@@ -371,4 +371,90 @@ final class WeeklyFocusCoreTests: XCTestCase {
             "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md"
         )
     }
+
+    func testReaderUsesCurrentWeekWhenItExists() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: weeklyDirectory,
+            withIntermediateDirectories: true
+        )
+        try "# Current".write(
+            to: weeklyDirectory.appendingPathComponent("Week of 2026-07-12.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "# Previous".write(
+            to: weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 12
+        ).date!
+
+        let reader = WeeklyFocusReader(
+            brainRoot: directory.path,
+            date: date,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(
+            URL(fileURLWithPath: reader.weeklyNotePath).standardizedFileURL.path,
+            weeklyDirectory.appendingPathComponent("Week of 2026-07-12.md").standardizedFileURL.path
+        )
+    }
+
+    func testReaderFallsBackToLatestWeeklyNoteWhenCurrentWeekIsMissing() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: weeklyDirectory,
+            withIntermediateDirectories: true
+        )
+        try "# Previous".write(
+            to: weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "# Older".write(
+            to: weeklyDirectory.appendingPathComponent("Week of 2026-06-28.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 12
+        ).date!
+
+        let reader = WeeklyFocusReader(
+            brainRoot: directory.path,
+            date: date,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(
+            URL(fileURLWithPath: reader.weeklyNotePath).standardizedFileURL.path,
+            weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md").standardizedFileURL.path
+        )
+    }
 }

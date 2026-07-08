@@ -244,6 +244,7 @@ final class TodoRowButton: NSControl {
         }
     }
     private let todoTitle: String
+    private static let urlPattern = #"https?://[^\s)\]]+"#
 
     init(index: Int, title: String) {
         self.todoIndex = index
@@ -310,13 +311,6 @@ final class TodoRowButton: NSControl {
             let alpha = isLaunching ? 0.12 : isPressed ? 0.10 : 0.045
             FocusColors.accent.withAlphaComponent(alpha).setFill()
             NSBezierPath(roundedRect: highlightRect, xRadius: 12, yRadius: 12).fill()
-
-            FocusColors.accent.withAlphaComponent(isLaunching || isPressed ? 1 : 0.45).setFill()
-            NSBezierPath(
-                roundedRect: NSRect(x: -10, y: 5, width: 4, height: bounds.height - 10),
-                xRadius: 2,
-                yRadius: 2
-            ).fill()
         }
 
         let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
@@ -364,9 +358,13 @@ final class TodoRowButton: NSControl {
 
             if nextEvent.type == .leftMouseUp {
                 if isInside {
-                    showLaunchFeedback()
-                    DispatchQueue.main.async { [weak self] in
-                        self?.sendConfiguredAction()
+                    if let url = linkURL(at: point) {
+                        NSWorkspace.shared.open(url)
+                    } else {
+                        showLaunchFeedback()
+                        DispatchQueue.main.async { [weak self] in
+                            self?.sendConfiguredAction()
+                        }
                     }
                 }
                 return
@@ -416,14 +414,33 @@ final class TodoRowButton: NSControl {
 
     private static func attributedTitle(index: Int, title: String) -> NSAttributedString {
         let font = FocusFonts.todo(index: index)
-        return NSAttributedString(
-            string: "\(index + 1). \(title)",
+        let fullTitle = "\(index + 1). \(title)"
+        let attributed = NSMutableAttributedString(
+            string: fullTitle,
             attributes: [
                 .font: font,
                 .foregroundColor: FocusColors.text,
                 .paragraphStyle: paragraphStyle(index: index, font: font)
             ]
         )
+
+        if let regex = try? NSRegularExpression(pattern: urlPattern) {
+            let range = NSRange(location: 0, length: NSString(string: fullTitle).length)
+            for match in regex.matches(in: fullTitle, range: range) {
+                let urlText = NSString(string: fullTitle).substring(with: match.range)
+                guard let url = URL(string: urlText) else {
+                    continue
+                }
+
+                attributed.addAttributes([
+                    .foregroundColor: NSColor.systemBlue,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .link: url
+                ], range: match.range)
+            }
+        }
+
+        return attributed
     }
 
     private static func paragraphStyle(index: Int, font: NSFont) -> NSParagraphStyle {
@@ -436,6 +453,55 @@ final class TodoRowButton: NSControl {
 
     private static func prefixWidth(index: Int, font: NSFont) -> CGFloat {
         NSString(string: "\(index + 1). ").size(withAttributes: [.font: font]).width
+    }
+
+    private func linkURL(at point: NSPoint) -> URL? {
+        let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
+        let textRect = self.textRect(for: title)
+        guard textRect.contains(point) else {
+            return nil
+        }
+
+        let textStorage = NSTextStorage(attributedString: title)
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(size: textRect.size)
+        textContainer.lineFragmentPadding = 0
+        textContainer.lineBreakMode = .byWordWrapping
+        textStorage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(textContainer)
+
+        let pointInText = NSPoint(
+            x: point.x - textRect.minX,
+            y: point.y - textRect.minY
+        )
+        let glyphIndex = layoutManager.glyphIndex(
+            for: pointInText,
+            in: textContainer
+        )
+        guard glyphIndex < layoutManager.numberOfGlyphs else {
+            return nil
+        }
+
+        let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        return title.attribute(
+            .link,
+            at: characterIndex,
+            effectiveRange: nil
+        ) as? URL
+    }
+
+    private func textRect(for title: NSAttributedString) -> NSRect {
+        let textHeight = title.boundingRect(
+            with: NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+
+        return NSRect(
+            x: 0,
+            y: Swift.max(0, floor((bounds.height - textHeight) / 2)),
+            width: bounds.width,
+            height: bounds.height
+        )
     }
 }
 
@@ -558,6 +624,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             return snapshot?.todos.indices.contains(menuItem.tag) == true
         }
 
+        if menuItem.action == #selector(openWeeklyNoteMenuItem(_:)) {
+            return snapshot != nil
+        }
+
         return true
     }
 
@@ -589,6 +659,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             item.target = self
             focusMenu.addItem(item)
         }
+        focusMenu.addItem(.separator())
+        let weeklyNoteItem = NSMenuItem(
+            title: "Open Weekly Note",
+            action: #selector(openWeeklyNoteMenuItem(_:)),
+            keyEquivalent: "o"
+        )
+        weeklyNoteItem.keyEquivalentModifierMask = [.command]
+        weeklyNoteItem.target = self
+        focusMenu.addItem(weeklyNoteItem)
         focusMenuItem.submenu = focusMenu
         mainMenu.addItem(focusMenuItem)
         NSApp.mainMenu = mainMenu
@@ -831,6 +910,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         launchTodo(at: sender.tag)
     }
 
+    @objc private func openWeeklyNoteMenuItem(_ sender: Any) {
+        openWeeklyNote()
+    }
+
     @objc private func quit(_ sender: Any) {
         NSApp.terminate(nil)
     }
@@ -919,6 +1002,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         todoButtons[index].showLaunchFeedback()
+    }
+
+    private func openWeeklyNote() {
+        guard let snapshot else {
+            showAlert(title: "Could not open weekly note", message: "Weekly note is not loaded.")
+            return
+        }
+
+        do {
+            try openWeeklyNoteInVSCodeInsiders(path: snapshot.weeklyNotePath)
+        } catch {
+            showAlert(title: "Could not open weekly note", message: error.localizedDescription)
+        }
+    }
+
+    private func openWeeklyNoteInVSCodeInsiders(path: String) throws {
+        let fileURL = URL(fileURLWithPath: path)
+        let openPath = "/usr/bin/open"
+
+        do {
+            try runOpenCommand(
+                executable: openPath,
+                arguments: ["-b", "com.microsoft.VSCodeInsiders", fileURL.path]
+            )
+        } catch {
+            try runOpenCommand(
+                executable: openPath,
+                arguments: ["-a", "Visual Studio Code - Insiders", fileURL.path]
+            )
+        }
+    }
+
+    private func runOpenCommand(executable: String, arguments: [String]) throws {
+        let process = Process()
+        let errorPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "open exited with \(process.terminationStatus)")
+        }
     }
 
     private func activateCmux() {
@@ -1028,6 +1159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
         if characters == "q" {
             NSApp.terminate(nil)
+            return true
+        }
+
+        if characters == "o" {
+            openWeeklyNote()
             return true
         }
 
