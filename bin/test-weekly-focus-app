@@ -79,7 +79,7 @@ tell application "System Events"
     set frontmost to true
     delay 0.5
     click text field 1 of window "Weekly Focus"
-    keystroke "$UI_TODO"
+    set value of text field 1 of window "Weekly Focus" to "$UI_TODO"
     key code 36
   end tell
 end tell

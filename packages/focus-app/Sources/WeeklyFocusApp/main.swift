@@ -173,9 +173,10 @@ final class TodoRowButton: NSButton {
     }
 
     static func height(for title: String, index: Int) -> CGFloat {
+        let font = FocusFonts.todo(index: index)
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: FocusFonts.todo(index: index),
-            .paragraphStyle: paragraphStyle()
+            .font: font,
+            .paragraphStyle: paragraphStyle(index: index, font: font)
         ]
         let rect = NSString(string: "\(index + 1). \(title)").boundingRect(
             with: NSSize(width: FocusLayout.rowWidth, height: CGFloat.greatestFiniteMagnitude),
@@ -187,22 +188,27 @@ final class TodoRowButton: NSButton {
     }
 
     private static func attributedTitle(index: Int, title: String) -> NSAttributedString {
-        NSAttributedString(
+        let font = FocusFonts.todo(index: index)
+        return NSAttributedString(
             string: "\(index + 1). \(title)",
             attributes: [
-                .font: FocusFonts.todo(index: index),
+                .font: font,
                 .foregroundColor: FocusColors.text,
-                .paragraphStyle: paragraphStyle()
+                .paragraphStyle: paragraphStyle(index: index, font: font)
             ]
         )
     }
 
-    private static func paragraphStyle() -> NSParagraphStyle {
+    private static func paragraphStyle(index: Int, font: NSFont) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byWordWrapping
         style.lineSpacing = 2
-        style.headIndent = FocusLayout.numberWidth + FocusLayout.columnGap
+        style.headIndent = prefixWidth(index: index, font: font)
         return style
+    }
+
+    private static func prefixWidth(index: Int, font: NSFont) -> CGFloat {
+        NSString(string: "\(index + 1). ").size(withAttributes: [.font: font]).width
     }
 }
 
