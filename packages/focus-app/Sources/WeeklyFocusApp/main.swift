@@ -116,35 +116,61 @@ final class FocusRootView: NSView {
     }
 }
 
-final class TodoRowButton: NSButton {
+final class TodoRowButton: NSControl {
     var todoIndex: Int = 0
+    private let todoTitle: String
 
     init(index: Int, title: String) {
         self.todoIndex = index
+        self.todoTitle = title
         super.init(frame: .zero)
-        self.title = title
-        isBordered = false
-        alignment = .left
-        setButtonType(.momentaryChange)
-        attributedTitle = Self.attributedTitle(index: index, title: title)
-        cell?.wraps = true
-        cell?.lineBreakMode = .byWordWrapping
+        toolTip = title
         translatesAutoresizingMaskIntoConstraints = false
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:))))
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("\(index + 1). \(title)")
+        setAccessibilityTitle("\(index + 1). \(title)")
         widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
         heightAnchor.constraint(equalToConstant: Self.height(for: title, index: index)).isActive = true
     }
 
     required init?(coder: NSCoder) {
+        self.todoTitle = ""
         super.init(coder: coder)
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: FocusLayout.rowWidth, height: Self.height(for: title, index: todoIndex))
+        NSSize(width: FocusLayout.rowWidth, height: Self.height(for: todoTitle, index: todoIndex))
+    }
+
+    override var isFlipped: Bool {
+        true
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
+        let textHeight = title.boundingRect(
+            with: NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        let rect = NSRect(
+            x: 0,
+            y: Swift.max(0, floor((bounds.height - textHeight) / 2)),
+            width: bounds.width,
+            height: bounds.height
+        )
+
+        title.draw(in: rect)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -158,10 +184,6 @@ final class TodoRowButton: NSButton {
     override func accessibilityPerformPress() -> Bool {
         sendConfiguredAction()
         return true
-    }
-
-    @objc private func handleClick(_ sender: NSClickGestureRecognizer) {
-        sendConfiguredAction()
     }
 
     private func sendConfiguredAction() {
@@ -254,6 +276,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private var secondaryTextColor: NSColor {
         FocusColors.muted
+    }
+
+    private var launchCommandOverride: String? {
+        let value = ProcessInfo.processInfo.environment["WEEKLY_FOCUS_LAUNCH_COMMAND_OVERRIDE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if value?.isEmpty == false {
+            return value
+        }
+
+        if selfTestLaunchMode {
+            return "printf weekly-focus-launch-ok > /tmp/weekly-focus-app-launch-self-test.txt"
+        }
+
+        return nil
+    }
+
+    private var shouldFocusLaunchedWorkspace: Bool {
+        if selfTestLaunchMode {
+            return false
+        }
+
+        return ProcessInfo.processInfo.environment["WEEKLY_FOCUS_LAUNCH_FOCUS"] != "false"
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -533,17 +577,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func launchTodo(at index: Int) {
+        do {
+            try startTodo(at: index)
+        } catch {
+            showAlert(title: "Could not open cmux", message: error.localizedDescription)
+        }
+    }
+
+    private func startTodo(at index: Int) throws {
         guard let snapshot, snapshot.todos.indices.contains(index) else {
             return
         }
 
-        do {
-            try CmuxFocusLauncher.launch(
-                todo: snapshot.todos[index]
-            )
-        } catch {
-            showAlert(title: "Could not open cmux", message: error.localizedDescription)
-        }
+        try CmuxFocusLauncher.launch(
+            todo: snapshot.todos[index],
+            commandOverride: launchCommandOverride,
+            focus: shouldFocusLaunchedWorkspace
+        )
     }
 
     private func markDone(at index: Int) {
@@ -563,6 +613,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
+            return event
+        }
+
+        if event.modifierFlags.contains(.command),
+           let number = Int(characters),
+           (1...5).contains(number) {
+            launchTodo(at: number - 1)
+            return nil
+        }
+
         if let firstResponder = window?.firstResponder,
            let editor = captureField.currentEditor(),
            firstResponder === editor {
@@ -571,10 +632,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 return nil
             }
 
-            return event
-        }
-
-        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
             return event
         }
 
@@ -594,11 +651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         if let number = Int(characters), (1...5).contains(number) {
-            if event.modifierFlags.contains(.command) {
-                markDone(at: number - 1)
-            } else {
-                launchTodo(at: number - 1)
-            }
+            launchTodo(at: number - 1)
             return nil
         }
 
@@ -662,9 +715,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                     brainRoot: FileManager.default.homeDirectoryForCurrentUser
                         .appendingPathComponent("Brain")
                         .path,
-                    commandOverride: "printf weekly-focus-launch-ok > \(launchFile)",
-                    focus: false
+                    commandOverride: launchCommandOverride,
+                    focus: shouldFocusLaunchedWorkspace
                 )
+            }
+
+            if selfTestLaunchMode {
+                try startTodo(at: 0)
+                let commandOne = NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: .command,
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: "1",
+                    charactersIgnoringModifiers: "1",
+                    isARepeat: false,
+                    keyCode: 18
+                )
+                if let commandOne, handleKeyDown(commandOne) != nil {
+                    throw WeeklyFocusError.launchFailed("self-test command-1 was not handled")
+                }
             }
 
             print("weekly-focus self-test ok")

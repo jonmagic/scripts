@@ -8,9 +8,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TMPDIR="$(mktemp -d)"
 LAUNCH_FILE="/tmp/weekly-focus-app-launch-self-test.txt"
+TEST_RUN_ID="weekly-focus-test-$$"
+TODO_ONE="One $TEST_RUN_ID"
+TODO_TWO="Two $TEST_RUN_ID"
+APP_EXECUTABLE="$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus"
+APP_PID=""
+
+stop_existing_app() {
+  while read -r pid; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+  done < <(ps -axo pid=,args= | awk -v app="$APP_EXECUTABLE" 'index($0, app) {print $1}')
+}
 
 cleanup() {
-  for workspace in $(cmux workspace list 2>/dev/null | awk '/Self-test launch/ {print $1}'); do
+  if [[ -n "${APP_PID:-}" ]]; then
+    kill "$APP_PID" >/dev/null 2>&1 || true
+    wait "$APP_PID" 2>/dev/null || true
+  fi
+  for workspace in $(cmux workspace list 2>/dev/null | awk -v id="$TEST_RUN_ID" '/Self-test launch/ || index($0, id) {print $1}'); do
     cmux workspace close "$workspace" >/dev/null 2>&1 || true
   done
   rm -rf "$TMPDIR"
@@ -21,12 +38,12 @@ trap cleanup EXIT
 mkdir -p "$TMPDIR/Weekly Notes"
 WEEKLY_NOTE="$TMPDIR/Weekly Notes/Week of 2026-07-05.md"
 
-cat >"$WEEKLY_NOTE" <<'MARKDOWN'
+cat >"$WEEKLY_NOTE" <<MARKDOWN
 # Week
 
 ## TODO
-- [ ] One
-- [ ] Two
+- [ ] $TODO_ONE
+- [ ] $TODO_TWO
 
 ## Captured
 MARKDOWN
@@ -40,7 +57,7 @@ BRAIN_ROOT="$TMPDIR" swift run \
   --self-test-launch
 
 grep -q 'Self-test todo' "$WEEKLY_NOTE"
-grep -q -- '- \[x\] One' "$WEEKLY_NOTE"
+grep -q -- "- \\[x\\] $TODO_ONE" "$WEEKLY_NOTE"
 
 for _ in {1..20}; do
   if [[ -f "$LAUNCH_FILE" ]]; then
@@ -51,19 +68,25 @@ done
 
 grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
 
-cat >"$WEEKLY_NOTE" <<'MARKDOWN'
+cat >"$WEEKLY_NOTE" <<MARKDOWN
 # Week
 
 ## TODO
-- [ ] One
-- [ ] Two
+- [ ] $TODO_ONE
+- [ ] $TODO_TWO
 
 ## Captured
 MARKDOWN
 
 UI_TODO="UI entered TODO $$"
+LAUNCH_COMMAND="printf weekly-focus-launch-ok > $LAUNCH_FILE"
 
-BRAIN_ROOT="$TMPDIR" "$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus" &
+stop_existing_app
+
+BRAIN_ROOT="$TMPDIR" \
+  WEEKLY_FOCUS_LAUNCH_COMMAND_OVERRIDE="$LAUNCH_COMMAND" \
+  WEEKLY_FOCUS_LAUNCH_FOCUS=false \
+  "$APP_EXECUTABLE" &
 APP_PID=$!
 
 for _ in {1..40}; do
@@ -73,13 +96,60 @@ for _ in {1..40}; do
   sleep 0.25
 done
 
+rm -f "$LAUNCH_FILE"
+
 osascript <<APPLESCRIPT
+set appPid to $APP_PID
 tell application "System Events"
-  tell process "Weekly Focus"
+  set appProcess to first process whose unix id is appPid
+  tell appProcess
+    set frontmost to true
+    delay 0.5
+    click button 1 of window "Weekly Focus"
+  end tell
+end tell
+APPLESCRIPT
+
+for _ in {1..20}; do
+  if [[ -f "$LAUNCH_FILE" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+
+grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
+rm -f "$LAUNCH_FILE"
+
+osascript <<APPLESCRIPT
+set appPid to $APP_PID
+tell application "System Events"
+  set appProcess to first process whose unix id is appPid
+  tell appProcess
+    set frontmost to true
+    delay 0.5
+    key code 18 using {command down}
+  end tell
+end tell
+APPLESCRIPT
+
+for _ in {1..20}; do
+  if [[ -f "$LAUNCH_FILE" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+
+grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
+
+osascript <<APPLESCRIPT
+set appPid to $APP_PID
+tell application "System Events"
+  set appProcess to first process whose unix id is appPid
+  tell appProcess
     set frontmost to true
     delay 0.5
     click text field 1 of window "Weekly Focus"
-    set value of text field 1 of window "Weekly Focus" to "$UI_TODO"
+    keystroke "$UI_TODO"
     key code 36
   end tell
 end tell
@@ -94,6 +164,7 @@ done
 
 kill "$APP_PID" >/dev/null 2>&1 || true
 wait "$APP_PID" 2>/dev/null || true
+APP_PID=""
 grep -q "$UI_TODO" "$WEEKLY_NOTE"
 
 echo "weekly-focus app self-test passed"
