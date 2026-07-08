@@ -482,6 +482,7 @@ public enum CmuxFocusLauncher {
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = command.arguments
         }
+        process.environment = cmuxProcessEnvironment()
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
@@ -585,6 +586,7 @@ public enum CmuxFocusLauncher {
             process.executableURL = URL(fileURLWithPath: cmuxPath)
             process.arguments = ["workspace", "select", workspaceRef]
         }
+        process.environment = cmuxProcessEnvironment()
         process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
         process.standardError = errorPipe
 
@@ -597,5 +599,50 @@ public enum CmuxFocusLauncher {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux workspace select exited with \(process.terminationStatus)")
         }
+    }
+
+    static func cmuxProcessEnvironment(
+        _ environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> [String: String] {
+        var sanitized = environment.filter { key, _ in
+            !key.hasPrefix("CMUX_")
+        }
+
+        if let password = environment["CMUX_SOCKET_PASSWORD"] {
+            sanitized["CMUX_SOCKET_PASSWORD"] = password
+        }
+
+        let socketPath = activeSocketPath(
+            environment,
+            homeDirectory: homeDirectory
+        )
+        if let socketPath {
+            sanitized["CMUX_SOCKET_PATH"] = socketPath
+        }
+
+        return sanitized
+    }
+
+    private static func activeSocketPath(
+        _ environment: [String: String],
+        homeDirectory: URL
+    ) -> String? {
+        let lastSocketPath = homeDirectory
+            .appendingPathComponent(".local/state/cmux/last-socket-path")
+        let currentSocketPath = try? String(
+            contentsOf: lastSocketPath,
+            encoding: .utf8
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentSocketPath?.isEmpty == false {
+            return currentSocketPath
+        }
+
+        if let socketPath = environment["CMUX_SOCKET_PATH"],
+           !socketPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return socketPath
+        }
+
+        return nil
     }
 }
