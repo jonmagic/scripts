@@ -110,6 +110,100 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--focus")! + 1], "false")
     }
 
+    func testParsesWorkspaceRefFromCmuxCreateOutput() {
+        XCTAssertEqual(CmuxFocusLauncher.workspaceRef(from: "OK workspace:123"), "workspace:123")
+        XCTAssertEqual(CmuxFocusLauncher.workspaceRef(from: "notice\nOK workspace:456\n"), "workspace:456")
+        XCTAssertNil(CmuxFocusLauncher.workspaceRef(from: "OK"))
+    }
+
+    func testLaunchSelectsCreatedWorkspaceWhenFocused() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fakeCmux = directory.appendingPathComponent("cmux")
+        let log = directory.appendingPathComponent("cmux.log")
+        try [
+            "#!/bin/sh",
+            "printf '%s\\n' \"$*\" >> '\(log.path)'",
+            "if [ \"$1\" = \"workspace\" ] && [ \"$2\" = \"create\" ]; then",
+            "  echo 'OK workspace:999'",
+            "  exit 0",
+            "fi",
+            "if [ \"$1\" = \"workspace\" ] && [ \"$2\" = \"select\" ]; then",
+            "  exit 0",
+            "fi",
+            "exit 1",
+            ""
+        ].joined(separator: "\n").write(to: fakeCmux, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeCmux.path)
+
+        let workspaceRef = try CmuxFocusLauncher.launch(
+            todo: "Open focused workspace",
+            brainRoot: "/tmp/Brain",
+            cmuxPath: fakeCmux.path,
+            commandOverride: "echo ok",
+            focus: true
+        )
+
+        let calls = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertEqual(workspaceRef, "workspace:999")
+        XCTAssertTrue(calls.contains("workspace create"))
+        XCTAssertTrue(calls.contains("workspace select workspace:999"))
+    }
+
+    func testLaunchDoesNotSwallowBrokenPipeWithoutWorkspaceRef() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fakeCmux = directory.appendingPathComponent("cmux")
+        try [
+            "#!/bin/sh",
+            "printf 'Failed to write to socket (Broken pipe, errno 32)\\n' >&2",
+            "exit 1",
+            ""
+        ].joined(separator: "\n").write(to: fakeCmux, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeCmux.path)
+
+        XCTAssertThrowsError(try CmuxFocusLauncher.launch(
+            todo: "Broken pipe without workspace",
+            brainRoot: "/tmp/Brain",
+            cmuxPath: fakeCmux.path,
+            commandOverride: "echo ok",
+            focus: true
+        ))
+    }
+
+    func testLaunchFailsWhenCmuxDoesNotReportWorkspaceRef() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fakeCmux = directory.appendingPathComponent("cmux")
+        try [
+            "#!/bin/sh",
+            "echo OK",
+            "exit 0",
+            ""
+        ].joined(separator: "\n").write(to: fakeCmux, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeCmux.path)
+
+        XCTAssertThrowsError(try CmuxFocusLauncher.launch(
+            todo: "No workspace ref",
+            brainRoot: "/tmp/Brain",
+            cmuxPath: fakeCmux.path,
+            commandOverride: "echo ok",
+            focus: true
+        ))
+    }
+
     func testMarksSelectedTodoDoneInWeeklyNote() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

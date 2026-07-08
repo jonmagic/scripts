@@ -23,7 +23,7 @@ if CommandLine.arguments.contains("--self-test-copilot-launch") {
         try CmuxFocusLauncher.launch(
             todo: todo,
             brainRoot: WeeklyFocusReader().brainRoot,
-            focus: false
+            focus: true
         )
         print(todo)
         exit(0)

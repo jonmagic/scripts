@@ -455,20 +455,24 @@ public enum CmuxFocusLauncher {
         return "/usr/bin/env"
     }
 
+    @discardableResult
     public static func launch(
         todo: String,
         brainRoot: String = defaultLaunchBrainRoot(),
+        cmuxPath: String? = nil,
         commandOverride: String? = nil,
         focus: Bool = true
-    ) throws {
+    ) throws -> String? {
         let commandText = try commandOverride ?? buildScriptedCopilotCommand(todo: todo)
         let command = buildCommand(
             todo: todo,
             brainRoot: brainRoot,
+            cmuxPath: cmuxPath,
             commandOverride: commandText,
             focus: focus
         )
         let process = Process()
+        let outputPipe = Pipe()
         let errorPipe = Pipe()
 
         if command.executable == "/usr/bin/env" {
@@ -478,22 +482,46 @@ public enum CmuxFocusLauncher {
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = command.arguments
         }
-        process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
+        process.standardOutput = outputPipe
         process.standardError = errorPipe
 
         try process.run()
         process.waitUntilExit()
 
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let outputMessage = String(data: outputData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let workspaceRef = workspaceRef(from: outputMessage)
+
         if process.terminationStatus != 0 {
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorMessage = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if errorMessage?.contains("Broken pipe") == true {
-                return
+            if errorMessage?.contains("Broken pipe") == true, let workspaceRef {
+                if focus {
+                    try selectWorkspace(workspaceRef, cmuxPath: command.executable)
+                }
+                return workspaceRef
             }
 
             throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
         }
+
+        guard let workspaceRef else {
+            throw WeeklyFocusError.launchFailed("cmux did not report a created workspace")
+        }
+
+        if focus {
+            try selectWorkspace(workspaceRef, cmuxPath: command.executable)
+        }
+
+        return workspaceRef
+    }
+
+    static func workspaceRef(from output: String) -> String? {
+        output
+            .components(separatedBy: .whitespacesAndNewlines)
+            .first { $0.hasPrefix("workspace:") }
     }
 
     static func buildScriptedCopilotCommand(todo: String) throws -> String {
@@ -544,5 +572,30 @@ public enum CmuxFocusLauncher {
 
     private static func shellQuote(_ value: String) -> String {
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private static func selectWorkspace(_ workspaceRef: String, cmuxPath: String) throws {
+        let process = Process()
+        let errorPipe = Pipe()
+
+        if cmuxPath == "/usr/bin/env" {
+            process.executableURL = URL(fileURLWithPath: cmuxPath)
+            process.arguments = ["cmux", "workspace", "select", workspaceRef]
+        } else {
+            process.executableURL = URL(fileURLWithPath: cmuxPath)
+            process.arguments = ["workspace", "select", workspaceRef]
+        }
+        process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
+        process.standardError = errorPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux workspace select exited with \(process.terminationStatus)")
+        }
     }
 }
