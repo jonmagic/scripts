@@ -503,10 +503,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private var shouldFocusLaunchedWorkspace: Bool {
-        if selfTestLaunchMode {
-            return false
-        }
-
         return ProcessInfo.processInfo.environment["WEEKLY_FOCUS_LAUNCH_FOCUS"] != "false"
     }
 

@@ -401,13 +401,27 @@ public enum WeeklyFocusFormatter {
 
 public enum CmuxFocusLauncher {
     public static let promptEnvironmentName = "WEEKLY_FOCUS_PROMPT"
-    public static let copilotCommand =
-        "zsh -lic 'source \"$WEEKLY_FOCUS_SCRIPT\"'"
     public static let cmuxCandidates = [
         "/Applications/cmux.app/Contents/Resources/bin/cmux",
         "/opt/homebrew/bin/cmux",
         "/usr/local/bin/cmux"
     ]
+
+    struct WorkspaceCreateResponse: Decodable {
+        let workspaceRef: String
+        let surfaceRef: String
+
+        enum CodingKeys: String, CodingKey {
+            case workspaceRef = "workspace_ref"
+            case surfaceRef = "surface_ref"
+        }
+    }
+
+    struct CmuxRunResult {
+        let status: Int32
+        let output: String
+        let error: String
+    }
 
     public static func buildPrompt(todo: String) -> String {
         [
@@ -423,20 +437,18 @@ public enum CmuxFocusLauncher {
         todo: String,
         brainRoot: String,
         cmuxPath: String? = nil,
-        commandOverride: String? = nil,
         focus: Bool = true
     ) -> LaunchCommand {
         return LaunchCommand(
             executable: resolveCmuxPath(cmuxPath),
             arguments: [
+                "--json",
                 "workspace",
                 "create",
                 "--name",
                 workspaceTitle(for: todo),
                 "--cwd",
                 brainRoot,
-                "--command",
-                commandOverride ?? copilotCommand,
                 "--focus",
                 focus ? "true" : "false"
             ]
@@ -463,66 +475,40 @@ public enum CmuxFocusLauncher {
         commandOverride: String? = nil,
         focus: Bool = true
     ) throws -> String? {
-        let commandText = try commandOverride ?? buildScriptedCopilotCommand(todo: todo)
-        let command = buildCommand(
+        let launchCommand = try commandOverride ?? buildScriptedCopilotCommand(todo: todo)
+        let createCommand = buildCommand(
             todo: todo,
             brainRoot: brainRoot,
             cmuxPath: cmuxPath,
-            commandOverride: commandText,
             focus: focus
         )
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
 
-        if command.executable == "/usr/bin/env" {
-            process.executableURL = URL(fileURLWithPath: command.executable)
-            process.arguments = ["cmux"] + command.arguments
-        } else {
-            process.executableURL = URL(fileURLWithPath: command.executable)
-            process.arguments = command.arguments
-        }
-        process.environment = cmuxProcessEnvironment()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let outputMessage = String(data: outputData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let workspaceRef = workspaceRef(from: outputMessage)
-
-        if process.terminationStatus != 0 {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorMessage = String(data: errorData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if errorMessage?.contains("Broken pipe") == true, let workspaceRef {
-                if focus {
-                    try selectWorkspace(workspaceRef, cmuxPath: command.executable)
-                }
-                return workspaceRef
-            }
-
-            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
+        let createResult = try runCmux(createCommand)
+        guard createResult.status == 0 else {
+            throw WeeklyFocusError.launchFailed(failureMessage(
+                prefix: "cmux workspace create exited with \(createResult.status)",
+                result: createResult
+            ))
         }
 
-        guard let workspaceRef else {
-            throw WeeklyFocusError.launchFailed("cmux did not report a created workspace")
-        }
+        let response = try parseWorkspaceCreateResponse(createResult.output)
+        try waitForSurfaceReady(
+            workspaceRef: response.workspaceRef,
+            surfaceRef: response.surfaceRef,
+            cmuxPath: createCommand.executable
+        )
+        try sendCommand(
+            launchCommand,
+            workspaceRef: response.workspaceRef,
+            surfaceRef: response.surfaceRef,
+            cmuxPath: createCommand.executable
+        )
 
         if focus {
-            try selectWorkspace(workspaceRef, cmuxPath: command.executable)
+            try selectWorkspace(response.workspaceRef, cmuxPath: createCommand.executable)
         }
 
-        return workspaceRef
-    }
-
-    static func workspaceRef(from output: String) -> String? {
-        output
-            .components(separatedBy: .whitespacesAndNewlines)
-            .first { $0.hasPrefix("workspace:") }
+        return response.workspaceRef
     }
 
     static func buildScriptedCopilotCommand(todo: String) throws -> String {
@@ -548,7 +534,7 @@ public enum CmuxFocusLauncher {
             ""
         ].joined(separator: "\n").write(to: scriptPath, atomically: true, encoding: .utf8)
 
-        return "WEEKLY_FOCUS_SCRIPT=\(shellQuote(scriptPath.path)) \(copilotCommand)"
+        return "zsh -lic \(shellQuote("source \(shellQuote(scriptPath.path))"))"
     }
 
     private static func workspaceTitle(for todo: String) -> String {
@@ -575,30 +561,138 @@ public enum CmuxFocusLauncher {
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
+    private static func parseWorkspaceCreateResponse(_ output: String) throws -> WorkspaceCreateResponse {
+        guard let data = output.data(using: .utf8) else {
+            throw WeeklyFocusError.launchFailed("cmux workspace create returned non-UTF8 output")
+        }
+
+        do {
+            return try JSONDecoder().decode(WorkspaceCreateResponse.self, from: data)
+        } catch {
+            throw WeeklyFocusError.launchFailed("cmux workspace create returned unexpected output: \(output)")
+        }
+    }
+
+    private static func waitForSurfaceReady(
+        workspaceRef: String,
+        surfaceRef: String,
+        cmuxPath: String,
+        timeout: TimeInterval = 10
+    ) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastError = ""
+
+        repeat {
+            let result = try runCmux(
+                executable: cmuxPath,
+                arguments: [
+                    "read-screen",
+                    "--workspace",
+                    workspaceRef,
+                    "--surface",
+                    surfaceRef,
+                    "--lines",
+                    "5"
+                ]
+            )
+
+            if result.status == 0 {
+                return
+            }
+
+            lastError = failureMessage(
+                prefix: "cmux read-screen exited with \(result.status)",
+                result: result
+            )
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+
+        throw WeeklyFocusError.launchFailed("cmux terminal surface was not ready: \(lastError)")
+    }
+
+    private static func sendCommand(
+        _ command: String,
+        workspaceRef: String,
+        surfaceRef: String,
+        cmuxPath: String
+    ) throws {
+        let result = try runCmux(
+            executable: cmuxPath,
+            arguments: [
+                "send",
+                "--workspace",
+                workspaceRef,
+                "--surface",
+                surfaceRef,
+                "\(command)\\n"
+            ]
+        )
+
+        guard result.status == 0 else {
+            throw WeeklyFocusError.launchFailed(failureMessage(
+                prefix: "cmux send exited with \(result.status)",
+                result: result
+            ))
+        }
+    }
+
     private static func selectWorkspace(_ workspaceRef: String, cmuxPath: String) throws {
+        let result = try runCmux(
+            executable: cmuxPath,
+            arguments: ["workspace", "select", workspaceRef]
+        )
+
+        guard result.status == 0 else {
+            throw WeeklyFocusError.launchFailed(failureMessage(
+                prefix: "cmux workspace select exited with \(result.status)",
+                result: result
+            ))
+        }
+    }
+
+    private static func runCmux(_ command: LaunchCommand) throws -> CmuxRunResult {
+        try runCmux(executable: command.executable, arguments: command.arguments)
+    }
+
+    private static func runCmux(
+        executable: String,
+        arguments: [String]
+    ) throws -> CmuxRunResult {
         let process = Process()
+        let outputPipe = Pipe()
         let errorPipe = Pipe()
 
-        if cmuxPath == "/usr/bin/env" {
-            process.executableURL = URL(fileURLWithPath: cmuxPath)
-            process.arguments = ["cmux", "workspace", "select", workspaceRef]
+        if executable == "/usr/bin/env" {
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = ["cmux"] + arguments
         } else {
-            process.executableURL = URL(fileURLWithPath: cmuxPath)
-            process.arguments = ["workspace", "select", workspaceRef]
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
         }
         process.environment = cmuxProcessEnvironment()
-        process.standardOutput = FileHandle(forWritingAtPath: "/dev/null")
+        process.standardOutput = outputPipe
         process.standardError = errorPipe
 
         try process.run()
         process.waitUntilExit()
 
-        guard process.terminationStatus == 0 else {
-            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let errorMessage = String(data: errorData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux workspace select exited with \(process.terminationStatus)")
-        }
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        return CmuxRunResult(
+            status: process.terminationStatus,
+            output: String(data: outputData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            error: String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        )
+    }
+
+    private static func failureMessage(prefix: String, result: CmuxRunResult) -> String {
+        let details = [result.error, result.output]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+
+        return details.isEmpty ? prefix : "\(prefix)\n\(details)"
     }
 
     static func cmuxProcessEnvironment(

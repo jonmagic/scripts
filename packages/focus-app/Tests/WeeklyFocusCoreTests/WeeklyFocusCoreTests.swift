@@ -70,7 +70,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
         )
     }
 
-    func testBuildsLaunchCommandWithoutInterpolatingTodoIntoShellCommand() {
+    func testBuildsCreateCommandWithoutInterpolatingTodoIntoShellCommand() {
         let todo = #"Fix $(touch /tmp/nope) and "quote" this"#
         let command = CmuxFocusLauncher.buildCommand(
             todo: todo,
@@ -79,14 +79,11 @@ final class WeeklyFocusCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(command.executable, "/bin/cmux")
-        XCTAssertEqual(command.arguments[0], "workspace")
-        XCTAssertEqual(command.arguments[1], "create")
+        XCTAssertEqual(command.arguments[0], "--json")
+        XCTAssertEqual(command.arguments[1], "workspace")
+        XCTAssertEqual(command.arguments[2], "create")
         XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--cwd")! + 1], "/tmp/Brain")
-        XCTAssertEqual(
-            command.arguments[command.arguments.firstIndex(of: "--command")! + 1],
-            #"zsh -lic 'source "$WEEKLY_FOCUS_SCRIPT"'"#
-        )
-        XCTAssertFalse(command.arguments[command.arguments.firstIndex(of: "--command")! + 1].contains(todo))
+        XCTAssertFalse(command.arguments.contains("--command"))
     }
 
     func testBuildsScriptedLaunchCommandWithoutInterpolatingTodoIntoShellCommand() throws {
@@ -94,29 +91,22 @@ final class WeeklyFocusCoreTests: XCTestCase {
         let command = try CmuxFocusLauncher.buildScriptedCopilotCommand(todo: todo)
 
         XCTAssertTrue(command.contains("zsh -lic "))
+        XCTAssertTrue(command.contains("source "))
         XCTAssertFalse(command.contains(todo))
     }
 
-    func testBuildsLaunchCommandWithSelfTestOverride() {
+    func testBuildsCreateCommandWithFocusFlag() {
         let command = CmuxFocusLauncher.buildCommand(
             todo: "Self test",
             brainRoot: "/tmp/Brain",
             cmuxPath: "/bin/cmux",
-            commandOverride: "echo ok",
             focus: false
         )
 
-        XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--command")! + 1], "echo ok")
         XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--focus")! + 1], "false")
     }
 
-    func testParsesWorkspaceRefFromCmuxCreateOutput() {
-        XCTAssertEqual(CmuxFocusLauncher.workspaceRef(from: "OK workspace:123"), "workspace:123")
-        XCTAssertEqual(CmuxFocusLauncher.workspaceRef(from: "notice\nOK workspace:456\n"), "workspace:456")
-        XCTAssertNil(CmuxFocusLauncher.workspaceRef(from: "OK"))
-    }
-
-    func testLaunchSelectsCreatedWorkspaceWhenFocused() throws {
+    func testLaunchCreatesWorkspaceWaitsForSurfaceSendsCommandAndSelects() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer {
@@ -128,8 +118,15 @@ final class WeeklyFocusCoreTests: XCTestCase {
         try [
             "#!/bin/sh",
             "printf '%s\\n' \"$*\" >> '\(log.path)'",
-            "if [ \"$1\" = \"workspace\" ] && [ \"$2\" = \"create\" ]; then",
-            "  echo 'OK workspace:999'",
+            "if [ \"$1\" = \"--json\" ] && [ \"$2\" = \"workspace\" ] && [ \"$3\" = \"create\" ]; then",
+            "  echo '{\"workspace_ref\":\"workspace:999\",\"surface_ref\":\"surface:888\",\"window_ref\":\"window:1\"}'",
+            "  exit 0",
+            "fi",
+            "if [ \"$1\" = \"read-screen\" ]; then",
+            "  echo ready",
+            "  exit 0",
+            "fi",
+            "if [ \"$1\" = \"send\" ]; then",
             "  exit 0",
             "fi",
             "if [ \"$1\" = \"workspace\" ] && [ \"$2\" = \"select\" ]; then",
@@ -150,7 +147,9 @@ final class WeeklyFocusCoreTests: XCTestCase {
 
         let calls = try String(contentsOf: log, encoding: .utf8)
         XCTAssertEqual(workspaceRef, "workspace:999")
-        XCTAssertTrue(calls.contains("workspace create"))
+        XCTAssertTrue(calls.contains("--json workspace create"))
+        XCTAssertTrue(calls.contains("read-screen --workspace workspace:999 --surface surface:888"))
+        XCTAssertTrue(calls.contains("send --workspace workspace:999 --surface surface:888 echo ok\\n"))
         XCTAssertTrue(calls.contains("workspace select workspace:999"))
     }
 
@@ -164,8 +163,11 @@ final class WeeklyFocusCoreTests: XCTestCase {
         let fakeCmux = directory.appendingPathComponent("cmux")
         try [
             "#!/bin/sh",
-            "printf 'Failed to write to socket (Broken pipe, errno 32)\\n' >&2",
-            "exit 1",
+            "if [ \"$1\" = \"--json\" ] && [ \"$2\" = \"workspace\" ] && [ \"$3\" = \"create\" ]; then",
+            "  printf 'Failed to write to socket (Broken pipe, errno 32)\\n' >&2",
+            "  exit 1",
+            "fi",
+            "exit 0",
             ""
         ].joined(separator: "\n").write(to: fakeCmux, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeCmux.path)
@@ -189,8 +191,11 @@ final class WeeklyFocusCoreTests: XCTestCase {
         let fakeCmux = directory.appendingPathComponent("cmux")
         try [
             "#!/bin/sh",
-            "echo OK",
-            "exit 0",
+            "if [ \"$1\" = \"--json\" ] && [ \"$2\" = \"workspace\" ] && [ \"$3\" = \"create\" ]; then",
+            "  echo OK",
+            "  exit 0",
+            "fi",
+            "exit 1",
             ""
         ].joined(separator: "\n").write(to: fakeCmux, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeCmux.path)
