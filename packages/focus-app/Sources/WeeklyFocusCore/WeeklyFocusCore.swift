@@ -1,9 +1,11 @@
 import Foundation
+import Darwin
 
 public struct WeeklyFocusSnapshot: Equatable {
     public let brainRoot: String
     public let weeklyNotePath: String
     public let todos: [String]
+    public let overflowTodos: [String]
     public let waiting: [String]
     public let capturedCount: Int
 
@@ -19,12 +21,14 @@ public struct WeeklyFocusSnapshot: Equatable {
         brainRoot: String,
         weeklyNotePath: String,
         todos: [String],
+        overflowTodos: [String] = [],
         waiting: [String],
         capturedCount: Int
     ) {
         self.brainRoot = brainRoot
         self.weeklyNotePath = weeklyNotePath
         self.todos = todos
+        self.overflowTodos = overflowTodos
         self.waiting = waiting
         self.capturedCount = capturedCount
     }
@@ -36,12 +40,21 @@ public struct LaunchCommand: Equatable {
 }
 
 public enum WeeklyFocusError: LocalizedError {
+    case launchFailed(String)
+    case todoNotFound(String)
     case weeklyNoteMissing(String)
+    case writeFailed(String)
 
     public var errorDescription: String? {
         switch self {
+        case .launchFailed(let message):
+            return message
+        case .todoNotFound(let todo):
+            return "TODO not found in weekly note: \(todo)"
         case .weeklyNoteMissing(let path):
             return "Weekly note not found: \(path)"
+        case .writeFailed(let path):
+            return "Could not update weekly note: \(path)"
         }
     }
 }
@@ -78,6 +91,75 @@ public struct WeeklyFocusReader {
             todoLimit: todoLimit,
             waitingLimit: waitingLimit
         )
+    }
+
+    @discardableResult
+    public static func markTodoDone(
+        _ todo: String,
+        weeklyNotePath: String
+    ) throws -> Bool {
+        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
+            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
+        }
+
+        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
+        var lines = content.components(separatedBy: .newlines)
+
+        guard let bounds = sectionBounds(in: lines, heading: "## TODO") else {
+            throw WeeklyFocusError.todoNotFound(todo)
+        }
+
+        for index in bounds.start..<bounds.end {
+            let line = lines[index]
+            guard line.hasPrefix("- [ ] ") else {
+                continue
+            }
+
+            let item = String(line.dropFirst("- [ ] ".count)).trimmingCharacters(in: .whitespaces)
+            guard item == todo else {
+                continue
+            }
+
+            let originalItem = String(line.dropFirst("- [ ] ".count))
+            lines[index] = "- [x] \(originalItem)"
+            try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
+            return true
+        }
+
+        throw WeeklyFocusError.todoNotFound(todo)
+    }
+
+    @discardableResult
+    public static func appendCapture(
+        _ text: String,
+        weeklyNotePath: String,
+        source: String? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws -> String {
+        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
+            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
+        }
+
+        let normalizedText = normalizeSingleLine(text)
+        guard !normalizedText.isEmpty else {
+            throw WeeklyFocusError.writeFailed("Capture text is required")
+        }
+
+        let normalizedSource = source.map { normalizeSingleLine($0) }.flatMap { $0.isEmpty ? nil : $0 }
+        let line = captureLine(text: normalizedText, source: normalizedSource, now: now, calendar: calendar)
+        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
+        var lines = content.components(separatedBy: .newlines)
+
+        if let captured = sectionBounds(in: lines, heading: "## Captured") {
+            insertBeforeSectionTrailingBlank(&lines, sectionStart: captured.start, sectionEnd: captured.end, line: line)
+        } else {
+            let insertionIndex = sectionBounds(in: lines, heading: "## TODO")?.end ?? lines.count
+            insertNewSection(&lines, before: insertionIndex, heading: "## Captured", firstLine: line)
+        }
+
+        try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
+        return line
     }
 
     public static func defaultBrainRoot() -> String {
@@ -129,7 +211,9 @@ public struct WeeklyFocusReader {
         let lines = content.components(separatedBy: .newlines)
         let todoItems = uncheckedItems(in: lines, heading: "## TODO")
         let waitingItems = uncheckedItems(in: lines, heading: "## Waiting")
-        let todos = Array(todoItems[..<Swift.min(todoItems.count, Swift.max(0, todoLimit))])
+        let limit = Swift.max(0, todoLimit)
+        let todos = Array(todoItems[..<Swift.min(todoItems.count, limit)])
+        let overflowTodos = todoItems.count > limit ? Array(todoItems[limit...]) : []
         let waiting = Array(waitingItems[..<Swift.min(waitingItems.count, Swift.max(0, waitingLimit))])
         let capturedCount = uncheckedItems(in: lines, heading: "## Captured").count
 
@@ -137,6 +221,7 @@ public struct WeeklyFocusReader {
             brainRoot: brainRoot,
             weeklyNotePath: weeklyNotePath,
             todos: todos,
+            overflowTodos: overflowTodos,
             waiting: waiting,
             capturedCount: capturedCount
         )
@@ -167,6 +252,33 @@ public struct WeeklyFocusReader {
         }
     }
 
+    private static func captureLine(
+        text: String,
+        source: String?,
+        now: Date,
+        calendar: Calendar
+    ) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        let timestamp = formatter.string(from: now)
+
+        if let source {
+            return "- [ ] \(timestamp) \(text) (source: \(source))"
+        }
+
+        return "- [ ] \(timestamp) \(text)"
+    }
+
+    private static func normalizeSingleLine(_ text: String) -> String {
+        text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private static func sectionBounds(in lines: [String], heading: String) -> (start: Int, end: Int)? {
         guard let headingIndex = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == heading }) else {
             return nil
@@ -176,6 +288,57 @@ public struct WeeklyFocusReader {
         let end = lines[start...].firstIndex(where: { $0.hasPrefix("## ") }) ?? lines.count
         return (start, end)
     }
+
+    private static func insertBeforeSectionTrailingBlank(
+        _ lines: inout [String],
+        sectionStart: Int,
+        sectionEnd: Int,
+        line: String
+    ) {
+        var insertionIndex = sectionEnd
+
+        while insertionIndex > sectionStart + 1 && lines[insertionIndex - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            insertionIndex -= 1
+        }
+
+        lines.insert(line, at: insertionIndex)
+    }
+
+    private static func insertNewSection(
+        _ lines: inout [String],
+        before index: Int,
+        heading: String,
+        firstLine: String
+    ) {
+        var insertionIndex = index
+
+        while insertionIndex > 0 && lines[insertionIndex - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            insertionIndex -= 1
+        }
+
+        let removedBlankCount = index - insertionIndex
+        lines.replaceSubrange(insertionIndex..<index, with: Array(repeating: "", count: 0))
+        if removedBlankCount > 0 {
+            lines.insert("", at: insertionIndex)
+            insertionIndex += 1
+        } else if insertionIndex > 0 {
+            lines.insert("", at: insertionIndex)
+            insertionIndex += 1
+        }
+
+        lines.insert(contentsOf: [heading, firstLine, ""], at: insertionIndex)
+    }
+
+    private static func writeFileAtomically(_ content: String, to path: String) throws {
+        let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
+        let tempURL = directory.appendingPathComponent(".\(URL(fileURLWithPath: path).lastPathComponent).\(ProcessInfo.processInfo.processIdentifier).tmp")
+
+        try content.write(to: tempURL, atomically: false, encoding: .utf8)
+        if rename(tempURL.path, path) != 0 {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw WeeklyFocusError.writeFailed(path)
+        }
+    }
 }
 
 public enum WeeklyFocusFormatter {
@@ -183,6 +346,9 @@ public enum WeeklyFocusFormatter {
         let todos = snapshot.todos.isEmpty
             ? ["(none)"]
             : snapshot.todos.enumerated().map { index, todo in "\(index + 1). \(todo)" }
+        let overflow = snapshot.overflowTodos.isEmpty
+            ? []
+            : ["", "Fading below focus"] + snapshot.overflowTodos.map { "· \($0)" }
         let waiting = snapshot.waiting.isEmpty
             ? ["- (none)"]
             : snapshot.waiting.map { "- \($0)" }
@@ -193,7 +359,7 @@ public enum WeeklyFocusFormatter {
             "============",
             "",
             "Next items"
-        ] + todos + [
+        ] + todos + overflow + [
             "",
             "Waiting"
         ] + waiting + [
@@ -208,7 +374,7 @@ public enum WeeklyFocusFormatter {
 public enum CmuxFocusLauncher {
     public static let promptEnvironmentName = "WEEKLY_FOCUS_PROMPT"
     public static let copilotCommand =
-        "if command -v c >/dev/null 2>&1; then c -i \"$WEEKLY_FOCUS_PROMPT\"; else copilot --allow-all -i \"$WEEKLY_FOCUS_PROMPT\"; fi"
+        "zsh -lic 'c -i \"$WEEKLY_FOCUS_PROMPT\" || copilot --allow-all -i \"$WEEKLY_FOCUS_PROMPT\"'"
     public static let cmuxCandidates = [
         "/Applications/cmux.app/Contents/Resources/bin/cmux",
         "/opt/homebrew/bin/cmux",
@@ -234,7 +400,8 @@ public enum CmuxFocusLauncher {
         return LaunchCommand(
             executable: resolveCmuxPath(cmuxPath),
             arguments: [
-                "new-workspace",
+                "workspace",
+                "create",
                 "--name",
                 workspaceTitle(for: todo),
                 "--cwd",
@@ -264,6 +431,7 @@ public enum CmuxFocusLauncher {
     public static func launch(todo: String, brainRoot: String) throws {
         let command = buildCommand(todo: todo, brainRoot: brainRoot)
         let process = Process()
+        let errorPipe = Pipe()
 
         if command.executable == "/usr/bin/env" {
             process.executableURL = URL(fileURLWithPath: command.executable)
@@ -272,8 +440,17 @@ public enum CmuxFocusLauncher {
             process.executableURL = URL(fileURLWithPath: command.executable)
             process.arguments = command.arguments
         }
+        process.standardError = errorPipe
 
         try process.run()
+        process.waitUntilExit()
+
+        if process.terminationStatus != 0 {
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMessage = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
+        }
     }
 
     private static func workspaceTitle(for todo: String) -> String {

@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let titleLabel = NSTextField(labelWithString: "Weekly Focus")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let contentStack = NSStackView()
+    private let captureField = NSTextField()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -131,9 +132,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             contentStack.addArrangedSubview(messageLabel("No unchecked TODOs in this week's note."))
         } else {
             for (index, todo) in snapshot.todos.enumerated() {
-                contentStack.addArrangedSubview(todoButton(index: index, title: todo))
+                contentStack.addArrangedSubview(todoRow(index: index, title: todo))
             }
         }
+
+        if !snapshot.overflowTodos.isEmpty {
+            contentStack.addArrangedSubview(overflowSection(snapshot.overflowTodos))
+        }
+
+        contentStack.addArrangedSubview(captureRow())
 
         let capturedLabel = snapshot.capturedCount == 1 ? "item" : "items"
         contentStack.addArrangedSubview(secondaryLabel("Captured: \(snapshot.capturedCount) unchecked \(capturedLabel)"))
@@ -142,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             contentStack.addArrangedSubview(secondaryLabel("Waiting: \(snapshot.waiting.joined(separator: " | "))"))
         }
 
-        contentStack.addArrangedSubview(secondaryLabel("Press 1-5 to work an item, R to refresh, Esc or Q to quit."))
+        contentStack.addArrangedSubview(secondaryLabel("Click an item or press 1-5 to work it. Click Done or press ⌘1-⌘5 to mark done. C captures, R refreshes, Esc/Q quits."))
     }
 
     private func renderError(_ error: Error) {
@@ -159,6 +166,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func todoRow(index: Int, title: String) -> NSStackView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 16
+        row.addArrangedSubview(todoButton(index: index, title: title))
+        row.addArrangedSubview(doneButton(index: index))
+        return row
+    }
+
+    private func overflowSection(_ todos: [String]) -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+
+        let shown = Array(todos.prefix(8))
+        for (index, todo) in shown.enumerated() {
+            stack.addArrangedSubview(overflowLabel(todo, index: index))
+        }
+
+        if todos.count > shown.count {
+            stack.addArrangedSubview(overflowLabel("… \(todos.count - shown.count) more", index: shown.count))
+        }
+
+        return stack
+    }
+
+    private func captureRow() -> NSStackView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+
+        captureField.placeholderString = "Quick capture to ## Captured"
+        captureField.font = NSFont.systemFont(ofSize: 20, weight: .regular)
+        captureField.target = self
+        captureField.action = #selector(captureSubmitted(_:))
+        captureField.translatesAutoresizingMaskIntoConstraints = false
+        captureField.widthAnchor.constraint(greaterThanOrEqualToConstant: 720).isActive = true
+
+        let button = NSButton(title: "Capture", target: self, action: #selector(captureSubmitted(_:)))
+        button.bezelStyle = .rounded
+        button.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+
+        row.addArrangedSubview(captureField)
+        row.addArrangedSubview(button)
+        return row
+    }
+
     private func todoButton(index: Int, title: String) -> NSButton {
         let button = NSButton(title: "\(index + 1). \(title)", target: self, action: #selector(todoButtonPressed(_:)))
         button.tag = index
@@ -168,7 +225,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         button.contentTintColor = .white
         button.setButtonType(.momentaryPushIn)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 900).isActive = true
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 820).isActive = true
+        return button
+    }
+
+    private func doneButton(index: Int) -> NSButton {
+        let button = NSButton(title: "Done", target: self, action: #selector(doneButtonPressed(_:)))
+        button.tag = index
+        button.bezelStyle = .rounded
+        button.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
+        button.contentTintColor = NSColor(calibratedRed: 0.7, green: 1.0, blue: 0.7, alpha: 1)
+        button.setButtonType(.momentaryPushIn)
         return button
     }
 
@@ -188,8 +255,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return label
     }
 
+    private func overflowLabel(_ text: String, index: Int) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.systemFont(ofSize: CGFloat(Swift.max(14, 22 - index)), weight: .regular)
+        let alpha = Swift.max(0.16, 0.42 - (Double(index) * 0.04))
+        label.textColor = NSColor(calibratedWhite: 0.72, alpha: alpha)
+        label.maximumNumberOfLines = 1
+        return label
+    }
+
     @objc private func todoButtonPressed(_ sender: NSButton) {
         launchTodo(at: sender.tag)
+    }
+
+    @objc private func doneButtonPressed(_ sender: NSButton) {
+        markDone(at: sender.tag)
+    }
+
+    @objc private func captureSubmitted(_ sender: Any) {
+        let text = captureField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return
+        }
+
+        guard let snapshot else {
+            return
+        }
+
+        do {
+            try WeeklyFocusReader.appendCapture(
+                text,
+                weeklyNotePath: snapshot.weeklyNotePath
+            )
+            captureField.stringValue = ""
+            window?.makeFirstResponder(nil)
+            reload()
+        } catch {
+            showAlert(title: "Could not capture", message: error.localizedDescription)
+        }
     }
 
     private func launchTodo(at index: Int) {
@@ -207,7 +310,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func markDone(at index: Int) {
+        guard let snapshot, snapshot.todos.indices.contains(index) else {
+            return
+        }
+
+        do {
+            try WeeklyFocusReader.markTodoDone(
+                snapshot.todos[index],
+                weeklyNotePath: snapshot.weeklyNotePath
+            )
+            reload()
+        } catch {
+            showAlert(title: "Could not mark TODO done", message: error.localizedDescription)
+        }
+    }
+
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        if let firstResponder = window?.firstResponder,
+           let editor = captureField.currentEditor(),
+           firstResponder === editor {
+            return event
+        }
+
         guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
             return event
         }
@@ -222,8 +347,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return nil
         }
 
+        if characters == "c" {
+            window?.makeFirstResponder(captureField)
+            return nil
+        }
+
         if let number = Int(characters), (1...5).contains(number) {
-            launchTodo(at: number - 1)
+            if event.modifierFlags.contains(.command) {
+                markDone(at: number - 1)
+            } else {
+                launchTodo(at: number - 1)
+            }
             return nil
         }
 

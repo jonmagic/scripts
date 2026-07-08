@@ -94,7 +94,10 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 `weekly-focus-app` opens a native macOS app that reads the current weekly note,
 fills the current monitor by default, and shows at most five unchecked `## TODO`
 items. Press `1`-`5` or click an item to open a new cmux workspace in the Brain
-with Copilot started on that TODO. Press `R` to refresh and `Q` or `Esc` to quit.
+with Copilot started on that TODO. Click `Done` or press `⌘1`-`⌘5` to mark an
+item complete in the weekly note. Items after the top five fade below the main
+focus area instead of becoming primary actions. Press `C` to quick-capture into
+`## Captured`, `R` to refresh, and `Q` or `Esc` to quit.
 
 ```bash
 bin/weekly-focus-app
