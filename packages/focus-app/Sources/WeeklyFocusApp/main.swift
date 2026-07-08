@@ -444,8 +444,6 @@ enum FocusLayout {
     static let columnGap: CGFloat = 12
     static let bodyWidth: CGFloat = 940
     static let rowWidth: CGFloat = numberWidth + columnGap + bodyWidth
-    static let inputHorizontalInset: CGFloat = 24
-    static let inputWidth: CGFloat = rowWidth - (inputHorizontalInset * 2)
 }
 
 enum FocusFonts {
@@ -642,7 +640,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         root.addSubview(container)
 
         NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 72),
+            container.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            container.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 72),
             container.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -72),
             container.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             container.topAnchor.constraint(greaterThanOrEqualTo: root.topAnchor, constant: 60),
@@ -770,11 +769,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 0
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
-
-        let leadingInset = spacer(width: FocusLayout.inputHorizontalInset)
-        let trailingInset = spacer(width: FocusLayout.inputHorizontalInset)
 
         captureField.placeholderString = ""
         captureField.font = FocusFonts.input()
@@ -786,19 +780,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         captureField.action = #selector(todoSubmitted(_:))
         captureField.delegate = self
         captureField.translatesAutoresizingMaskIntoConstraints = false
-        captureField.widthAnchor.constraint(equalToConstant: FocusLayout.inputWidth).isActive = true
+        captureField.widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
 
-        row.addArrangedSubview(leadingInset)
         row.addArrangedSubview(captureField)
-        row.addArrangedSubview(trailingInset)
         return row
-    }
-
-    private func spacer(width: CGFloat) -> NSView {
-        let view = NSView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return view
     }
 
     private func todoButton(index: Int, title: String) -> TodoRowButton {
