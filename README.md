@@ -93,19 +93,23 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 
 `weekly-focus-app` opens a native macOS app that reads the current weekly note,
 fills the current monitor by default, and shows at most five unchecked `## TODO`
-items. Click an item, press `1`-`5`, or press `⌘1`-`⌘5` to open a new cmux
-workspace in `~/Brain` with `c` started on that TODO. Command-click an item to
-mark it complete in the weekly note. Items after the top five fade below the
-main focus area. Type in the empty field and press Return to add a new TODO.
-Press `R` to refresh and `Q` or `Esc` to quit.
+items. Click an item, press `1`-`5`, or press `⌘1`-`⌘5` to briefly highlight
+the row, open a new cmux workspace in `~/Brain`, and bring cmux forward with
+`c` started on that TODO. Command-click an item to mark it complete in the
+weekly note. Items after the top five fade below the main focus area. Type in
+the empty field and press Return to add a new TODO. Press `R` to refresh and
+`Q`, `Esc`, or `⌘Q` to quit.
 
 ```bash
 bin/weekly-focus-app
 ```
 
+The build script installs the Dock-safe app bundle at
+`~/Applications/Weekly Focus.app`.
+
 The native app has a self-test that creates a temporary Brain, clicks a TODO,
-checks `⌘1`, focuses the text field, adds a TODO, marks a TODO done, and asks
-cmux to open a harmless workspace command:
+checks `⌘1` while the text field is focused, checks `⌘Q`, adds a TODO, marks a
+TODO done, and asks cmux to open a harmless workspace command:
 
 ```bash
 bin/test-weekly-focus-app

@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 PACKAGE_DIR="$ROOT_DIR/packages/focus-app"
-APP_DIR="$PACKAGE_DIR/.build/Weekly Focus.app"
+APP_DIR="${WEEKLY_FOCUS_APP:-$HOME/Applications/Weekly Focus.app}"
 APP_EXECUTABLE="$APP_DIR/Contents/MacOS/Weekly Focus"
 
 case "${1:-}" in
@@ -29,6 +29,7 @@ USAGE
   *)
     if [[ ! -x "$APP_EXECUTABLE" ]]; then
       APP_DIR="$("$SCRIPT_DIR/build-weekly-focus-app")"
+      APP_EXECUTABLE="$APP_DIR/Contents/MacOS/Weekly Focus"
     fi
     open -n "$APP_DIR"
     ;;

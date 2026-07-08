@@ -81,6 +81,11 @@ enum FocusColors {
     }
 }
 
+@MainActor
+private protocol FocusCommandHandling: AnyObject {
+    func handleCommandKeyEquivalent(_ event: NSEvent) -> Bool
+}
+
 final class FocusWindow: NSWindow {
     override var canBecomeKey: Bool {
         true
@@ -88,6 +93,15 @@ final class FocusWindow: NSWindow {
 
     override var canBecomeMain: Bool {
         true
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let handler = NSApp.delegate as? FocusCommandHandling,
+           handler.handleCommandKeyEquivalent(event) {
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
 }
 
@@ -118,6 +132,21 @@ final class FocusRootView: NSView {
 
 final class TodoRowButton: NSControl {
     var todoIndex: Int = 0
+    var isLaunching = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
+    private var isHovering = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
+    private var isPressed = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
     private let todoTitle: String
 
     init(index: Int, title: String) {
@@ -151,8 +180,49 @@ final class TodoRowButton: NSControl {
         true
     }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for trackingArea in trackingAreas {
+            removeTrackingArea(trackingArea)
+        }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        isPressed = false
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+
+        if isLaunching || isPressed || isHovering {
+            let highlightRect = bounds.insetBy(dx: -10, dy: 0)
+            let alpha = isLaunching ? 0.12 : isPressed ? 0.10 : 0.045
+            FocusColors.accent.withAlphaComponent(alpha).setFill()
+            NSBezierPath(roundedRect: highlightRect, xRadius: 12, yRadius: 12).fill()
+
+            FocusColors.accent.withAlphaComponent(isLaunching || isPressed ? 1 : 0.45).setFill()
+            NSBezierPath(
+                roundedRect: NSRect(x: -10, y: 5, width: 4, height: bounds.height - 10),
+                xRadius: 2,
+                yRadius: 2
+            ).fill()
+        }
+
         let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
         let textHeight = title.boundingRect(
             with: NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude),
@@ -174,7 +244,38 @@ final class TodoRowButton: NSControl {
     }
 
     override func mouseDown(with event: NSEvent) {
-        sendConfiguredAction()
+        isPressed = true
+        displayIfNeeded()
+        guard let window else {
+            isPressed = false
+            return
+        }
+
+        while true {
+            guard let nextEvent = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp],
+                until: Date.distantFuture,
+                inMode: .eventTracking,
+                dequeue: true
+            ) else {
+                continue
+            }
+
+            let point = convert(nextEvent.locationInWindow, from: nil)
+            let isInside = bounds.contains(point)
+            isPressed = isInside
+            displayIfNeeded()
+
+            if nextEvent.type == .leftMouseUp {
+                if isInside {
+                    showLaunchFeedback()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.sendConfiguredAction()
+                    }
+                }
+                return
+            }
+        }
     }
 
     override func performClick(_ sender: Any?) {
@@ -184,6 +285,14 @@ final class TodoRowButton: NSControl {
     override func accessibilityPerformPress() -> Bool {
         sendConfiguredAction()
         return true
+    }
+
+    func showLaunchFeedback() {
+        isLaunching = true
+        displayIfNeeded()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.isLaunching = false
+        }
     }
 
     private func sendConfiguredAction() {
@@ -260,10 +369,11 @@ enum FocusFonts {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSMenuItemValidation, FocusCommandHandling {
     private var window: NSWindow?
     private var snapshot: WeeklyFocusSnapshot?
     private var keyMonitor: Any?
+    private var todoButtons: [TodoRowButton] = []
     private var isSubmittingTodo = false
     private let selfTestMode = CommandLine.arguments.contains("--self-test")
     private let selfTestLaunchMode = CommandLine.arguments.contains("--self-test-launch")
@@ -302,6 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        configureMenu()
         createWindow()
         reload()
 
@@ -335,6 +446,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     func windowDidChangeScreen(_ notification: Notification) {
         resizeToCurrentScreen()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        window?.makeKeyAndOrderFront(nil)
+        sender.activate(ignoringOtherApps: true)
+        window?.makeFirstResponder(captureField)
+        return true
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(openTodoMenuItem(_:)) {
+            return snapshot?.todos.indices.contains(menuItem.tag) == true
+        }
+
+        return true
+    }
+
+    private func configureMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: "Weekly Focus")
+        let quitItem = NSMenuItem(
+            title: "Quit Weekly Focus",
+            action: #selector(quit(_:)),
+            keyEquivalent: "q"
+        )
+        quitItem.keyEquivalentModifierMask = [.command]
+        quitItem.target = self
+        appMenu.addItem(quitItem)
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let focusMenuItem = NSMenuItem()
+        let focusMenu = NSMenu(title: "Focus")
+        for index in 0..<5 {
+            let item = NSMenuItem(
+                title: "Open Item \(index + 1)",
+                action: #selector(openTodoMenuItem(_:)),
+                keyEquivalent: "\(index + 1)"
+            )
+            item.keyEquivalentModifierMask = [.command]
+            item.tag = index
+            item.target = self
+            focusMenu.addItem(item)
+        }
+        focusMenuItem.submenu = focusMenu
+        mainMenu.addItem(focusMenuItem)
+        NSApp.mainMenu = mainMenu
     }
 
     private func createWindow() {
@@ -427,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func clearContent() {
+        todoButtons = []
         for view in contentStack.arrangedSubviews {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -486,6 +646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let button = TodoRowButton(index: index, title: title)
         button.target = self
         button.action = #selector(todoButtonPressed(_:))
+        todoButtons.append(button)
         return button
     }
 
@@ -524,6 +685,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     @objc private func todoSubmitted(_ sender: Any) {
         submitTodo()
+    }
+
+    @objc private func openTodoMenuItem(_ sender: NSMenuItem) {
+        launchTodo(at: sender.tag)
+    }
+
+    @objc private func quit(_ sender: Any) {
+        NSApp.terminate(nil)
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -577,10 +746,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func launchTodo(at index: Int) {
-        do {
-            try startTodo(at: index)
-        } catch {
-            showAlert(title: "Could not open cmux", message: error.localizedDescription)
+        showLaunchFeedback(at: index)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                try self.startTodo(at: index)
+                self.activateCmux()
+            } catch {
+                self.showAlert(title: "Could not open cmux", message: error.localizedDescription)
+            }
         }
     }
 
@@ -594,6 +771,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             commandOverride: launchCommandOverride,
             focus: shouldFocusLaunchedWorkspace
         )
+    }
+
+    private func showLaunchFeedback(at index: Int) {
+        guard todoButtons.indices.contains(index) else {
+            return
+        }
+
+        todoButtons[index].showLaunchFeedback()
+    }
+
+    private func activateCmux() {
+        guard shouldFocusLaunchedWorkspace else {
+            return
+        }
+
+        if let app = NSWorkspace.shared.runningApplications.first(where: { application in
+            if application.bundleURL?.lastPathComponent == "cmux.app" {
+                return true
+            }
+
+            return application.localizedName?.lowercased().contains("cmux") == true
+        }) {
+            app.activate(options: [.activateAllWindows])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                NSApp.hide(nil)
+            }
+            return
+        }
+
+        let cmuxURL = URL(fileURLWithPath: "/Applications/cmux.app")
+        if FileManager.default.fileExists(atPath: cmuxURL.path) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(
+                at: cmuxURL,
+                configuration: configuration
+            ) { app, _ in
+                app?.activate(options: [.activateAllWindows])
+                DispatchQueue.main.async {
+                    NSApp.hide(nil)
+                }
+            }
+        }
     }
 
     private func markDone(at index: Int) {
@@ -613,15 +833,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
-        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
-            return event
+        if handleCommandKeyEquivalent(event) {
+            return nil
         }
 
-        if event.modifierFlags.contains(.command),
-           let number = Int(characters),
-           (1...5).contains(number) {
-            launchTodo(at: number - 1)
-            return nil
+        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
+            return event
         }
 
         if let firstResponder = window?.firstResponder,
@@ -656,6 +873,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         return event
+    }
+
+    func handleCommandKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command),
+              let characters = event.charactersIgnoringModifiers?.lowercased() else {
+            return false
+        }
+
+        if let number = Int(characters), (1...5).contains(number) {
+            launchTodo(at: number - 1)
+            return true
+        }
+
+        if characters == "q" {
+            NSApp.terminate(nil)
+            return true
+        }
+
+        return false
     }
 
     @objc private func screenParametersDidChange() {

@@ -13,6 +13,7 @@ TODO_ONE="One $TEST_RUN_ID"
 TODO_TWO="Two $TEST_RUN_ID"
 APP_EXECUTABLE="$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus"
 APP_PID=""
+CLICK_COORDS="$TMPDIR/click-coords.txt"
 
 stop_existing_app() {
   while read -r pid; do
@@ -90,7 +91,7 @@ BRAIN_ROOT="$TMPDIR" \
 APP_PID=$!
 
 for _ in {1..40}; do
-  if ps -p "$APP_PID" >/dev/null 2>&1 && osascript -e 'tell application "System Events" to exists process "Weekly Focus"' 2>/dev/null | grep -q true; then
+  if ps -p "$APP_PID" >/dev/null 2>&1 && osascript -e "tell application \"System Events\" to exists (first process whose unix id is $APP_PID)" 2>/dev/null | grep -q true; then
     break
   fi
   sleep 0.25
@@ -98,17 +99,70 @@ done
 
 rm -f "$LAUNCH_FILE"
 
-osascript <<APPLESCRIPT
+osascript <<APPLESCRIPT >"$CLICK_COORDS"
 set appPid to $APP_PID
 tell application "System Events"
   set appProcess to first process whose unix id is appPid
   tell appProcess
     set frontmost to true
     delay 0.5
-    click button 1 of window "Weekly Focus"
+    set buttonPosition to position of button 1 of window "Weekly Focus"
+    set buttonSize to size of button 1 of window "Weekly Focus"
+    set clickX to (item 1 of buttonPosition) + 30
+    set clickY to (item 2 of buttonPosition) + ((item 2 of buttonSize) div 2)
+    return (clickX as text) & " " & (clickY as text)
   end tell
 end tell
 APPLESCRIPT
+
+read -r CLICK_X CLICK_Y <"$CLICK_COORDS"
+swift - "$APP_PID" "$CLICK_X" "$CLICK_Y" <<'SWIFT'
+import AppKit
+import CoreGraphics
+import Foundation
+
+let pid = pid_t(CommandLine.arguments[1])!
+let point = CGPoint(
+    x: Double(CommandLine.arguments[2])!,
+    y: Double(CommandLine.arguments[3])!
+)
+
+guard let app = NSRunningApplication(processIdentifier: pid) else {
+    fatalError("Weekly Focus process not found")
+}
+
+app.activate(options: [.activateAllWindows])
+let deadline = Date().addingTimeInterval(3)
+while !app.isActive && Date() < deadline {
+    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+}
+
+guard app.isActive else {
+    fatalError("Weekly Focus did not become active")
+}
+
+let source = CGEventSource(stateID: .hidSystemState)
+CGEvent(
+    mouseEventSource: source,
+    mouseType: .mouseMoved,
+    mouseCursorPosition: point,
+    mouseButton: .left
+)?.post(tap: .cghidEventTap)
+Thread.sleep(forTimeInterval: 0.05)
+CGEvent(
+    mouseEventSource: source,
+    mouseType: .leftMouseDown,
+    mouseCursorPosition: point,
+    mouseButton: .left
+)?.post(tap: .cghidEventTap)
+Thread.sleep(forTimeInterval: 0.05)
+CGEvent(
+    mouseEventSource: source,
+    mouseType: .leftMouseUp,
+    mouseCursorPosition: point,
+    mouseButton: .left
+)?.post(tap: .cghidEventTap)
+SWIFT
 
 for _ in {1..20}; do
   if [[ -f "$LAUNCH_FILE" ]]; then
@@ -127,6 +181,7 @@ tell application "System Events"
   tell appProcess
     set frontmost to true
     delay 0.5
+    click text field 1 of window "Weekly Focus"
     key code 18 using {command down}
   end tell
 end tell
@@ -162,9 +217,33 @@ for _ in {1..20}; do
   sleep 0.25
 done
 
-kill "$APP_PID" >/dev/null 2>&1 || true
+grep -q "$UI_TODO" "$WEEKLY_NOTE"
+
+osascript <<APPLESCRIPT
+set appPid to $APP_PID
+tell application "System Events"
+  set appProcess to first process whose unix id is appPid
+  tell appProcess
+    set frontmost to true
+    delay 0.5
+    key code 12 using {command down}
+  end tell
+end tell
+APPLESCRIPT
+
+for _ in {1..20}; do
+  if ! ps -p "$APP_PID" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.25
+done
+
+if ps -p "$APP_PID" >/dev/null 2>&1; then
+  echo "Weekly Focus did not quit on Cmd-Q" >&2
+  exit 1
+fi
+
 wait "$APP_PID" 2>/dev/null || true
 APP_PID=""
-grep -q "$UI_TODO" "$WEEKLY_NOTE"
 
 echo "weekly-focus app self-test passed"

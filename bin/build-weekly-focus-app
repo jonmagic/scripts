@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 PACKAGE_DIR="$ROOT_DIR/packages/focus-app"
 APP_DIR="$PACKAGE_DIR/.build/Weekly Focus.app"
+INSTALL_DIR="${WEEKLY_FOCUS_INSTALL_DIR:-$HOME/Applications}"
+INSTALLED_APP_DIR="$INSTALL_DIR/Weekly Focus.app"
 EXECUTABLE_SRC="$PACKAGE_DIR/.build/release/weekly-focus-app"
 EXECUTABLE_DEST="$APP_DIR/Contents/MacOS/Weekly Focus"
 
@@ -44,4 +46,8 @@ cat >"$APP_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-echo "$APP_DIR"
+mkdir -p "$INSTALL_DIR"
+rm -rf "$INSTALLED_APP_DIR"
+cp -R "$APP_DIR" "$INSTALLED_APP_DIR"
+
+echo "$INSTALLED_APP_DIR"
