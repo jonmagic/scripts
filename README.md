@@ -87,6 +87,18 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 | `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
 | `weekly-focus` | Print a low-noise Now/Next/Waiting/Captured view from the current weekly note | bun |
 | `weekly-focus-card` | Print a sparse focus card capped at five current weekly-note TODOs | bun |
+| `weekly-focus-app` | Build and open the native full-screen Weekly Focus app | swift |
+
+## Native Weekly Focus App
+
+`weekly-focus-app` opens a native macOS app that reads the current weekly note,
+fills the current monitor by default, and shows at most five unchecked `## TODO`
+items. Press `1`-`5` or click an item to open a new cmux workspace in the Brain
+with Copilot started on that TODO. Press `R` to refresh and `Q` or `Esc` to quit.
+
+```bash
+bin/weekly-focus-app
+```
 
 ## Raycast Commands
 
@@ -96,7 +108,7 @@ The Raycast extension includes quick Brain actions for the same weekly-note work
 |---------|-------------|
 | `Create Daily Project Note` | Create a numbered Daily Project note |
 | `Capture Weekly Note` | Capture a rough commitment with optional source under `## Captured` |
-| `Weekly Focus` | Show up to five weekly-note TODOs and launch a cmux Copilot workspace for a selected item |
+| `Weekly Focus` | Open the native full-screen Weekly Focus app |
 
 ## License
 

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+#
+# Build the native Weekly Focus macOS app bundle.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+PACKAGE_DIR="$ROOT_DIR/packages/focus-app"
+APP_DIR="$PACKAGE_DIR/.build/Weekly Focus.app"
+EXECUTABLE_SRC="$PACKAGE_DIR/.build/release/weekly-focus-app"
+EXECUTABLE_DEST="$APP_DIR/Contents/MacOS/Weekly Focus"
+
+swift build --package-path "$PACKAGE_DIR" -c release >&2
+
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+cp "$EXECUTABLE_SRC" "$EXECUTABLE_DEST"
+
+cat >"$APP_DIR/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>Weekly Focus</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.jonmagic.weekly-focus</string>
+  <key>CFBundleName</key>
+  <string>Weekly Focus</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSSupportsAutomaticGraphicsSwitching</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+echo "$APP_DIR"

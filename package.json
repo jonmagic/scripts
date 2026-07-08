@@ -10,11 +10,13 @@
     "packages/raycast"
   ],
   "scripts": {
-    "build": "bun run build:core && bun run build:cli && bun run build:vscode && bun run build:raycast",
+    "build": "bun run build:core && bun run build:cli && bun run build:vscode && bun run build:raycast && bun run build:focus-app",
     "build:core": "cd packages/core && bun run build",
     "build:cli": "cd packages/cli && bun run build",
     "build:vscode": "cd packages/vscode && bun run build",
     "build:raycast": "cd packages/raycast && bun run build",
+    "build:focus-app": "bin/build-weekly-focus-app >/dev/null",
+    "test:focus-app": "swift test --package-path packages/focus-app",
     "lint": "bun eslint \"**/*.{ts,tsx,js,mjs,cjs}\"",
     "test": "bun test",
     "typecheck": "bun tsc -b"

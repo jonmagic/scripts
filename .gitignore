@@ -4,7 +4,9 @@
 
 # Build outputs
 dist/
+.build/
 *.tsbuildinfo
+*.app
 
 # Dependencies
 node_modules/

@@ -53,7 +53,6 @@
       "name": "jonmagic-scripts-raycast",
       "version": "0.0.0",
       "dependencies": {
-        "@jonmagic/scripts-cli": "workspace:*",
         "@jonmagic/scripts-core": "workspace:*",
         "@raycast/api": "^1.82.1",
         "react": "^19.0.0",

@@ -8,5 +8,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "raycast-env.d.ts"],
-  "references": [{ "path": "../core" }, { "path": "../cli" }]
+  "references": [{ "path": "../core" }]
 }

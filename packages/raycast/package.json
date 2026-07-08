@@ -23,8 +23,8 @@
     {
       "name": "weekly-focus",
       "title": "Weekly Focus",
-      "description": "Shows up to five weekly note TODOs and launches Copilot work sessions",
-      "mode": "view"
+      "description": "Opens the native full-screen Weekly Focus app",
+      "mode": "no-view"
     }
   ],
   "version": "0.0.0",
@@ -39,7 +39,6 @@
     "typecheck": "bun tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@jonmagic/scripts-cli": "workspace:*",
     "@jonmagic/scripts-core": "workspace:*",
     "@raycast/api": "^1.82.1",
     "react": "^19.0.0"

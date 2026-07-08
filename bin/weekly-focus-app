@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+#
+# Open the native Weekly Focus app, or pass through test/print flags.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+PACKAGE_DIR="$ROOT_DIR/packages/focus-app"
+APP_DIR="$PACKAGE_DIR/.build/Weekly Focus.app"
+APP_EXECUTABLE="$APP_DIR/Contents/MacOS/Weekly Focus"
+
+case "${1:-}" in
+  --print-focus)
+    swift run --package-path "$PACKAGE_DIR" weekly-focus-app "$@"
+    ;;
+  --help)
+    cat <<'USAGE'
+Usage: weekly-focus-app [--print-focus]
+
+Options:
+  --print-focus  Print the weekly focus card and exit
+  --help         Show this help message
+USAGE
+    ;;
+  *)
+    if [[ ! -x "$APP_EXECUTABLE" ]]; then
+      APP_DIR="$("$SCRIPT_DIR/build-weekly-focus-app")"
+    fi
+    open -n "$APP_DIR"
+    ;;
+esac
