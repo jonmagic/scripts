@@ -42,17 +42,51 @@ final class FocusWindow: NSWindow {
     }
 }
 
+final class FocusRootView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        updateAppearance()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    }
+}
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
     private var window: NSWindow?
     private var snapshot: WeeklyFocusSnapshot?
     private var keyMonitor: Any?
+    private var isSubmittingTodo = false
     private let selfTestMode = CommandLine.arguments.contains("--self-test")
     private let selfTestLaunchMode = CommandLine.arguments.contains("--self-test-launch")
-    private let titleLabel = NSTextField(labelWithString: "Weekly Focus")
-    private let subtitleLabel = NSTextField(labelWithString: "")
     private let contentStack = NSStackView()
     private let captureField = NSTextField()
+
+    private var backgroundColor: NSColor {
+        NSColor.windowBackgroundColor
+    }
+
+    private var primaryTextColor: NSColor {
+        NSColor.labelColor
+    }
+
+    private var secondaryTextColor: NSColor {
+        NSColor.secondaryLabelColor
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -113,27 +147,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func buildRootView() -> NSView {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor(calibratedWhite: 0.04, alpha: 1).cgColor
+        let root = FocusRootView()
 
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
-        container.spacing = 28
+        container.spacing = 16
         container.translatesAutoresizingMaskIntoConstraints = false
-
-        titleLabel.font = NSFont.systemFont(ofSize: 56, weight: .bold)
-        titleLabel.textColor = .white
-        subtitleLabel.font = NSFont.systemFont(ofSize: 18, weight: .regular)
-        subtitleLabel.textColor = NSColor(calibratedWhite: 0.78, alpha: 1)
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 18
+        contentStack.spacing = 12
 
-        container.addArrangedSubview(titleLabel)
-        container.addArrangedSubview(subtitleLabel)
         container.addArrangedSubview(contentStack)
         root.addSubview(container)
 
@@ -160,11 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func render(snapshot: WeeklyFocusSnapshot) {
-        subtitleLabel.stringValue = "Up to five current TODOs from \(snapshot.weeklyNotePath)"
         clearContent()
 
         if snapshot.todos.isEmpty {
-            contentStack.addArrangedSubview(messageLabel("No unchecked TODOs in this week's note."))
+            contentStack.addArrangedSubview(messageLabel("No TODOs"))
         } else {
             for (index, todo) in snapshot.todos.enumerated() {
                 contentStack.addArrangedSubview(todoRow(index: index, title: todo))
@@ -176,22 +200,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         contentStack.addArrangedSubview(captureRow())
-
-        let capturedLabel = snapshot.capturedCount == 1 ? "item" : "items"
-        contentStack.addArrangedSubview(secondaryLabel("Captured: \(snapshot.capturedCount) unchecked \(capturedLabel)"))
-
-        if !snapshot.waiting.isEmpty {
-            contentStack.addArrangedSubview(secondaryLabel("Waiting: \(snapshot.waiting.joined(separator: " | "))"))
+        DispatchQueue.main.async {
+            self.window?.makeFirstResponder(self.captureField)
         }
-
-        contentStack.addArrangedSubview(secondaryLabel("Click an item or press 1-5 to work it. Click Done or press ⌘1-⌘5 to mark done. C captures, R refreshes, Esc/Q quits."))
     }
 
     private func renderError(_ error: Error) {
-        subtitleLabel.stringValue = "Could not read the current weekly note"
         clearContent()
         contentStack.addArrangedSubview(messageLabel(error.localizedDescription))
-        contentStack.addArrangedSubview(secondaryLabel("Press R to retry, Esc or Q to quit."))
     }
 
     private func clearContent() {
@@ -205,7 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 16
+        row.spacing = 12
         row.addArrangedSubview(todoButton(index: index, title: title))
         row.addArrangedSubview(doneButton(index: index))
         return row
@@ -217,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         stack.alignment = .leading
         stack.spacing = 8
 
-        let shown = Array(todos.prefix(8))
+        let shown = Array(todos.prefix(10))
         for (index, todo) in shown.enumerated() {
             stack.addArrangedSubview(overflowLabel(todo, index: index))
         }
@@ -233,43 +249,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 12
+        row.spacing = 0
 
-        captureField.placeholderString = "Quick capture to ## Captured"
-        captureField.font = NSFont.systemFont(ofSize: 20, weight: .regular)
+        captureField.placeholderString = ""
+        captureField.font = NSFont.systemFont(ofSize: 28, weight: .regular)
+        captureField.textColor = primaryTextColor
+        captureField.backgroundColor = NSColor.controlBackgroundColor
+        captureField.focusRingType = .default
         captureField.target = self
-        captureField.action = #selector(captureSubmitted(_:))
+        captureField.action = #selector(todoSubmitted(_:))
+        captureField.delegate = self
         captureField.translatesAutoresizingMaskIntoConstraints = false
-        captureField.widthAnchor.constraint(greaterThanOrEqualToConstant: 720).isActive = true
-
-        let button = NSButton(title: "Capture", target: self, action: #selector(captureSubmitted(_:)))
-        button.bezelStyle = .rounded
-        button.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+        captureField.widthAnchor.constraint(greaterThanOrEqualToConstant: 980).isActive = true
 
         row.addArrangedSubview(captureField)
-        row.addArrangedSubview(button)
         return row
     }
 
     private func todoButton(index: Int, title: String) -> NSButton {
         let button = NSButton(title: "\(index + 1). \(title)", target: self, action: #selector(todoButtonPressed(_:)))
         button.tag = index
-        button.bezelStyle = .rounded
-        button.font = NSFont.systemFont(ofSize: 30, weight: index == 0 ? .bold : .medium)
+        button.isBordered = false
+        button.font = NSFont.systemFont(ofSize: 34, weight: index == 0 ? .bold : .medium)
         button.alignment = .left
-        button.contentTintColor = .white
+        button.contentTintColor = primaryTextColor
         button.setButtonType(.momentaryPushIn)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 820).isActive = true
+        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 900).isActive = true
         return button
     }
 
     private func doneButton(index: Int) -> NSButton {
-        let button = NSButton(title: "Done", target: self, action: #selector(doneButtonPressed(_:)))
+        let button = NSButton(title: "✓", target: self, action: #selector(doneButtonPressed(_:)))
         button.tag = index
-        button.bezelStyle = .rounded
-        button.font = NSFont.systemFont(ofSize: 20, weight: .semibold)
-        button.contentTintColor = NSColor(calibratedRed: 0.7, green: 1.0, blue: 0.7, alpha: 1)
+        button.isBordered = false
+        button.font = NSFont.systemFont(ofSize: 22, weight: .semibold)
+        button.contentTintColor = secondaryTextColor
         button.setButtonType(.momentaryPushIn)
         return button
     }
@@ -277,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func messageLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 30, weight: .medium)
-        label.textColor = .white
+        label.textColor = primaryTextColor
         label.maximumNumberOfLines = 0
         return label
     }
@@ -285,16 +300,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func secondaryLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 18, weight: .regular)
-        label.textColor = NSColor(calibratedWhite: 0.74, alpha: 1)
+        label.textColor = secondaryTextColor
         label.maximumNumberOfLines = 0
         return label
     }
 
     private func overflowLabel(_ text: String, index: Int) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: CGFloat(Swift.max(14, 22 - index)), weight: .regular)
-        let alpha = Swift.max(0.16, 0.42 - (Double(index) * 0.04))
-        label.textColor = NSColor(calibratedWhite: 0.72, alpha: alpha)
+        label.font = NSFont.systemFont(ofSize: CGFloat(Swift.max(13, 20 - index)), weight: .regular)
+        let alpha = Swift.max(0.10, 0.32 - (Double(index) * 0.035))
+        label.textColor = secondaryTextColor.withAlphaComponent(alpha)
         label.maximumNumberOfLines = 1
         return label
     }
@@ -307,7 +322,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         markDone(at: sender.tag)
     }
 
-    @objc private func captureSubmitted(_ sender: Any) {
+    @objc private func todoSubmitted(_ sender: Any) {
+        submitTodo()
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        let movement = (obj.userInfo?["NSTextMovement"] as? NSNumber)?.intValue
+        if movement == NSReturnTextMovement {
+            submitTodo()
+        }
+    }
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        if control === captureField && commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            submitTodo()
+            return true
+        }
+
+        return false
+    }
+
+    private func submitTodo() {
+        if isSubmittingTodo {
+            return
+        }
+
         let text = captureField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return
@@ -318,14 +361,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         do {
-            try WeeklyFocusReader.appendCapture(
+            isSubmittingTodo = true
+            try WeeklyFocusReader.appendTodo(
                 text,
                 weeklyNotePath: snapshot.weeklyNotePath
             )
             captureField.stringValue = ""
             window?.makeFirstResponder(nil)
             reload()
+            isSubmittingTodo = false
         } catch {
+            isSubmittingTodo = false
             showAlert(title: "Could not capture", message: error.localizedDescription)
         }
     }
@@ -337,8 +383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         do {
             try CmuxFocusLauncher.launch(
-                todo: snapshot.todos[index],
-                brainRoot: snapshot.brainRoot
+                todo: snapshot.todos[index]
             )
         } catch {
             showAlert(title: "Could not open cmux", message: error.localizedDescription)
@@ -365,6 +410,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let firstResponder = window?.firstResponder,
            let editor = captureField.currentEditor(),
            firstResponder === editor {
+            if event.keyCode == 36 || event.keyCode == 76 {
+                submitTodo()
+                return nil
+            }
+
             return event
         }
 
@@ -432,14 +482,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 throw WeeklyFocusError.launchFailed("self-test window cannot focus capture field")
             }
 
-            captureField.stringValue = "Self-test capture"
-            captureSubmitted(self)
+            captureField.stringValue = "Self-test todo"
+            todoSubmitted(self)
 
-            guard let afterCapture = snapshot, afterCapture.capturedCount > 0 else {
-                throw WeeklyFocusError.launchFailed("self-test capture did not refresh snapshot")
+            guard let afterTodo = snapshot, afterTodo.todos.contains("Self-test todo") else {
+                throw WeeklyFocusError.launchFailed("self-test TODO entry did not refresh snapshot")
             }
 
-            let firstTodo = afterCapture.todos.first
+            let firstTodo = afterTodo.todos.first
             if firstTodo != nil {
                 markDone(at: 0)
                 let afterDone = try WeeklyFocusReader().read(todoLimit: 5)

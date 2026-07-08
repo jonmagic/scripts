@@ -39,7 +39,7 @@ BRAIN_ROOT="$TMPDIR" swift run \
   --self-test \
   --self-test-launch
 
-grep -q 'Self-test capture' "$WEEKLY_NOTE"
+grep -q 'Self-test todo' "$WEEKLY_NOTE"
 grep -q -- '- \[x\] One' "$WEEKLY_NOTE"
 
 for _ in {1..20}; do
@@ -50,5 +50,48 @@ for _ in {1..20}; do
 done
 
 grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
+
+cat >"$WEEKLY_NOTE" <<'MARKDOWN'
+# Week
+
+## TODO
+- [ ] One
+- [ ] Two
+
+## Captured
+MARKDOWN
+
+BRAIN_ROOT="$TMPDIR" "$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus" &
+APP_PID=$!
+
+for _ in {1..40}; do
+  if osascript -e 'tell application "System Events" to exists process "Weekly Focus"' 2>/dev/null | grep -q true; then
+    break
+  fi
+  sleep 0.25
+done
+
+osascript <<'APPLESCRIPT'
+tell application "Weekly Focus" to activate
+delay 0.5
+tell application "System Events"
+  tell process "Weekly Focus"
+    click text field 1 of window "Weekly Focus"
+    keystroke "UI entered TODO"
+    key code 36
+  end tell
+end tell
+APPLESCRIPT
+
+for _ in {1..20}; do
+  if grep -q 'UI entered TODO' "$WEEKLY_NOTE"; then
+    break
+  fi
+  sleep 0.25
+done
+
+kill "$APP_PID" >/dev/null 2>&1 || true
+wait "$APP_PID" 2>/dev/null || true
+grep -q 'UI entered TODO' "$WEEKLY_NOTE"
 
 echo "weekly-focus app self-test passed"

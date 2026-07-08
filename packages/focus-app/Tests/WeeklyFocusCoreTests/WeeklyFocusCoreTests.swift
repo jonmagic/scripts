@@ -84,7 +84,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertEqual(command.arguments[command.arguments.firstIndex(of: "--cwd")! + 1], "/tmp/Brain")
         XCTAssertEqual(
             command.arguments[command.arguments.firstIndex(of: "--command")! + 1],
-            #"zsh -lic 'if alias c >/dev/null 2>&1; then c -i "$WEEKLY_FOCUS_PROMPT"; else copilot --allow-all -i "$WEEKLY_FOCUS_PROMPT"; fi'"#
+            #"zsh -lic 'source "$WEEKLY_FOCUS_SCRIPT"'"#
         )
         XCTAssertFalse(command.arguments[command.arguments.firstIndex(of: "--command")! + 1].contains(todo))
     }
@@ -93,7 +93,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
         let todo = #"Fix $(touch /tmp/nope) and "quote" this"#
         let command = try CmuxFocusLauncher.buildScriptedCopilotCommand(todo: todo)
 
-        XCTAssertTrue(command.hasPrefix("zsh -lic "))
+        XCTAssertTrue(command.contains("zsh -lic "))
         XCTAssertFalse(command.contains(todo))
     }
 
@@ -137,6 +137,38 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertTrue(updated.contains("- [ ] One"))
         XCTAssertTrue(updated.contains("- [x] Two"))
         XCTAssertTrue(updated.contains("- [ ] Scheduled item"))
+
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func testAppendsTodoIntoTodoSection() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: weeklyDirectory,
+            withIntermediateDirectories: true
+        )
+        let weeklyNote = weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md")
+        try [
+            "# Week",
+            "",
+            "## TODO",
+            "- [ ] One",
+            "",
+            "## Schedule",
+            "- [ ] Scheduled item",
+            ""
+        ].joined(separator: "\n").write(to: weeklyNote, atomically: true, encoding: .utf8)
+
+        let line = try WeeklyFocusReader.appendTodo("New TODO from field", weeklyNotePath: weeklyNote.path)
+
+        let updated = try String(contentsOf: weeklyNote, encoding: .utf8)
+        XCTAssertEqual(line, "- [ ] New TODO from field")
+        XCTAssertLessThan(
+            updated.range(of: "- [ ] New TODO from field")!.lowerBound,
+            updated.range(of: "## Schedule")!.lowerBound
+        )
 
         try FileManager.default.removeItem(at: directory)
     }

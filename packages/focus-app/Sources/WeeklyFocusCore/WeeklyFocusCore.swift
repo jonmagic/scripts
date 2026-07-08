@@ -162,6 +162,34 @@ public struct WeeklyFocusReader {
         return line
     }
 
+    @discardableResult
+    public static func appendTodo(
+        _ text: String,
+        weeklyNotePath: String
+    ) throws -> String {
+        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
+            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
+        }
+
+        let normalizedText = normalizeSingleLine(text)
+        guard !normalizedText.isEmpty else {
+            throw WeeklyFocusError.writeFailed("TODO text is required")
+        }
+
+        let line = "- [ ] \(normalizedText)"
+        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
+        var lines = content.components(separatedBy: .newlines)
+
+        if let todo = sectionBounds(in: lines, heading: "## TODO") {
+            insertBeforeSectionTrailingBlank(&lines, sectionStart: todo.start, sectionEnd: todo.end, line: line)
+        } else {
+            insertNewSection(&lines, before: lines.count, heading: "## TODO", firstLine: line)
+        }
+
+        try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
+        return line
+    }
+
     public static func defaultBrainRoot() -> String {
         if let root = ProcessInfo.processInfo.environment["BRAIN_ROOT"], !root.isEmpty {
             return root
@@ -374,7 +402,7 @@ public enum WeeklyFocusFormatter {
 public enum CmuxFocusLauncher {
     public static let promptEnvironmentName = "WEEKLY_FOCUS_PROMPT"
     public static let copilotCommand =
-        "zsh -lic 'if alias c >/dev/null 2>&1; then c -i \"$WEEKLY_FOCUS_PROMPT\"; else copilot --allow-all -i \"$WEEKLY_FOCUS_PROMPT\"; fi'"
+        "zsh -lic 'source \"$WEEKLY_FOCUS_SCRIPT\"'"
     public static let cmuxCandidates = [
         "/Applications/cmux.app/Contents/Resources/bin/cmux",
         "/opt/homebrew/bin/cmux",
@@ -429,7 +457,7 @@ public enum CmuxFocusLauncher {
 
     public static func launch(
         todo: String,
-        brainRoot: String,
+        brainRoot: String = defaultLaunchBrainRoot(),
         commandOverride: String? = nil,
         focus: Bool = true
     ) throws {
@@ -460,7 +488,13 @@ public enum CmuxFocusLauncher {
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorMessage = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
+            if errorMessage?.contains("Broken pipe") == true && didLikelyCreateWorkspace(title: workspaceTitle(for: todo)) {
+                return
+            }
+
+            if !didLikelyCreateWorkspace(title: workspaceTitle(for: todo)) {
+                throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
+            }
         }
     }
 
@@ -479,15 +513,15 @@ public enum CmuxFocusLauncher {
             "cleanup() { rm -rf \(shellQuote(tempDirectory.path)); }",
             "trap cleanup EXIT",
             "prompt=$(cat \(shellQuote(promptPath.path)))",
-            "if alias c >/dev/null 2>&1; then",
-            "  c -i \"$prompt\"",
-            "else",
-            "  copilot --allow-all -i \"$prompt\"",
+            "if ! alias c >/dev/null 2>&1; then",
+            "  print -u2 'c alias is not available in zsh -lic'",
+            "  exit 127",
             "fi",
+            "c -i \"$prompt\"",
             ""
         ].joined(separator: "\n").write(to: scriptPath, atomically: true, encoding: .utf8)
 
-        return "zsh -lic \(shellQuote("source \(shellQuote(scriptPath.path))"))"
+        return "WEEKLY_FOCUS_SCRIPT=\(shellQuote(scriptPath.path)) \(copilotCommand)"
     }
 
     private static func workspaceTitle(for todo: String) -> String {
@@ -502,6 +536,43 @@ public enum CmuxFocusLauncher {
         }
 
         return "\(normalized.prefix(57))..."
+    }
+
+    public static func defaultLaunchBrainRoot() -> String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Brain")
+            .path
+    }
+
+    private static func didLikelyCreateWorkspace(title: String) -> Bool {
+        let command = buildCommand(
+            todo: "list",
+            brainRoot: defaultLaunchBrainRoot(),
+            commandOverride: "true",
+            focus: false
+        )
+        let process = Process()
+        let outputPipe = Pipe()
+
+        if command.executable == "/usr/bin/env" {
+            process.executableURL = URL(fileURLWithPath: command.executable)
+            process.arguments = ["cmux", "workspace", "list"]
+        } else {
+            process.executableURL = URL(fileURLWithPath: command.executable)
+            process.arguments = ["workspace", "list"]
+        }
+        process.standardOutput = outputPipe
+        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return false
+        }
+
+        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return output.contains(title) || output.contains(String(title.prefix(57)))
     }
 
     private static func shellQuote(_ value: String) -> String {
