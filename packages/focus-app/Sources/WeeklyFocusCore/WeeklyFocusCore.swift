@@ -613,36 +613,6 @@ public enum CmuxFocusLauncher {
             sanitized["CMUX_SOCKET_PASSWORD"] = password
         }
 
-        let socketPath = activeSocketPath(
-            environment,
-            homeDirectory: homeDirectory
-        )
-        if let socketPath {
-            sanitized["CMUX_SOCKET_PATH"] = socketPath
-        }
-
         return sanitized
-    }
-
-    private static func activeSocketPath(
-        _ environment: [String: String],
-        homeDirectory: URL
-    ) -> String? {
-        let lastSocketPath = homeDirectory
-            .appendingPathComponent(".local/state/cmux/last-socket-path")
-        let currentSocketPath = try? String(
-            contentsOf: lastSocketPath,
-            encoding: .utf8
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-        if currentSocketPath?.isEmpty == false {
-            return currentSocketPath
-        }
-
-        if let socketPath = environment["CMUX_SOCKET_PATH"],
-           !socketPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return socketPath
-        }
-
-        return nil
     }
 }

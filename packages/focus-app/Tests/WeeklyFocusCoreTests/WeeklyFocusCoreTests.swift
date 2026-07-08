@@ -210,17 +210,6 @@ final class WeeklyFocusCoreTests: XCTestCase {
         defer {
             try? FileManager.default.removeItem(at: directory)
         }
-        let stateDirectory = directory.appendingPathComponent(".local/state/cmux", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: stateDirectory,
-            withIntermediateDirectories: true
-        )
-        try "/tmp/active-cmux.sock\n".write(
-            to: stateDirectory.appendingPathComponent("last-socket-path"),
-            atomically: true,
-            encoding: .utf8
-        )
-
         let environment = CmuxFocusLauncher.cmuxProcessEnvironment(
             [
                 "HOME": directory.path,
@@ -228,6 +217,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
                 "CMUX_WORKSPACE_ID": "old-workspace",
                 "CMUX_SURFACE_ID": "old-surface",
                 "CMUX_TAB_ID": "old-tab",
+                "CMUX_SOCKET_PATH": "/tmp/inherited.sock",
                 "CMUX_SOCKET": "",
                 "CMUX_SOCKET_PASSWORD": "secret"
             ],
@@ -238,28 +228,9 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertNil(environment["CMUX_SURFACE_ID"])
         XCTAssertNil(environment["CMUX_TAB_ID"])
         XCTAssertNil(environment["CMUX_SOCKET"])
+        XCTAssertNil(environment["CMUX_SOCKET_PATH"])
         XCTAssertEqual(environment["CMUX_SOCKET_PASSWORD"], "secret")
-        XCTAssertEqual(environment["CMUX_SOCKET_PATH"], "/tmp/active-cmux.sock")
         XCTAssertEqual(environment["HOME"], directory.path)
-    }
-
-    func testCmuxProcessEnvironmentFallsBackToExplicitSocketPath() {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer {
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        let environment = CmuxFocusLauncher.cmuxProcessEnvironment(
-            [
-                "CMUX_WORKSPACE_ID": "old-workspace",
-                "CMUX_SOCKET_PATH": "/tmp/explicit.sock"
-            ],
-            homeDirectory: directory
-        )
-
-        XCTAssertNil(environment["CMUX_WORKSPACE_ID"])
-        XCTAssertEqual(environment["CMUX_SOCKET_PATH"], "/tmp/explicit.sock")
     }
 
     func testMarksSelectedTodoDoneInWeeklyNote() throws {
