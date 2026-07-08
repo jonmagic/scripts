@@ -61,30 +61,32 @@ cat >"$WEEKLY_NOTE" <<'MARKDOWN'
 ## Captured
 MARKDOWN
 
+UI_TODO="UI entered TODO $$"
+
 BRAIN_ROOT="$TMPDIR" "$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus" &
 APP_PID=$!
 
 for _ in {1..40}; do
-  if osascript -e 'tell application "System Events" to exists process "Weekly Focus"' 2>/dev/null | grep -q true; then
+  if ps -p "$APP_PID" >/dev/null 2>&1 && osascript -e 'tell application "System Events" to exists process "Weekly Focus"' 2>/dev/null | grep -q true; then
     break
   fi
   sleep 0.25
 done
 
-osascript <<'APPLESCRIPT'
-tell application "Weekly Focus" to activate
-delay 0.5
+osascript <<APPLESCRIPT
 tell application "System Events"
   tell process "Weekly Focus"
+    set frontmost to true
+    delay 0.5
     click text field 1 of window "Weekly Focus"
-    keystroke "UI entered TODO"
+    keystroke "$UI_TODO"
     key code 36
   end tell
 end tell
 APPLESCRIPT
 
 for _ in {1..20}; do
-  if grep -q 'UI entered TODO' "$WEEKLY_NOTE"; then
+  if grep -q "$UI_TODO" "$WEEKLY_NOTE"; then
     break
   fi
   sleep 0.25
@@ -92,6 +94,6 @@ done
 
 kill "$APP_PID" >/dev/null 2>&1 || true
 wait "$APP_PID" 2>/dev/null || true
-grep -q 'UI entered TODO' "$WEEKLY_NOTE"
+grep -q "$UI_TODO" "$WEEKLY_NOTE"
 
 echo "weekly-focus app self-test passed"

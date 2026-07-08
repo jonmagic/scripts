@@ -116,28 +116,101 @@ final class FocusRootView: NSView {
     }
 }
 
-final class TodoBodyField: NSTextField {
+final class TodoRowButton: NSButton {
     var todoIndex: Int = 0
 
     init(index: Int, title: String) {
         self.todoIndex = index
         super.init(frame: .zero)
-        stringValue = title
-        isEditable = false
+        self.title = title
         isBordered = false
-        drawsBackground = false
-        maximumNumberOfLines = 0
-        lineBreakMode = .byWordWrapping
-        allowsDefaultTighteningForTruncation = false
-        font = FocusFonts.todo(index: index)
-        textColor = FocusColors.text
+        alignment = .left
+        setButtonType(.momentaryChange)
+        attributedTitle = Self.attributedTitle(index: index, title: title)
+        cell?.wraps = true
+        cell?.lineBreakMode = .byWordWrapping
         translatesAutoresizingMaskIntoConstraints = false
-        preferredMaxLayoutWidth = 940
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:))))
+        widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
+        heightAnchor.constraint(equalToConstant: Self.height(for: title, index: index)).isActive = true
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
     }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: FocusLayout.rowWidth, height: Self.height(for: title, index: todoIndex))
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        sendConfiguredAction()
+    }
+
+    override func performClick(_ sender: Any?) {
+        sendConfiguredAction()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        sendConfiguredAction()
+        return true
+    }
+
+    @objc private func handleClick(_ sender: NSClickGestureRecognizer) {
+        sendConfiguredAction()
+    }
+
+    private func sendConfiguredAction() {
+        guard let action else {
+            return
+        }
+
+        NSApp.sendAction(action, to: target, from: self)
+    }
+
+    static func height(for title: String, index: Int) -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: FocusFonts.todo(index: index),
+            .paragraphStyle: paragraphStyle()
+        ]
+        let rect = NSString(string: "\(index + 1). \(title)").boundingRect(
+            with: NSSize(width: FocusLayout.rowWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+
+        return max(42, ceil(rect.height) + 6)
+    }
+
+    private static func attributedTitle(index: Int, title: String) -> NSAttributedString {
+        NSAttributedString(
+            string: "\(index + 1). \(title)",
+            attributes: [
+                .font: FocusFonts.todo(index: index),
+                .foregroundColor: FocusColors.text,
+                .paragraphStyle: paragraphStyle()
+            ]
+        )
+    }
+
+    private static func paragraphStyle() -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byWordWrapping
+        style.lineSpacing = 2
+        style.headIndent = FocusLayout.numberWidth + FocusLayout.columnGap
+        return style
+    }
+}
+
+enum FocusLayout {
+    static let numberWidth: CGFloat = 44
+    static let columnGap: CGFloat = 12
+    static let bodyWidth: CGFloat = 940
+    static let rowWidth: CGFloat = numberWidth + columnGap + bodyWidth
 }
 
 enum FocusFonts {
@@ -313,24 +386,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private func todoRow(index: Int, title: String) -> NSStackView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.alignment = .top
-        row.spacing = 12
-        row.addArrangedSubview(todoNumber(index: index))
-        row.addArrangedSubview(todoBody(index: index, title: title))
+        row.alignment = .leading
+        row.spacing = 0
+        row.addArrangedSubview(todoButton(index: index, title: title))
         return row
-    }
-
-    private func todoNumber(index: Int) -> NSTextField {
-        let label = NSTextField(labelWithString: "\(index + 1).")
-        label.font = FocusFonts.todo(index: index)
-        label.textColor = primaryTextColor
-        label.alignment = .right
-        label.isEditable = false
-        label.isBordered = false
-        label.drawsBackground = false
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        return label
     }
 
     private func overflowSection(_ todos: [String]) -> NSStackView {
@@ -367,20 +426,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         captureField.action = #selector(todoSubmitted(_:))
         captureField.delegate = self
         captureField.translatesAutoresizingMaskIntoConstraints = false
-        captureField.widthAnchor.constraint(equalToConstant: 940).isActive = true
+        captureField.widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
 
         row.addArrangedSubview(captureField)
         return row
     }
 
-    private func todoBody(index: Int, title: String) -> TodoBodyField {
-        let label = TodoBodyField(index: index, title: title)
-        label.textColor = primaryTextColor
-        label.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(todoLabelClicked(_:))))
-        label.font = FocusFonts.todo(index: index)
-        label.preferredMaxLayoutWidth = 940
-        label.widthAnchor.constraint(equalToConstant: 940).isActive = true
-        return label
+    private func todoButton(index: Int, title: String) -> TodoRowButton {
+        let button = TodoRowButton(index: index, title: title)
+        button.target = self
+        button.action = #selector(todoButtonPressed(_:))
+        return button
     }
 
     private func messageLabel(_ text: String) -> NSTextField {
@@ -408,15 +464,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         return label
     }
 
-    @objc private func todoLabelClicked(_ sender: NSClickGestureRecognizer) {
-        guard let label = sender.view as? TodoBodyField else {
-            return
-        }
-
+    @objc private func todoButtonPressed(_ sender: TodoRowButton) {
         if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
-            markDone(at: label.todoIndex)
+            markDone(at: sender.todoIndex)
         } else {
-            launchTodo(at: label.todoIndex)
+            launchTodo(at: sender.todoIndex)
         }
     }
 
