@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import WeeklyFocusCore
 
 private func printFocusAndExit() {
@@ -127,6 +128,101 @@ final class FocusRootView: NSView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = FocusColors.background.cgColor
         }
+    }
+}
+
+final class WeeklyNoteWatcher {
+    private let path: String
+    private let onChange: @MainActor @Sendable () -> Void
+    private let queue = DispatchQueue(label: "weekly-focus.weekly-note-watcher")
+    private var fileSource: DispatchSourceFileSystemObject?
+    private var directorySource: DispatchSourceFileSystemObject?
+    private var pendingReload: DispatchWorkItem?
+
+    init(path: String, onChange: @escaping @MainActor @Sendable () -> Void) {
+        self.path = path
+        self.onChange = onChange
+        watchFile()
+        watchDirectory()
+    }
+
+    deinit {
+        stop()
+    }
+
+    func stop() {
+        pendingReload?.cancel()
+        fileSource?.cancel()
+        directorySource?.cancel()
+        pendingReload = nil
+        fileSource = nil
+        directorySource = nil
+    }
+
+    private func watchFile() {
+        let descriptor = open(path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.attrib, .delete, .extend, .link, .rename, .revoke, .write],
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.scheduleReload()
+        }
+        source.setCancelHandler {
+            close(descriptor)
+        }
+        source.resume()
+        fileSource = source
+    }
+
+    private func watchDirectory() {
+        let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        let descriptor = open(directory, O_EVTONLY)
+        guard descriptor >= 0 else {
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.delete, .rename, .write],
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.scheduleReload()
+        }
+        source.setCancelHandler {
+            close(descriptor)
+        }
+        source.resume()
+        directorySource = source
+    }
+
+    private func scheduleReload() {
+        pendingReload?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.rewatchFile()
+            let callback = self.onChange
+            Task { @MainActor in
+                callback()
+            }
+        }
+        pendingReload = work
+        queue.asyncAfter(deadline: .now() + 0.20, execute: work)
+    }
+
+    private func rewatchFile() {
+        fileSource?.cancel()
+        fileSource = nil
+        watchFile()
     }
 }
 
@@ -373,6 +469,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private var window: NSWindow?
     private var snapshot: WeeklyFocusSnapshot?
     private var keyMonitor: Any?
+    private var weeklyNoteWatcher: WeeklyNoteWatcher?
+    private var weeklyNotePollTimer: Timer?
+    private var watchedWeeklyNotePath: String?
+    private var watchedWeeklyNoteContent: String?
     private var todoButtons: [TodoRowButton] = []
     private var isSubmittingTodo = false
     private let selfTestMode = CommandLine.arguments.contains("--self-test")
@@ -442,6 +542,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
         }
+        weeklyNoteWatcher?.stop()
+        weeklyNotePollTimer?.invalidate()
     }
 
     func windowDidChangeScreen(_ notification: Notification) {
@@ -552,11 +654,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         do {
             let snapshot = try WeeklyFocusReader().read(todoLimit: 5)
             self.snapshot = snapshot
+            watchWeeklyNote(at: snapshot.weeklyNotePath)
             render(snapshot: snapshot)
         } catch {
             snapshot = nil
             renderError(error)
         }
+    }
+
+    private func watchWeeklyNote(at path: String) {
+        watchedWeeklyNoteContent = weeklyNoteContent(path)
+        guard watchedWeeklyNotePath != path else {
+            return
+        }
+
+        weeklyNoteWatcher?.stop()
+        weeklyNotePollTimer?.invalidate()
+        watchedWeeklyNotePath = path
+        weeklyNoteWatcher = WeeklyNoteWatcher(path: path) { [weak self] in
+            self?.reload()
+        }
+        weeklyNotePollTimer = Timer.scheduledTimer(
+            withTimeInterval: 0.50,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.reloadIfWeeklyNoteChanged()
+            }
+        }
+    }
+
+    private func reloadIfWeeklyNoteChanged() {
+        guard let path = watchedWeeklyNotePath,
+              let content = weeklyNoteContent(path) else {
+            return
+        }
+
+        guard content != watchedWeeklyNoteContent else {
+            return
+        }
+
+        watchedWeeklyNoteContent = content
+        reload()
+    }
+
+    private func weeklyNoteContent(_ path: String) -> String? {
+        try? String(contentsOfFile: path, encoding: .utf8)
     }
 
     private func render(snapshot: WeeklyFocusSnapshot) {
@@ -917,6 +1060,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         alert.runModal()
     }
 
+    private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            reloadIfWeeklyNoteChanged()
+            if condition() {
+                return true
+            }
+
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        return condition()
+    }
+
     private func runSelfTest() {
         do {
             guard let window else {
@@ -934,7 +1091,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 throw WeeklyFocusError.launchFailed("self-test TODO entry did not refresh snapshot")
             }
 
-            let firstTodo = afterTodo.todos.first
+            if let externallyEditedTodo = afterTodo.todos.first {
+                try WeeklyFocusReader.markTodoDone(
+                    externallyEditedTodo,
+                    weeklyNotePath: afterTodo.weeklyNotePath
+                )
+                let reloaded = waitUntil(timeout: 3) {
+                    self.snapshot?.todos.first != externallyEditedTodo
+                }
+                if !reloaded {
+                    throw WeeklyFocusError.launchFailed("self-test external weekly note edit did not refresh snapshot")
+                }
+            }
+
+            let firstTodo = snapshot?.todos.first
             if firstTodo != nil {
                 markDone(at: 0)
                 let afterDone = try WeeklyFocusReader().read(todoLimit: 5)

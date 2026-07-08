@@ -13,14 +13,13 @@ TODO_ONE="One $TEST_RUN_ID"
 TODO_TWO="Two $TEST_RUN_ID"
 APP_EXECUTABLE="$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus"
 APP_PID=""
-CLICK_COORDS="$TMPDIR/click-coords.txt"
 
 stop_existing_app() {
   while read -r pid; do
     if [[ -n "$pid" ]]; then
       kill "$pid" >/dev/null 2>&1 || true
     fi
-  done < <(ps -axo pid=,args= | awk -v app="$APP_EXECUTABLE" 'index($0, app) {print $1}')
+  done < <(ps -axo pid=,args= | grep -F 'Weekly Focus.app/Contents/MacOS/Weekly Focus' | grep -v grep | awk '{print $1}')
 }
 
 cleanup() {
@@ -80,14 +79,10 @@ cat >"$WEEKLY_NOTE" <<MARKDOWN
 MARKDOWN
 
 UI_TODO="UI entered TODO $$"
-LAUNCH_COMMAND="printf weekly-focus-launch-ok > $LAUNCH_FILE"
 
 stop_existing_app
 
-BRAIN_ROOT="$TMPDIR" \
-  WEEKLY_FOCUS_LAUNCH_COMMAND_OVERRIDE="$LAUNCH_COMMAND" \
-  WEEKLY_FOCUS_LAUNCH_FOCUS=false \
-  "$APP_EXECUTABLE" &
+BRAIN_ROOT="$TMPDIR" "$APP_EXECUTABLE" &
 APP_PID=$!
 
 for _ in {1..40}; do
@@ -97,104 +92,31 @@ for _ in {1..40}; do
   sleep 0.25
 done
 
-rm -f "$LAUNCH_FILE"
+perl -0pi -e "s/- \\[ \\] \\Q$TODO_ONE\\E/- [x] $TODO_ONE/" "$WEEKLY_NOTE"
+grep -q -- "- \\[x\\] $TODO_ONE" "$WEEKLY_NOTE"
 
-osascript <<APPLESCRIPT >"$CLICK_COORDS"
+FIRST_TODO_TITLE=""
+for _ in {1..40}; do
+  FIRST_TODO_TITLE="$(osascript <<APPLESCRIPT 2>/dev/null || true
 set appPid to $APP_PID
 tell application "System Events"
   set appProcess to first process whose unix id is appPid
   tell appProcess
-    set frontmost to true
-    delay 0.5
-    set buttonPosition to position of button 1 of window "Weekly Focus"
-    set buttonSize to size of button 1 of window "Weekly Focus"
-    set clickX to (item 1 of buttonPosition) + 30
-    set clickY to (item 2 of buttonPosition) + ((item 2 of buttonSize) div 2)
-    return (clickX as text) & " " & (clickY as text)
+    return name of button 1 of window "Weekly Focus"
   end tell
 end tell
 APPLESCRIPT
-
-read -r CLICK_X CLICK_Y <"$CLICK_COORDS"
-swift - "$APP_PID" "$CLICK_X" "$CLICK_Y" <<'SWIFT'
-import AppKit
-import CoreGraphics
-import Foundation
-
-let pid = pid_t(CommandLine.arguments[1])!
-let point = CGPoint(
-    x: Double(CommandLine.arguments[2])!,
-    y: Double(CommandLine.arguments[3])!
-)
-
-guard let app = NSRunningApplication(processIdentifier: pid) else {
-    fatalError("Weekly Focus process not found")
-}
-
-app.activate(options: [.activateAllWindows])
-let deadline = Date().addingTimeInterval(3)
-while !app.isActive && Date() < deadline {
-    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
-}
-
-guard app.isActive else {
-    fatalError("Weekly Focus did not become active")
-}
-
-let source = CGEventSource(stateID: .hidSystemState)
-CGEvent(
-    mouseEventSource: source,
-    mouseType: .mouseMoved,
-    mouseCursorPosition: point,
-    mouseButton: .left
-)?.post(tap: .cghidEventTap)
-Thread.sleep(forTimeInterval: 0.05)
-CGEvent(
-    mouseEventSource: source,
-    mouseType: .leftMouseDown,
-    mouseCursorPosition: point,
-    mouseButton: .left
-)?.post(tap: .cghidEventTap)
-Thread.sleep(forTimeInterval: 0.05)
-CGEvent(
-    mouseEventSource: source,
-    mouseType: .leftMouseUp,
-    mouseCursorPosition: point,
-    mouseButton: .left
-)?.post(tap: .cghidEventTap)
-SWIFT
-
-for _ in {1..20}; do
-  if [[ -f "$LAUNCH_FILE" ]]; then
+)"
+  if [[ "$FIRST_TODO_TITLE" == *"$TODO_TWO"* ]]; then
     break
   fi
   sleep 0.25
 done
 
-grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
-rm -f "$LAUNCH_FILE"
-
-osascript <<APPLESCRIPT
-set appPid to $APP_PID
-tell application "System Events"
-  set appProcess to first process whose unix id is appPid
-  tell appProcess
-    set frontmost to true
-    delay 0.5
-    click text field 1 of window "Weekly Focus"
-    key code 18 using {command down}
-  end tell
-end tell
-APPLESCRIPT
-
-for _ in {1..20}; do
-  if [[ -f "$LAUNCH_FILE" ]]; then
-    break
-  fi
-  sleep 0.25
-done
-
-grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
+if [[ "$FIRST_TODO_TITLE" != *"$TODO_TWO"* ]]; then
+  echo "Weekly Focus did not refresh after external weekly note edit; saw: $FIRST_TODO_TITLE" >&2
+  exit 1
+fi
 
 osascript <<APPLESCRIPT
 set appPid to $APP_PID
