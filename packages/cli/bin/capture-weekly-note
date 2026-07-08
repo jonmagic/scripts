@@ -1,0 +1,54 @@
+#!/usr/bin/env bun
+/**
+ * capture-weekly-note: Append a rough commitment capture to the current weekly note.
+ *
+ * Usage:
+ *   capture-weekly-note "text" [--source SOURCE] [--brain-root PATH]
+ *   capture-weekly-note --text "text" [--source SOURCE] [--brain-root PATH]
+ */
+
+import { parseArgs } from "node:util"
+import { runCaptureWeeklyNote } from "../src/weekly-note-commitments.js"
+
+const { values, positionals } = parseArgs({
+  options: {
+    text: { type: "string" },
+    source: { type: "string" },
+    "brain-root": { type: "string" },
+    "weekly-note-path": { type: "string" },
+    help: { type: "boolean", short: "h" },
+  },
+  allowPositionals: true,
+})
+
+if (values.help) {
+  console.log(`
+Usage: capture-weekly-note "text" [options]
+       capture-weekly-note --text "text" [options]
+
+Options:
+  --text "text"            Capture text (required if not positional)
+  --source SOURCE          Optional source label or URL
+  --brain-root PATH        Override Brain root directory
+  --weekly-note-path PATH  Override the weekly note path
+  -h, --help               Show this help message
+`)
+  process.exit(0)
+}
+
+const positionalText = positionals.join(" ")
+const text = values.text ?? positionalText
+
+if (!text.trim()) {
+  console.error("Missing text. Use --help for usage information.")
+  process.exit(1)
+}
+
+const result = await runCaptureWeeklyNote({
+  brainRoot: values["brain-root"],
+  source: values.source,
+  text,
+  weeklyNotePath: values["weekly-note-path"],
+})
+
+console.log(result.line)

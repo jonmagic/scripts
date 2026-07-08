@@ -4,10 +4,13 @@ import * as path from "node:path"
 import * as vscode from "vscode"
 import {
   appendProjectReference,
+  appendWeeklyNoteCapture,
   appendWeeklyNoteTodo,
   createPathWikilinkForFile,
   createUidWikilinkForFile,
   extractMarkdownLevelTwoHeadings,
+  parseWeeklyNoteFocus,
+  type WeeklyNoteFocus,
 } from "@jonmagic/scripts-core"
 
 import { getWorkspaceCache } from "../cache/workspaceCache"
@@ -117,6 +120,82 @@ async function appendWeeklyTodo(): Promise<void> {
     await vscode.window.showInformationMessage(`Weekly TODO ${action}`)
   } catch (error) {
     await showActionError("Could not append Weekly Note TODO", error)
+  }
+}
+
+async function captureWeeklyNote(): Promise<void> {
+  const text = await vscode.window.showInputBox({
+    title: "Capture to Weekly Note",
+    prompt: "Rough commitment or follow-up to append under ## Captured",
+    placeHolder: "Follow up with @handle about the review ask",
+    validateInput: (value) => {
+      return value.trim() ? null : "Capture text is required"
+    },
+  })
+
+  if (text === undefined) {
+    return
+  }
+
+  const source = await vscode.window.showInputBox({
+    title: "Capture to Weekly Note",
+    prompt: "Optional source label or URL",
+    placeHolder: "Slack thread, meeting note, PR URL, or leave blank",
+  })
+
+  try {
+    const captureOptions: Parameters<typeof appendWeeklyNoteCapture>[0] = {
+      brainRoot: getBrainPath(),
+      text,
+    }
+
+    if (source?.trim()) {
+      captureOptions.source = source
+    }
+
+    await appendWeeklyNoteCapture(captureOptions)
+    await vscode.window.showInformationMessage("Weekly capture added")
+  } catch (error) {
+    await showActionError("Could not capture to Weekly Note", error)
+  }
+}
+
+function createWeeklyFocusItems(focus: WeeklyNoteFocus): vscode.QuickPickItem[] {
+  const waiting = focus.waiting.length > 0 ? focus.waiting.join("; ") : "(none)"
+  const capturedLabel = focus.capturedCount === 1 ? "item" : "items"
+
+  return [
+    {
+      label: "$(target) Now",
+      description: focus.now ?? "(none)",
+    },
+    {
+      label: "$(arrow-right) Next",
+      description: focus.next ?? "(none)",
+    },
+    {
+      label: "$(clock) Waiting",
+      description: waiting,
+    },
+    {
+      label: "$(inbox) Captured",
+      description: `${focus.capturedCount} unchecked ${capturedLabel}`,
+    },
+  ]
+}
+
+async function showWeeklyFocus(): Promise<void> {
+  try {
+    const focus = await parseWeeklyNoteFocus({
+      brainRoot: getBrainPath(),
+    })
+    await vscode.window.showQuickPick(createWeeklyFocusItems(focus), {
+      title: "Weekly Focus",
+      placeHolder: focus.weeklyNotePath,
+      matchOnDescription: true,
+    })
+  } catch (error) {
+    await showActionError("Could not show Weekly Focus", error)
   }
 }
 
@@ -347,6 +426,8 @@ export function registerTypedBrainActionCommands(
     ),
     vscode.commands.registerCommand("jonmagic.copyUidWikilink", copyUidWikilink),
     vscode.commands.registerCommand("jonmagic.appendWeeklyTodo", appendWeeklyTodo),
+    vscode.commands.registerCommand("jonmagic.captureWeeklyNote", captureWeeklyNote),
+    vscode.commands.registerCommand("jonmagic.showWeeklyFocus", showWeeklyFocus),
     vscode.commands.registerCommand(
       "jonmagic.addReferenceToProject",
       addReferenceToProject

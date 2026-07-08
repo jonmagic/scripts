@@ -44,6 +44,8 @@ Navigate between weeks using the toolbar buttons:
 - **Brain: Copy Path Wikilink** - Copy a path-based wikilink for the selected or active Brain Markdown file
 - **Brain: Copy UID Wikilink** - Copy a UID wikilink for the selected or active Brain Markdown file; fails if the file has no `uid` frontmatter
 - **Brain: Append Weekly Note TODO** - Append a `- [ ]` item under `## TODO` in the current Weekly Note; fails if the weekly note or heading is missing
+- **Brain: Capture to Weekly Note** - Append a rough timestamped capture with optional source under `## Captured` in the current Weekly Note
+- **Brain: Show Weekly Focus** - Show a tiny Now/Next/Waiting/Captured snapshot from the current Weekly Note
 - **Brain: Add Reference to Project** - Add the selected Brain file or a URL to an existing Project `references.md` under a chosen `##` heading
 - **Brain: Rebuild Index** - Rebuild the Brain Markdown, UID, and backlink index used by wikilinks and navigation
 - **Brain: Refresh Context Workbench** - Refresh the right-side context view for the active Brain file
@@ -85,6 +87,8 @@ Resolved wikilinks become clickable preview links. Unresolved wikilinks stay vis
 | `Brain: Copy Path Wikilink` | Copy a path-based wikilink for the selected or active Brain Markdown file |
 | `Brain: Copy UID Wikilink` | Copy a UID wikilink for the selected or active Brain Markdown file |
 | `Brain: Append Weekly Note TODO` | Append a lightweight checkbox TODO to the current Weekly Note |
+| `Brain: Capture to Weekly Note` | Append a rough timestamped capture with optional source under `## Captured` in the current Weekly Note |
+| `Brain: Show Weekly Focus` | Show a tiny Now/Next/Waiting/Captured snapshot from the current Weekly Note |
 | `Brain: Add Reference to Project` | Add a selected Brain file or URL to an existing Project `references.md` heading |
 | `Brain: Rebuild Index` | Rebuild the Brain Markdown, UID, and backlink index |
 | `Brain: Refresh Context Workbench` | Refresh the right-side context view for the active Brain file |

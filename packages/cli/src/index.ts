@@ -6,3 +6,10 @@ export type {
 } from "./archive-meeting.js"
 
 export { runCreateDailyProjectNote as createDailyProjectNote } from "./create-daily-project-note.js"
+export {
+  formatWeeklyFocus,
+  runCaptureWeeklyNote,
+  runWeeklyFocus,
+  type CaptureWeeklyNoteCliOptions,
+  type WeeklyFocusCliOptions,
+} from "./weekly-note-commitments.js"

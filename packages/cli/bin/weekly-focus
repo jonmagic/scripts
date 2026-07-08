@@ -1,0 +1,37 @@
+#!/usr/bin/env bun
+/**
+ * weekly-focus: Print a low-noise focus view from the current weekly note.
+ *
+ * Usage:
+ *   weekly-focus [--brain-root PATH]
+ */
+
+import { parseArgs } from "node:util"
+import { formatWeeklyFocus, runWeeklyFocus } from "../src/weekly-note-commitments.js"
+
+const { values } = parseArgs({
+  options: {
+    "brain-root": { type: "string" },
+    "weekly-note-path": { type: "string" },
+    help: { type: "boolean", short: "h" },
+  },
+})
+
+if (values.help) {
+  console.log(`
+Usage: weekly-focus [options]
+
+Options:
+  --brain-root PATH        Override Brain root directory
+  --weekly-note-path PATH  Override the weekly note path
+  -h, --help               Show this help message
+`)
+  process.exit(0)
+}
+
+const focus = await runWeeklyFocus({
+  brainRoot: values["brain-root"],
+  weeklyNotePath: values["weekly-note-path"],
+})
+
+console.log(formatWeeklyFocus(focus))

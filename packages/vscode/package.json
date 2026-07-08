@@ -24,6 +24,8 @@
     "onCommand:jonmagic.copyPathWikilink",
     "onCommand:jonmagic.copyUidWikilink",
     "onCommand:jonmagic.appendWeeklyTodo",
+    "onCommand:jonmagic.captureWeeklyNote",
+    "onCommand:jonmagic.showWeeklyFocus",
     "onCommand:jonmagic.addReferenceToProject",
     "onCommand:jonmagic.rebuildIndex",
     "onView:brainWeekView",
@@ -80,6 +82,16 @@
       {
         "command": "jonmagic.appendWeeklyTodo",
         "title": "Brain: Append Weekly Note TODO"
+      },
+      {
+        "command": "jonmagic.captureWeeklyNote",
+        "title": "Brain: Capture to Weekly Note",
+        "icon": "$(add)"
+      },
+      {
+        "command": "jonmagic.showWeeklyFocus",
+        "title": "Brain: Show Weekly Focus",
+        "icon": "$(target)"
       },
       {
         "command": "jonmagic.addReferenceToProject",
@@ -243,6 +255,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "jonmagic.captureWeeklyNote",
+          "when": "view == brainWeekView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "jonmagic.showWeeklyFocus",
+          "when": "view == brainWeekView",
+          "group": "navigation@0.5"
+        },
         {
           "command": "jonmagic.previousWeek",
           "when": "view == brainWeekView && jonmagic.hasPreviousWeek",

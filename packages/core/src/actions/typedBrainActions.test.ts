@@ -6,11 +6,13 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 import {
+  appendWeeklyNoteCapture,
   appendProjectReference,
   appendWeeklyNoteTodo,
   createPathWikilinkForFile,
   createUidWikilinkForFile,
   extractMarkdownLevelTwoHeadings,
+  parseWeeklyNoteFocus,
   parseLocalDateYYYYMMDD,
 } from "./typedBrainActions.js"
 
@@ -140,6 +142,171 @@ describe("typed Brain actions", () => {
         text: "Missing note task",
       })
     ).rejects.toThrow("Weekly note not found")
+  })
+
+  test("appends captured items after TODO with a deterministic timestamp and source", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(
+      weeklyPath,
+      "# Week of 2026-07-05\n\n## TODO\n- [ ] Existing task\n\n## Mantra\n"
+    )
+
+    const result = await appendWeeklyNoteCapture({
+      brainRoot,
+      now: new Date(2026, 6, 7, 20, 34),
+      source: "slack://thread",
+      text: "Follow up even if the text says source: repo",
+    })
+
+    const content = await fs.readFile(weeklyPath, "utf8")
+    expect(result.line).toBe(
+      "- [ ] 2026-07-07 20:34 Follow up even if the text says source: repo (source: slack://thread)"
+    )
+    expect(content.indexOf("## Captured")).toBeGreaterThan(
+      content.indexOf("- [ ] Existing task")
+    )
+    expect(content.indexOf("## Captured")).toBeLessThan(
+      content.indexOf("## Mantra")
+    )
+    expect(content).toContain(result.line)
+  })
+
+  test("creates Captured after TODO when Mantra is absent", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(
+      weeklyPath,
+      "# Week of 2026-07-05\n\n## TODO\n- [ ] Existing task\n\n## Schedule\n"
+    )
+
+    await appendWeeklyNoteCapture({
+      brainRoot,
+      now: new Date(2026, 6, 7, 8, 5),
+      text: "Capture without mantra",
+    })
+
+    const content = await fs.readFile(weeklyPath, "utf8")
+    expect(content.indexOf("## Captured")).toBeGreaterThan(
+      content.indexOf("- [ ] Existing task")
+    )
+    expect(content.indexOf("## Captured")).toBeLessThan(
+      content.indexOf("## Schedule")
+    )
+    expect(content).toContain("- [ ] 2026-07-07 08:05 Capture without mantra")
+  })
+
+  test("creates Captured at the end when TODO is absent", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(weeklyPath, "# Week of 2026-07-05\n\n## Schedule\n")
+
+    await appendWeeklyNoteCapture({
+      brainRoot,
+      now: new Date(2026, 6, 7, 9, 1),
+      text: "Capture without TODO",
+    })
+
+    const content = await fs.readFile(weeklyPath, "utf8")
+    expect(content.endsWith("## Captured\n- [ ] 2026-07-07 09:01 Capture without TODO\n")).toBe(true)
+  })
+
+  test("always appends captured items even when text repeats", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(weeklyPath, "# Week of 2026-07-05\n\n## TODO\n")
+
+    await appendWeeklyNoteCapture({
+      brainRoot,
+      now: new Date(2026, 6, 7, 10, 0),
+      text: "Repeat capture",
+    })
+    await appendWeeklyNoteCapture({
+      brainRoot,
+      now: new Date(2026, 6, 7, 10, 1),
+      text: "Repeat capture",
+    })
+
+    const content = await fs.readFile(weeklyPath, "utf8")
+    expect(content.match(/Repeat capture/g)?.length).toBe(2)
+  })
+
+  test("parses a sparse focus model from weekly note sections", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(
+      weeklyPath,
+      [
+        "# Week of 2026-07-05",
+        "",
+        "## TODO",
+        "- [x] Done task",
+        "- [ ] Current task",
+        "- [ ] Next task",
+        "",
+        "## Captured",
+        "- [ ] 2026-07-07 20:34 Rough commitment",
+        "- [x] 2026-07-07 20:35 Already handled",
+        "",
+        "## Waiting",
+        "- [ ] Waiting on review",
+        "",
+        "## Schedule",
+        "- [ ] 0900 Scheduled item should not count",
+        "",
+      ].join("\n")
+    )
+
+    const focus = await parseWeeklyNoteFocus({ brainRoot })
+
+    expect(focus.now).toBe("Current task")
+    expect(focus.next).toBe("Next task")
+    expect(focus.waiting).toEqual(["Waiting on review"])
+    expect(focus.capturedCount).toBe(1)
+    expect(focus.weeklyNotePath).toBe(await fs.realpath(weeklyPath))
+  })
+
+  test("parses empty focus when optional sections are absent", async () => {
+    const brainRoot = await createBrainRoot()
+    const weeklyPath = path.join(
+      brainRoot,
+      "Weekly Notes",
+      "Week of 2026-07-05.md"
+    )
+    await fs.mkdir(path.dirname(weeklyPath), { recursive: true })
+    await fs.writeFile(weeklyPath, "# Week of 2026-07-05\n\n## Schedule\n")
+
+    const focus = await parseWeeklyNoteFocus({ brainRoot })
+
+    expect(focus.now).toBeUndefined()
+    expect(focus.next).toBeUndefined()
+    expect(focus.waiting).toEqual([])
+    expect(focus.capturedCount).toBe(0)
   })
 
   test("extracts level-two headings and appends project references under a selected heading", async () => {

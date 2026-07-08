@@ -7,10 +7,12 @@
   "types": "./dist/index.d.ts",
   "bin": {
     "archive-meeting": "./bin/archive-meeting",
+    "capture-weekly-note": "./bin/capture-weekly-note",
     "list-recent-meetings": "./bin/list-recent-meetings",
     "skill-manager": "./bin/skill-manager",
     "sm": "./bin/skill-manager",
-    "create-daily-project-note": "./bin/create-daily-project-note"
+    "create-daily-project-note": "./bin/create-daily-project-note",
+    "weekly-focus": "./bin/weekly-focus"
   },
   "scripts": {
     "build": "bun tsc -p tsconfig.json",

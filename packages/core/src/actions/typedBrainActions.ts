@@ -36,6 +36,37 @@ export interface AppendWeeklyNoteTodoResult {
   alreadyPresent: boolean
 }
 
+export interface AppendWeeklyNoteCaptureOptions {
+  brainRoot?: string
+  now?: Date
+  source?: string
+  text: string
+  weeklyNotePath?: string
+}
+
+export interface AppendWeeklyNoteCaptureResult {
+  brainRoot: string
+  weeklyNotePath: string
+  line: string
+  updated: true
+}
+
+export interface ParseWeeklyNoteFocusOptions {
+  brainRoot?: string
+  date?: Date
+  waitingLimit?: number
+  weeklyNotePath?: string
+}
+
+export interface WeeklyNoteFocus {
+  brainRoot: string
+  weeklyNotePath: string
+  now?: string
+  next?: string
+  waiting: string[]
+  capturedCount: number
+}
+
 export interface AppendProjectReferenceOptions {
   brainRoot?: string
   referencesPath: string
@@ -145,6 +176,24 @@ async function assertMarkdownFile(filePath: string, label: string): Promise<void
   }
 }
 
+async function writeFileAtomically(filePath: string, content: string): Promise<void> {
+  const directory = path.dirname(filePath)
+  const basename = path.basename(filePath)
+  const tempPath = path.join(
+    directory,
+    `.${basename}.${process.pid}.${Date.now()}.tmp`
+  )
+
+  try {
+    const stat = await fs.stat(filePath)
+    await fs.writeFile(tempPath, content, { mode: stat.mode })
+    await fs.rename(tempPath, filePath)
+  } catch (error) {
+    await fs.rm(tempPath, { force: true })
+    throw error
+  }
+}
+
 function normalizeSingleLineText(text: string, label: string): string {
   const normalized = text.replace(/\s+/g, " ").trim()
 
@@ -160,6 +209,44 @@ function startOfWeekSunday(date: Date): Date {
   weekStart.setHours(0, 0, 0, 0)
   weekStart.setDate(weekStart.getDate() - weekStart.getDay())
   return weekStart
+}
+
+async function resolveWeeklyNote(
+  options: {
+    brainRoot?: string
+    date?: Date
+    weeklyNotePath?: string
+  },
+  label = "Weekly note"
+): Promise<ResolvedInsideBrainRoot> {
+  const brainRoot = await resolveBrainRoot(options.brainRoot)
+  const date = options.date ?? new Date()
+  const weekStart = startOfWeekSunday(date)
+  const defaultWeeklyPath = path.join(
+    brainRoot,
+    "Weekly Notes",
+    `Week of ${formatLocalDateYYYYMMDD(weekStart)}.md`
+  )
+  const weeklyNotePath = options.weeklyNotePath ?? defaultWeeklyPath
+  const resolved = await resolveInsideBrainRoot(brainRoot, weeklyNotePath, label)
+
+  if (!resolved.relativePath.startsWith("Weekly Notes/")) {
+    throw new Error(
+      `Weekly note must be inside Weekly Notes: ${resolved.relativePath}`
+    )
+  }
+
+  try {
+    await assertMarkdownFile(resolved.absolutePath, label)
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("ENOENT")) {
+      throw new Error(`Weekly note not found: ${weeklyNotePath}`)
+    }
+
+    throw error
+  }
+
+  return resolved
 }
 
 function findSectionBounds(
@@ -184,6 +271,24 @@ function findSectionBounds(
   return { headingIndex, endIndex }
 }
 
+function findOptionalSectionBounds(
+  lines: string[],
+  headingLine: string
+): { headingIndex: number; endIndex: number } | null {
+  try {
+    return findSectionBounds(lines, headingLine)
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === `Heading "${headingLine.replace(/^## /, "")}" not found`
+    ) {
+      return null
+    }
+
+    throw error
+  }
+}
+
 function insertBeforeSectionTrailingBlank(
   lines: string[],
   sectionStartIndex: number,
@@ -200,6 +305,43 @@ function insertBeforeSectionTrailingBlank(
   }
 
   lines.splice(insertionIndex, 0, line)
+}
+
+function insertNewSectionBefore(
+  lines: string[],
+  beforeIndex: number,
+  headingLine: string,
+  firstLine: string
+): void {
+  let insertionIndex = beforeIndex
+
+  while (insertionIndex > 0 && lines[insertionIndex - 1]?.trim() === "") {
+    insertionIndex -= 1
+  }
+
+  const removedBlankCount = beforeIndex - insertionIndex
+  lines.splice(insertionIndex, removedBlankCount, "", headingLine, firstLine, "")
+}
+
+function uncheckedSectionItems(
+  lines: string[],
+  headingLine: string
+): string[] {
+  const section = findOptionalSectionBounds(lines, headingLine)
+  if (!section) {
+    return []
+  }
+
+  return lines
+    .slice(section.headingIndex + 1, section.endIndex)
+    .map((line) => line.match(/^- \[ \] (.+?)\s*$/)?.[1])
+    .filter((item): item is string => item !== undefined)
+}
+
+function formatLocalTimeHHMM(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, "0")
+  const minutes = String(date.getMinutes()).padStart(2, "0")
+  return `${hours}:${minutes}`
 }
 
 export function parseLocalDateYYYYMMDD(input: string): Date {
@@ -267,36 +409,7 @@ export async function createUidWikilinkForFile(
 export async function appendWeeklyNoteTodo(
   options: AppendWeeklyNoteTodoOptions
 ): Promise<AppendWeeklyNoteTodoResult> {
-  const brainRoot = await resolveBrainRoot(options.brainRoot)
-  const date = options.date ?? new Date()
-  const weekStart = startOfWeekSunday(date)
-  const defaultWeeklyPath = path.join(
-    brainRoot,
-    "Weekly Notes",
-    `Week of ${formatLocalDateYYYYMMDD(weekStart)}.md`
-  )
-  const weeklyNotePath = options.weeklyNotePath ?? defaultWeeklyPath
-  const resolved = await resolveInsideBrainRoot(
-    brainRoot,
-    weeklyNotePath,
-    "Weekly note"
-  )
-
-  if (!resolved.relativePath.startsWith("Weekly Notes/")) {
-    throw new Error(
-      `Weekly note must be inside Weekly Notes: ${resolved.relativePath}`
-    )
-  }
-
-  try {
-    await assertMarkdownFile(resolved.absolutePath, "Weekly note")
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("ENOENT")) {
-      throw new Error(`Weekly note not found: ${weeklyNotePath}`)
-    }
-
-    throw error
-  }
+  const resolved = await resolveWeeklyNote(options)
 
   const todoText = normalizeSingleLineText(options.text, "TODO text")
   const line = `- [ ] ${todoText}`
@@ -309,7 +422,7 @@ export async function appendWeeklyNoteTodo(
 
   if (alreadyPresent) {
     return {
-      brainRoot,
+      brainRoot: resolved.brainRoot,
       weeklyNotePath: resolved.absolutePath,
       line,
       updated: false,
@@ -318,15 +431,103 @@ export async function appendWeeklyNoteTodo(
   }
 
   insertBeforeSectionTrailingBlank(lines, headingIndex, endIndex, line)
-  await fs.writeFile(resolved.absolutePath, lines.join("\n"))
+  await writeFileAtomically(resolved.absolutePath, lines.join("\n"))
 
   return {
-    brainRoot,
+    brainRoot: resolved.brainRoot,
     weeklyNotePath: resolved.absolutePath,
     line,
     updated: true,
     alreadyPresent: false,
   }
+}
+
+export async function appendWeeklyNoteCapture(
+  options: AppendWeeklyNoteCaptureOptions
+): Promise<AppendWeeklyNoteCaptureResult> {
+  const now = options.now ?? new Date()
+  const resolveOptions: {
+    brainRoot?: string
+    date: Date
+    weeklyNotePath?: string
+  } = { date: now }
+
+  if (options.brainRoot !== undefined) {
+    resolveOptions.brainRoot = options.brainRoot
+  }
+  if (options.weeklyNotePath !== undefined) {
+    resolveOptions.weeklyNotePath = options.weeklyNotePath
+  }
+
+  const resolved = await resolveWeeklyNote(resolveOptions)
+  const text = normalizeSingleLineText(options.text, "Capture text")
+  const source = options.source
+    ? normalizeSingleLineText(options.source, "Capture source")
+    : undefined
+  const timestamp = `${formatLocalDateYYYYMMDD(now)} ${formatLocalTimeHHMM(now)}`
+  const line = source
+    ? `- [ ] ${timestamp} ${text} (source: ${source})`
+    : `- [ ] ${timestamp} ${text}`
+  const content = await fs.readFile(resolved.absolutePath, "utf8")
+  const lines = content.split(/\r?\n/)
+  const capturedSection = findOptionalSectionBounds(lines, "## Captured")
+
+  if (capturedSection) {
+    insertBeforeSectionTrailingBlank(
+      lines,
+      capturedSection.headingIndex,
+      capturedSection.endIndex,
+      line
+    )
+  } else {
+    const todoSection = findOptionalSectionBounds(lines, "## TODO")
+    insertNewSectionBefore(
+      lines,
+      todoSection?.endIndex ?? lines.length,
+      "## Captured",
+      line
+    )
+  }
+
+  await writeFileAtomically(resolved.absolutePath, lines.join("\n"))
+
+  return {
+    brainRoot: resolved.brainRoot,
+    weeklyNotePath: resolved.absolutePath,
+    line,
+    updated: true,
+  }
+}
+
+export async function parseWeeklyNoteFocus(
+  options: ParseWeeklyNoteFocusOptions = {}
+): Promise<WeeklyNoteFocus> {
+  const resolved = await resolveWeeklyNote(options)
+  const content = await fs.readFile(resolved.absolutePath, "utf8")
+  const lines = content.split(/\r?\n/)
+  const todos = uncheckedSectionItems(lines, "## TODO")
+  const waitingLimit = options.waitingLimit ?? 3
+  const waiting = uncheckedSectionItems(lines, "## Waiting").slice(
+    0,
+    Math.max(0, waitingLimit)
+  )
+  const capturedCount = uncheckedSectionItems(lines, "## Captured").length
+
+  const focus: WeeklyNoteFocus = {
+    brainRoot: resolved.brainRoot,
+    weeklyNotePath: resolved.absolutePath,
+    waiting,
+    capturedCount,
+  }
+
+  if (todos[0] !== undefined) {
+    focus.now = todos[0]
+  }
+  if (todos[1] !== undefined) {
+    focus.next = todos[1]
+  }
+
+  return focus
 }
 
 export function extractMarkdownLevelTwoHeadings(content: string): string[] {
@@ -379,7 +580,7 @@ export async function appendProjectReference(
   }
 
   insertBeforeSectionTrailingBlank(lines, headingIndex, endIndex, line)
-  await fs.writeFile(resolved.absolutePath, lines.join("\n"))
+  await writeFileAtomically(resolved.absolutePath, lines.join("\n"))
 
   return {
     brainRoot: resolved.brainRoot,
