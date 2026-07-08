@@ -32,6 +32,55 @@ if CommandLine.arguments.contains("--self-test-copilot-launch") {
     }
 }
 
+let requestedAppearanceName: NSAppearance.Name? = {
+    guard let appearanceIndex = CommandLine.arguments.firstIndex(of: "--appearance"),
+          CommandLine.arguments.indices.contains(appearanceIndex + 1) else {
+        return nil
+    }
+
+    return CommandLine.arguments[appearanceIndex + 1] == "dark"
+        ? NSAppearance.Name.darkAqua
+        : NSAppearance.Name.aqua
+}()
+
+enum FocusColors {
+    static let background = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x0d / 255, green: 0x11 / 255, blue: 0x17 / 255, alpha: 1)
+            : NSColor(red: 0xfe / 255, green: 0xfc / 255, blue: 0xf9 / 255, alpha: 1)
+    }
+
+    static let text = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xc9 / 255, green: 0xd1 / 255, blue: 0xd9 / 255, alpha: 1)
+            : NSColor(red: 0x11 / 255, green: 0x11 / 255, blue: 0x11 / 255, alpha: 1)
+    }
+
+    static let muted = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x8b / 255, green: 0x94 / 255, blue: 0x9e / 255, alpha: 1)
+            : NSColor(red: 0x66 / 255, green: 0x66 / 255, blue: 0x66 / 255, alpha: 1)
+    }
+
+    static let fieldBackground = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x2d / 255, green: 0x2d / 255, blue: 0x2d / 255, alpha: 1)
+            : .white
+    }
+
+    static let fieldBorder = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x44 / 255, green: 0x44 / 255, blue: 0x44 / 255, alpha: 1)
+            : NSColor(red: 0xcc / 255, green: 0xcc / 255, blue: 0xcc / 255, alpha: 1)
+    }
+
+    static let accent = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xff / 255, green: 0x6b / 255, blue: 0x57 / 255, alpha: 1)
+            : NSColor(red: 0xc4 / 255, green: 0x3e / 255, blue: 0x2a / 255, alpha: 1)
+    }
+}
+
 final class FocusWindow: NSWindow {
     override var canBecomeKey: Bool {
         true
@@ -61,7 +110,51 @@ final class FocusRootView: NSView {
     }
 
     private func updateAppearance() {
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = FocusColors.background.cgColor
+        }
+    }
+}
+
+final class TodoBodyField: NSTextField {
+    var todoIndex: Int = 0
+
+    init(index: Int, title: String) {
+        self.todoIndex = index
+        super.init(frame: .zero)
+        stringValue = title
+        isEditable = false
+        isBordered = false
+        drawsBackground = false
+        maximumNumberOfLines = 0
+        lineBreakMode = .byWordWrapping
+        allowsDefaultTighteningForTruncation = false
+        font = FocusFonts.todo(index: index)
+        textColor = FocusColors.text
+        translatesAutoresizingMaskIntoConstraints = false
+        preferredMaxLayoutWidth = 940
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+}
+
+enum FocusFonts {
+    static func todo(index: Int) -> NSFont {
+        named("Avenir Next", size: index == 0 ? 30 : 28, weight: index == 0 ? .semibold : .medium)
+    }
+
+    static func overflow(index: Int) -> NSFont {
+        named("Avenir Next", size: CGFloat(Swift.max(13, 18 - index)), weight: .regular)
+    }
+
+    static func input() -> NSFont {
+        named("Avenir Next", size: 24, weight: .regular)
+    }
+
+    private static func named(_ name: String, size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size, weight: weight)
     }
 }
 
@@ -76,16 +169,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private let contentStack = NSStackView()
     private let captureField = NSTextField()
 
-    private var backgroundColor: NSColor {
-        NSColor.windowBackgroundColor
-    }
-
     private var primaryTextColor: NSColor {
-        NSColor.labelColor
+        FocusColors.text
     }
 
     private var secondaryTextColor: NSColor {
-        NSColor.secondaryLabelColor
+        FocusColors.muted
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -127,7 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private func createWindow() {
         let screen = NSScreen.main ?? NSScreen.screens.first
-        let frame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         let window = FocusWindow(
             contentRect: frame,
             styleMask: [.borderless, .resizable],
@@ -136,35 +225,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             screen: screen
         )
         window.title = "Weekly Focus"
+        window.isOpaque = true
+        window.hasShadow = false
+        window.backgroundColor = FocusColors.background
         window.collectionBehavior = [.canJoinAllSpaces]
         window.isMovableByWindowBackground = true
         window.delegate = self
-        window.contentView = buildRootView()
+        window.contentView = buildRootView(frame: NSRect(origin: .zero, size: frame.size))
         window.makeKeyAndOrderFront(nil)
         window.makeMain()
         NSApp.activate(ignoringOtherApps: true)
         self.window = window
     }
 
-    private func buildRootView() -> NSView {
-        let root = FocusRootView()
+    private func buildRootView(frame: NSRect) -> NSView {
+        let root = FocusRootView(frame: frame)
+        root.autoresizingMask = [.width, .height]
 
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
-        container.spacing = 16
+        container.spacing = 18
         container.translatesAutoresizingMaskIntoConstraints = false
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 12
+        contentStack.spacing = 16
 
         container.addArrangedSubview(contentStack)
         root.addSubview(container)
 
         NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 80),
-            container.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -80),
+            container.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 72),
+            container.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -72),
             container.centerYAnchor.constraint(equalTo: root.centerYAnchor),
             container.topAnchor.constraint(greaterThanOrEqualTo: root.topAnchor, constant: 60),
             container.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -60)
@@ -220,11 +313,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private func todoRow(index: Int, title: String) -> NSStackView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.alignment = .centerY
+        row.alignment = .top
         row.spacing = 12
-        row.addArrangedSubview(todoButton(index: index, title: title))
-        row.addArrangedSubview(doneButton(index: index))
+        row.addArrangedSubview(todoNumber(index: index))
+        row.addArrangedSubview(todoBody(index: index, title: title))
         return row
+    }
+
+    private func todoNumber(index: Int) -> NSTextField {
+        let label = NSTextField(labelWithString: "\(index + 1).")
+        label.font = FocusFonts.todo(index: index)
+        label.textColor = primaryTextColor
+        label.alignment = .right
+        label.isEditable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        return label
     }
 
     private func overflowSection(_ todos: [String]) -> NSStackView {
@@ -252,46 +358,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         row.spacing = 0
 
         captureField.placeholderString = ""
-        captureField.font = NSFont.systemFont(ofSize: 28, weight: .regular)
+        captureField.font = FocusFonts.input()
         captureField.textColor = primaryTextColor
-        captureField.backgroundColor = NSColor.controlBackgroundColor
+        captureField.backgroundColor = FocusColors.fieldBackground
+        captureField.layer?.borderColor = FocusColors.fieldBorder.cgColor
         captureField.focusRingType = .default
         captureField.target = self
         captureField.action = #selector(todoSubmitted(_:))
         captureField.delegate = self
         captureField.translatesAutoresizingMaskIntoConstraints = false
-        captureField.widthAnchor.constraint(greaterThanOrEqualToConstant: 980).isActive = true
+        captureField.widthAnchor.constraint(equalToConstant: 940).isActive = true
 
         row.addArrangedSubview(captureField)
         return row
     }
 
-    private func todoButton(index: Int, title: String) -> NSButton {
-        let button = NSButton(title: "\(index + 1). \(title)", target: self, action: #selector(todoButtonPressed(_:)))
-        button.tag = index
-        button.isBordered = false
-        button.font = NSFont.systemFont(ofSize: 34, weight: index == 0 ? .bold : .medium)
-        button.alignment = .left
-        button.contentTintColor = primaryTextColor
-        button.setButtonType(.momentaryPushIn)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 900).isActive = true
-        return button
-    }
-
-    private func doneButton(index: Int) -> NSButton {
-        let button = NSButton(title: "✓", target: self, action: #selector(doneButtonPressed(_:)))
-        button.tag = index
-        button.isBordered = false
-        button.font = NSFont.systemFont(ofSize: 22, weight: .semibold)
-        button.contentTintColor = secondaryTextColor
-        button.setButtonType(.momentaryPushIn)
-        return button
+    private func todoBody(index: Int, title: String) -> TodoBodyField {
+        let label = TodoBodyField(index: index, title: title)
+        label.textColor = primaryTextColor
+        label.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(todoLabelClicked(_:))))
+        label.font = FocusFonts.todo(index: index)
+        label.preferredMaxLayoutWidth = 940
+        label.widthAnchor.constraint(equalToConstant: 940).isActive = true
+        return label
     }
 
     private func messageLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 30, weight: .medium)
+        label.font = FocusFonts.todo(index: 0)
         label.textColor = primaryTextColor
         label.maximumNumberOfLines = 0
         return label
@@ -307,19 +401,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private func overflowLabel(_ text: String, index: Int) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: CGFloat(Swift.max(13, 20 - index)), weight: .regular)
-        let alpha = Swift.max(0.10, 0.32 - (Double(index) * 0.035))
+        label.font = FocusFonts.overflow(index: index)
+        let alpha = Swift.max(0.10, 0.38 - (Double(index) * 0.035))
         label.textColor = secondaryTextColor.withAlphaComponent(alpha)
         label.maximumNumberOfLines = 1
         return label
     }
 
-    @objc private func todoButtonPressed(_ sender: NSButton) {
-        launchTodo(at: sender.tag)
-    }
+    @objc private func todoLabelClicked(_ sender: NSClickGestureRecognizer) {
+        guard let label = sender.view as? TodoBodyField else {
+            return
+        }
 
-    @objc private func doneButtonPressed(_ sender: NSButton) {
-        markDone(at: sender.tag)
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            markDone(at: label.todoIndex)
+        } else {
+            launchTodo(at: label.todoIndex)
+        }
     }
 
     @objc private func todoSubmitted(_ sender: Any) {
@@ -522,6 +620,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 }
 
 let app = NSApplication.shared
+if let requestedAppearanceName {
+    app.appearance = NSAppearance(named: requestedAppearanceName)
+}
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()

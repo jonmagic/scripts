@@ -488,13 +488,11 @@ public enum CmuxFocusLauncher {
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let errorMessage = String(data: errorData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if errorMessage?.contains("Broken pipe") == true && didLikelyCreateWorkspace(title: workspaceTitle(for: todo)) {
+            if errorMessage?.contains("Broken pipe") == true {
                 return
             }
 
-            if !didLikelyCreateWorkspace(title: workspaceTitle(for: todo)) {
-                throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
-            }
+            throw WeeklyFocusError.launchFailed(errorMessage?.isEmpty == false ? errorMessage! : "cmux exited with \(process.terminationStatus)")
         }
     }
 
@@ -542,37 +540,6 @@ public enum CmuxFocusLauncher {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Brain")
             .path
-    }
-
-    private static func didLikelyCreateWorkspace(title: String) -> Bool {
-        let command = buildCommand(
-            todo: "list",
-            brainRoot: defaultLaunchBrainRoot(),
-            commandOverride: "true",
-            focus: false
-        )
-        let process = Process()
-        let outputPipe = Pipe()
-
-        if command.executable == "/usr/bin/env" {
-            process.executableURL = URL(fileURLWithPath: command.executable)
-            process.arguments = ["cmux", "workspace", "list"]
-        } else {
-            process.executableURL = URL(fileURLWithPath: command.executable)
-            process.arguments = ["workspace", "list"]
-        }
-        process.standardOutput = outputPipe
-        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return false
-        }
-
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return output.contains(title) || output.contains(String(title.prefix(57)))
     }
 
     private static func shellQuote(_ value: String) -> String {
