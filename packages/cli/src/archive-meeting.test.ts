@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { checkOffWeeklyNote, replacePendingPlaceholders } from "./archive-meeting.js"
+import {
+  buildCommitmentCaptureArgs,
+  checkOffWeeklyNote,
+  defaultCommitmentCaptureRunnerPath,
+  replacePendingPlaceholders,
+} from "./archive-meeting.js"
 
 const tempDirs: string[] = []
 
@@ -23,6 +28,30 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+describe("archive meeting commitment capture hook", () => {
+  test("builds a scoped post-meeting runner command", () => {
+    const args = buildCommitmentCaptureArgs({
+      brainDir: "/Users/jonmagic/Brain",
+      meetingNotePath: "/Users/jonmagic/Brain/Meeting Notes/team/2026-07-08/01.md",
+      transcriptPath: "/Users/jonmagic/Brain/Transcripts/2026-07-08/01.md",
+    })
+
+    expect(defaultCommitmentCaptureRunnerPath()).toContain(
+      ".copilot/skills/commitment-capture/scripts/commitment-capture-run"
+    )
+    expect(args).toEqual([
+      "--mode",
+      "meeting",
+      "--brain-path",
+      "/Users/jonmagic/Brain",
+      "--meeting-note",
+      "/Users/jonmagic/Brain/Meeting Notes/team/2026-07-08/01.md",
+      "--transcript",
+      "/Users/jonmagic/Brain/Transcripts/2026-07-08/01.md",
+    ])
+  })
 })
 
 describe("archive meeting weekly note updates", () => {

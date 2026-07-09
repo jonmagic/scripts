@@ -1,6 +1,15 @@
-export { archiveMeeting, listRecentMeetings, selectMeetingInput, selectMeetingNotesTarget } from "./archive-meeting.js"
+export {
+  archiveMeeting,
+  buildCommitmentCaptureArgs,
+  defaultCommitmentCaptureRunnerPath,
+  launchCommitmentCaptureAfterMeeting,
+  listRecentMeetings,
+  selectMeetingInput,
+  selectMeetingNotesTarget,
+} from "./archive-meeting.js"
 export type {
   ArchiveMeetingOptions,
+  CommitmentCaptureLaunchOptions,
   ListRecentMeetingsOptions,
   MeetingCandidate,
 } from "./archive-meeting.js"

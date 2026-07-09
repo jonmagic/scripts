@@ -22,6 +22,7 @@ const { values } = parseArgs({
     "reasoning-effort": { type: "string" },
     date: { type: "string" },
     "dry-run": { type: "boolean" },
+    "commitment-capture": { type: "boolean" },
     help: { type: "boolean", short: "h" },
   },
 })
@@ -40,6 +41,7 @@ Options:
   --reasoning-effort LEVEL             Deprecated; accepted for compatibility and ignored
   --date YYYY-MM-DD                    Override meeting date (defaults to file mtime)
   --dry-run                            Show what would be done without writing files
+  --commitment-capture                 Launch post-meeting commitment capture
   -h, --help                           Show this help message
 `)
   process.exit(0)
@@ -64,4 +66,5 @@ await archiveMeeting({
   reasoningEffort: values["reasoning-effort"],
   date: values["date"],
   dryRun: values["dry-run"],
+  commitmentCapture: values["commitment-capture"] || process.env.COMMITMENT_CAPTURE_AFTER_MEETING === "1",
 })

@@ -13,6 +13,7 @@
  */
 
 import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import { spawn } from "node:child_process"
 import {
@@ -31,6 +32,8 @@ export interface ArchiveMeetingOptions {
   model?: string
   reasoningEffort?: string
   dryRun?: boolean
+  commitmentCapture?: boolean
+  commitmentCaptureRunnerPath?: string
 }
 
 export interface ListRecentMeetingsOptions {
@@ -46,6 +49,60 @@ export interface MeetingCandidate {
   mtimeIso: string
   date: string
   hint: string
+}
+
+export interface CommitmentCaptureLaunchOptions {
+  brainDir: string
+  meetingNotePath: string
+  transcriptPath: string
+  runnerPath?: string | undefined
+}
+
+export function defaultCommitmentCaptureRunnerPath(): string {
+  return path.join(
+    os.homedir(),
+    ".copilot",
+    "skills",
+    "commitment-capture",
+    "scripts",
+    "commitment-capture-run"
+  )
+}
+
+export function buildCommitmentCaptureArgs(
+  options: CommitmentCaptureLaunchOptions
+): string[] {
+  return [
+    "--mode",
+    "meeting",
+    "--brain-path",
+    options.brainDir,
+    "--meeting-note",
+    options.meetingNotePath,
+    "--transcript",
+    options.transcriptPath,
+  ]
+}
+
+export function launchCommitmentCaptureAfterMeeting(
+  options: CommitmentCaptureLaunchOptions
+): string {
+  const runnerPath = options.runnerPath || defaultCommitmentCaptureRunnerPath()
+  if (!fs.existsSync(runnerPath)) {
+    return `Commitment capture runner not found: ${runnerPath}`
+  }
+
+  const child = spawn(runnerPath, buildCommitmentCaptureArgs(options), {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      COMMITMENT_CAPTURE_AUTOMATED: "1",
+    },
+  })
+  child.unref()
+
+  return `Started commitment capture for ${options.meetingNotePath}`
 }
 
 /**
@@ -733,6 +790,13 @@ export async function archiveMeeting(
   const execSummariesDir = path.join(brainDir, "Executive Summaries", meetingDate)
   const transcriptPath = path.join(transcriptsDir, `${nextNumStr}.md`)
   const execSummaryPath = path.join(execSummariesDir, `${nextNumStr}.md`)
+  const meetingNotesPath = path.join(
+    brainDir,
+    "Meeting Notes",
+    meetingNotesTarget,
+    meetingDate,
+    `${nextNumStr}.md`
+  )
 
   if (dryRun) {
     console.log("\n[DRY RUN] Would create:")
@@ -819,4 +883,15 @@ export async function archiveMeeting(
   console.log(`  Transcript:        ${transcriptPath}`)
   console.log(`  Executive Summary: ${execSummaryPath}`)
   console.log(`  Meeting Notes:     Meeting Notes/${meetingNotesTarget}/${meetingDate}/${nextNumStr}.md`)
+
+  if (options.commitmentCapture) {
+    console.log(
+      launchCommitmentCaptureAfterMeeting({
+        brainDir,
+        meetingNotePath: meetingNotesPath,
+        transcriptPath,
+        runnerPath: options.commitmentCaptureRunnerPath,
+      })
+    )
+  }
 }
