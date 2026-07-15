@@ -12,12 +12,15 @@ INSTALL_DIR="${WEEKLY_FOCUS_INSTALL_DIR:-$HOME/Applications}"
 INSTALLED_APP_DIR="$INSTALL_DIR/Weekly Focus.app"
 EXECUTABLE_SRC="$PACKAGE_DIR/.build/release/weekly-focus-app"
 EXECUTABLE_DEST="$APP_DIR/Contents/MacOS/Weekly Focus"
+ICON_SRC="$PACKAGE_DIR/Resources/WeeklyFocus.icns"
+ICON_DEST="$APP_DIR/Contents/Resources/WeeklyFocus.icns"
 
 swift build --package-path "$PACKAGE_DIR" -c release >&2
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$EXECUTABLE_SRC" "$EXECUTABLE_DEST"
+cp "$ICON_SRC" "$ICON_DEST"
 
 cat >"$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,6 +31,8 @@ cat >"$APP_DIR/Contents/Info.plist" <<'PLIST'
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>Weekly Focus</string>
+  <key>CFBundleIconFile</key>
+  <string>WeeklyFocus.icns</string>
   <key>CFBundleIdentifier</key>
   <string>com.jonmagic.weekly-focus</string>
   <key>CFBundleName</key>

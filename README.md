@@ -96,10 +96,12 @@ fills the current monitor by default, and shows at most five unchecked `## TODO`
 items. Click an item, press `1`-`5`, or press `⌘1`-`⌘5` to briefly highlight
 the row, open a new cmux workspace in `~/Brain`, and bring cmux forward with
 `c` started on that TODO. Command-click an item to mark it complete in the
-weekly note. Links inside TODO text open directly when clicked. Press `⌘O` to
-open the source weekly note in VS Code Insiders. The app also watches the
+weekly note. Links inside TODO text open directly when clicked, and Brain
+wikilinks open in VS Code Insiders. Press `⌘O` to open the source weekly note
+in VS Code Insiders. The app also watches the
 weekly note and refreshes automatically when an external markdown edit checks
-off or adds TODOs. Items after the top five fade below the main focus area.
+off or adds TODOs. Up to five items after the top five fade below the main
+focus area.
 Type in the empty field and press Return to add a new TODO. Press `R` to
 refresh and `Q`, `Esc`, or `⌘Q` to quit.
 
@@ -112,12 +114,13 @@ bin/weekly-focus-app
 ```
 
 The build script installs the Dock-safe app bundle at
-`~/Applications/Weekly Focus.app`.
+`~/Applications/Weekly Focus.app` with the bundled app icon from
+`packages/focus-app/Resources/WeeklyFocus.icns`.
 
 The native app has a self-test that creates a temporary Brain, opens a TODO,
 checks `⌘1` while the text field is focused, verifies automatic refresh after
-an external markdown edit, checks `⌘Q`, adds a TODO, marks a TODO done, and
-asks cmux to open a harmless workspace command:
+an external markdown edit, checks input-field copy/paste and `⌘Q`, adds a TODO,
+marks a TODO done, and asks cmux to open a harmless workspace command:
 
 ```bash
 bin/test-weekly-focus-app

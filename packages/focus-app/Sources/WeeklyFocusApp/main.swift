@@ -227,7 +227,13 @@ final class WeeklyNoteWatcher {
 }
 
 final class TodoRowButton: NSControl {
+    enum LinkTarget {
+        case url(URL)
+        case brainWikilink(String)
+    }
+
     var todoIndex: Int = 0
+    var linkHandler: ((LinkTarget) -> Void)?
     var isLaunching = false {
         didSet {
             needsDisplay = true
@@ -245,6 +251,7 @@ final class TodoRowButton: NSControl {
     }
     private let todoTitle: String
     private static let urlPattern = #"https?://[^\s)\]]+"#
+    private static let brainWikilinkAttribute = NSAttributedString.Key("weeklyFocusBrainWikilinkTarget")
 
     init(index: Int, title: String) {
         self.todoIndex = index
@@ -358,8 +365,8 @@ final class TodoRowButton: NSControl {
 
             if nextEvent.type == .leftMouseUp {
                 if isInside {
-                    if let url = linkURL(at: point) {
-                        NSWorkspace.shared.open(url)
+                    if let target = linkTarget(at: point) {
+                        linkHandler?(target)
                     } else {
                         showLaunchFeedback()
                         DispatchQueue.main.async { [weak self] in
@@ -440,6 +447,14 @@ final class TodoRowButton: NSControl {
             }
         }
 
+        for wikilink in BrainWikilinkResolver.wikilinks(in: fullTitle) {
+            attributed.addAttributes([
+                .foregroundColor: NSColor.systemBlue,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                brainWikilinkAttribute: wikilink.target
+            ], range: wikilink.range)
+        }
+
         return attributed
     }
 
@@ -455,7 +470,7 @@ final class TodoRowButton: NSControl {
         NSString(string: "\(index + 1). ").size(withAttributes: [.font: font]).width
     }
 
-    private func linkURL(at point: NSPoint) -> URL? {
+    private func linkTarget(at point: NSPoint) -> LinkTarget? {
         let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
         let textRect = self.textRect(for: title)
         guard textRect.contains(point) else {
@@ -483,11 +498,23 @@ final class TodoRowButton: NSControl {
         }
 
         let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-        return title.attribute(
+        if let target = title.attribute(
+            Self.brainWikilinkAttribute,
+            at: characterIndex,
+            effectiveRange: nil
+        ) as? String {
+            return .brainWikilink(target)
+        }
+
+        if let url = title.attribute(
             .link,
             at: characterIndex,
             effectiveRange: nil
-        ) as? URL
+        ) as? URL {
+            return .url(url)
+        }
+
+        return nil
     }
 
     private func textRect(for title: NSAttributedString) -> NSRect {
@@ -510,6 +537,7 @@ enum FocusLayout {
     static let columnGap: CGFloat = 12
     static let bodyWidth: CGFloat = 940
     static let rowWidth: CGFloat = numberWidth + columnGap + bodyWidth
+    static let overflowTodoLimit = 5
 }
 
 enum FocusFonts {
@@ -646,6 +674,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(
+            title: "Undo",
+            action: Selector(("undo:")),
+            keyEquivalent: "z"
+        ))
+        editMenu.addItem(NSMenuItem(
+            title: "Redo",
+            action: Selector(("redo:")),
+            keyEquivalent: "Z"
+        ))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(
+            title: "Cut",
+            action: #selector(NSText.cut(_:)),
+            keyEquivalent: "x"
+        ))
+        editMenu.addItem(NSMenuItem(
+            title: "Copy",
+            action: #selector(NSText.copy(_:)),
+            keyEquivalent: "c"
+        ))
+        editMenu.addItem(NSMenuItem(
+            title: "Paste",
+            action: #selector(NSText.paste(_:)),
+            keyEquivalent: "v"
+        ))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(
+            title: "Select All",
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a"
+        ))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
         let focusMenuItem = NSMenuItem()
         let focusMenu = NSMenu(title: "Focus")
         for index in 0..<5 {
@@ -728,7 +793,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private func reload() {
         do {
-            let snapshot = try WeeklyFocusReader().read(todoLimit: 5)
+            let snapshot = try WeeklyFocusReader().read(
+                todoLimit: 5,
+                overflowLimit: FocusLayout.overflowTodoLimit
+            )
             self.snapshot = snapshot
             watchWeeklyNote(at: snapshot.weeklyNotePath)
             render(snapshot: snapshot)
@@ -827,13 +895,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         stack.alignment = .leading
         stack.spacing = 8
 
-        let shown = Array(todos.prefix(10))
+        let shown = Array(todos.prefix(FocusLayout.overflowTodoLimit))
         for (index, todo) in shown.enumerated() {
             stack.addArrangedSubview(overflowLabel(todo, index: index))
-        }
-
-        if todos.count > shown.count {
-            stack.addArrangedSubview(overflowLabel("… \(todos.count - shown.count) more", index: shown.count))
         }
 
         return stack
@@ -865,6 +929,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let button = TodoRowButton(index: index, title: title)
         button.target = self
         button.action = #selector(todoButtonPressed(_:))
+        button.linkHandler = { [weak self] target in
+            self?.openTodoLink(target)
+        }
         todoButtons.append(button)
         return button
     }
@@ -1034,6 +1101,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
     }
 
+    private func openTodoLink(_ target: TodoRowButton.LinkTarget) {
+        switch target {
+        case .url(let url):
+            NSWorkspace.shared.open(url)
+        case .brainWikilink(let wikilinkTarget):
+            guard let snapshot else {
+                showAlert(title: "Could not open Brain link", message: "Weekly note is not loaded.")
+                return
+            }
+
+            guard let path = BrainWikilinkResolver.resolvePath(
+                target: wikilinkTarget,
+                brainRoot: snapshot.brainRoot
+            ) else {
+                showAlert(title: "Could not open Brain link", message: "No Brain file matched [[\(wikilinkTarget)]].")
+                return
+            }
+
+            do {
+                try openWeeklyNoteInVSCodeInsiders(path: path)
+            } catch {
+                showAlert(title: "Could not open Brain link", message: error.localizedDescription)
+            }
+        }
+    }
+
     private func runOpenCommand(executable: String, arguments: [String]) throws {
         let process = Process()
         let errorPipe = Pipe()
@@ -1152,6 +1245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             return false
         }
 
+        if handleTextEditingKeyEquivalent(characters) {
+            return true
+        }
+
         if let number = Int(characters), (1...5).contains(number) {
             launchTodo(at: number - 1)
             return true
@@ -1168,6 +1265,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         return false
+    }
+
+    private func handleTextEditingKeyEquivalent(_ characters: String) -> Bool {
+        guard let editor = captureField.currentEditor() else {
+            return false
+        }
+
+        switch characters {
+        case "a":
+            editor.selectAll(nil)
+        case "c":
+            editor.copy(nil)
+        case "v":
+            editor.paste(nil)
+        case "x":
+            editor.cut(nil)
+        default:
+            return false
+        }
+
+        return true
     }
 
     @objc private func screenParametersDidChange() {

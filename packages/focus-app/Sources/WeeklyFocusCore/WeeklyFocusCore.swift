@@ -59,6 +59,142 @@ public enum WeeklyFocusError: LocalizedError {
     }
 }
 
+public struct BrainWikilink: Equatable {
+    public let target: String
+    public let displayText: String
+    public let range: NSRange
+}
+
+public enum BrainWikilinkResolver {
+    private static let pattern = #"\[\[([^\]\|\n]+)(?:\|([^\]\n]+))?\]\]"#
+
+    public static func wikilinks(in text: String) -> [BrainWikilink] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+
+        let nsText = NSString(string: text)
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        return regex.matches(in: text, range: fullRange).compactMap { match in
+            guard match.numberOfRanges >= 2 else {
+                return nil
+            }
+
+            let target = nsText.substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else {
+                return nil
+            }
+
+            let displayText: String
+            if match.numberOfRanges >= 3, match.range(at: 2).location != NSNotFound {
+                displayText = nsText.substring(with: match.range(at: 2))
+            } else {
+                displayText = target
+            }
+
+            return BrainWikilink(target: target, displayText: displayText, range: match.range)
+        }
+    }
+
+    public static func resolvePath(target: String, brainRoot: String) -> String? {
+        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else {
+            return nil
+        }
+
+        let resolvedBrainRoot = URL(fileURLWithPath: WeeklyFocusReader.resolveHome(brainRoot))
+            .standardizedFileURL
+
+        if target.hasPrefix("uid:") {
+            let uid = String(target.dropFirst("uid:".count))
+                .split(separator: "#", maxSplits: 1)
+                .first
+                .map(String.init)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !uid.isEmpty else {
+                return nil
+            }
+
+            return resolveUID(uid, brainRootURL: resolvedBrainRoot)
+        }
+
+        guard !target.hasPrefix("/") else {
+            return nil
+        }
+
+        let targetPath = target
+            .split(separator: "#", maxSplits: 1)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !targetPath.isEmpty else {
+            return nil
+        }
+
+        let candidate = resolvedBrainRoot.appendingPathComponent(targetPath)
+        return firstExistingPath(
+            candidates: [
+                candidate,
+                candidate.pathExtension.isEmpty ? candidate.appendingPathExtension("md") : candidate
+            ],
+            brainRootURL: resolvedBrainRoot
+        )
+    }
+
+    private static func firstExistingPath(candidates: [URL], brainRootURL: URL) -> String? {
+        for candidate in candidates {
+            let standardized = candidate.standardizedFileURL
+            guard isWithinBrain(standardized, brainRootURL: brainRootURL) else {
+                continue
+            }
+
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
+               !isDirectory.boolValue {
+                return standardized.path
+            }
+        }
+
+        return nil
+    }
+
+    private static func resolveUID(_ uid: String, brainRootURL: URL) -> String? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: brainRootURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return nil
+        }
+
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "md" else {
+                continue
+            }
+
+            let standardized = url.standardizedFileURL
+            guard isWithinBrain(standardized, brainRootURL: brainRootURL),
+                  let content = try? String(contentsOf: standardized, encoding: .utf8) else {
+                continue
+            }
+
+            let escapedUID = NSRegularExpression.escapedPattern(for: uid)
+            if content.range(of: #"(?m)^uid:\s*\#(escapedUID)\s*$"#, options: .regularExpression) != nil {
+                return standardized.path
+            }
+        }
+
+        return nil
+    }
+
+    private static func isWithinBrain(_ url: URL, brainRootURL: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let rootPath = brainRootURL.standardizedFileURL.path
+        return path == rootPath || path.hasPrefix("\(rootPath)/")
+    }
+}
+
 public struct WeeklyFocusReader {
     public let brainRoot: String
     public let weeklyNotePath: String
@@ -78,7 +214,11 @@ public struct WeeklyFocusReader {
         )
     }
 
-    public func read(todoLimit: Int = 5, waitingLimit: Int = 3) throws -> WeeklyFocusSnapshot {
+    public func read(
+        todoLimit: Int = 5,
+        overflowLimit: Int? = nil,
+        waitingLimit: Int = 3
+    ) throws -> WeeklyFocusSnapshot {
         guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
             throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
         }
@@ -89,6 +229,7 @@ public struct WeeklyFocusReader {
             brainRoot: brainRoot,
             weeklyNotePath: weeklyNotePath,
             todoLimit: todoLimit,
+            overflowLimit: overflowLimit,
             waitingLimit: waitingLimit
         )
     }
@@ -260,6 +401,7 @@ public struct WeeklyFocusReader {
         brainRoot: String,
         weeklyNotePath: String,
         todoLimit: Int = 5,
+        overflowLimit: Int? = nil,
         waitingLimit: Int = 3
     ) -> WeeklyFocusSnapshot {
         let lines = content.components(separatedBy: .newlines)
@@ -267,7 +409,10 @@ public struct WeeklyFocusReader {
         let waitingItems = uncheckedItems(in: lines, heading: "## Waiting")
         let limit = Swift.max(0, todoLimit)
         let todos = Array(todoItems[..<Swift.min(todoItems.count, limit)])
-        let overflowTodos = todoItems.count > limit ? Array(todoItems[limit...]) : []
+        let allOverflowTodos = todoItems.count > limit ? Array(todoItems[limit...]) : []
+        let overflowTodos = overflowLimit.map { overflowLimit in
+            Array(allOverflowTodos.prefix(Swift.max(0, overflowLimit)))
+        } ?? allOverflowTodos
         let waiting = Array(waitingItems[..<Swift.min(waitingItems.count, Swift.max(0, waitingLimit))])
         let capturedCount = uncheckedItems(in: lines, heading: "## Captured").count
 

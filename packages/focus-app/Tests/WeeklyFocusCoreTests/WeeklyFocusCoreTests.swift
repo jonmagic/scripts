@@ -41,6 +41,38 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.capturedCount, 1)
     }
 
+    func testParsesWeeklyFocusWithOverflowLimit() {
+        let content = [
+            "# Week",
+            "",
+            "## TODO",
+            "- [ ] One",
+            "- [ ] Two",
+            "- [ ] Three",
+            "- [ ] Four",
+            "- [ ] Five",
+            "- [ ] Six",
+            "- [ ] Seven",
+            "- [ ] Eight",
+            "- [ ] Nine",
+            "- [ ] Ten",
+            "- [ ] Eleven",
+            "",
+            "## Captured"
+        ].joined(separator: "\n")
+
+        let snapshot = WeeklyFocusReader.parse(
+            content,
+            brainRoot: "/tmp/Brain",
+            weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
+            todoLimit: 5,
+            overflowLimit: 5
+        )
+
+        XCTAssertEqual(snapshot.todos, ["One", "Two", "Three", "Four", "Five"])
+        XCTAssertEqual(snapshot.overflowTodos, ["Six", "Seven", "Eight", "Nine", "Ten"])
+    }
+
     func testFormatterPrintsSparseCard() {
         let snapshot = WeeklyFocusSnapshot(
             brainRoot: "/tmp/Brain",
@@ -67,6 +99,90 @@ final class WeeklyFocusCoreTests: XCTestCase {
                 "",
                 "Source: /tmp/Brain/Weekly Notes/Week of 2026-07-05.md"
             ].joined(separator: "\n")
+        )
+    }
+
+    func testFindsBrainWikilinksInTodoText() {
+        let links = BrainWikilinkResolver.wikilinks(
+            in: "Review [[Daily Projects/2026-07-07/07 weekly note|the plan]] and [[Projects/foo]]"
+        )
+
+        XCTAssertEqual(links.count, 2)
+        XCTAssertEqual(links[0].target, "Daily Projects/2026-07-07/07 weekly note")
+        XCTAssertEqual(links[0].displayText, "the plan")
+        XCTAssertEqual(links[1].target, "Projects/foo")
+        XCTAssertEqual(links[1].displayText, "Projects/foo")
+    }
+
+    func testResolvesPathWikilinkWithImplicitMarkdownExtension() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let dailyDirectory = directory.appendingPathComponent("Daily Projects/2026-07-09", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: dailyDirectory,
+            withIntermediateDirectories: true
+        )
+        let note = dailyDirectory.appendingPathComponent("01 test note.md")
+        try "hello".write(to: note, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            BrainWikilinkResolver.resolvePath(
+                target: "Daily Projects/2026-07-09/01 test note",
+                brainRoot: directory.path
+            ),
+            note.standardizedFileURL.path
+        )
+    }
+
+    func testResolvesUIDWikilink() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let projectDirectory = directory.appendingPathComponent("Projects/test", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: projectDirectory,
+            withIntermediateDirectories: true
+        )
+        let note = projectDirectory.appendingPathComponent("executive summary.md")
+        try [
+            "---",
+            "uid: 3mqexampletid",
+            "type: project",
+            "---",
+            "",
+            "# Test"
+        ].joined(separator: "\n").write(to: note, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            BrainWikilinkResolver.resolvePath(
+                target: "uid:3mqexampletid",
+                brainRoot: directory.path
+            ),
+            note.standardizedFileURL.path
+        )
+    }
+
+    func testRejectsWikilinkOutsideBrainRoot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertNil(
+            BrainWikilinkResolver.resolvePath(
+                target: "../outside",
+                brainRoot: directory.path
+            )
         )
     }
 

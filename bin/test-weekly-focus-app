@@ -78,7 +78,8 @@ cat >"$WEEKLY_NOTE" <<MARKDOWN
 ## Captured
 MARKDOWN
 
-UI_TODO="UI entered TODO $$"
+UI_TODO="UI pasted TODO https://example.test/$TEST_RUN_ID"
+COPY_SENTINEL="weekly-focus-copy-failed-$TEST_RUN_ID"
 
 stop_existing_app
 
@@ -126,11 +127,20 @@ tell application "System Events"
     set frontmost to true
     delay 0.5
     click text field 1 of window "Weekly Focus"
-    keystroke "$UI_TODO"
+    set the clipboard to "$UI_TODO"
+    key code 9 using {command down}
+    key code 0 using {command down}
+    set the clipboard to "$COPY_SENTINEL"
+    key code 8 using {command down}
     key code 36
   end tell
 end tell
 APPLESCRIPT
+
+if [[ "$(pbpaste)" != "$UI_TODO" ]]; then
+  echo "Weekly Focus input field did not support Cmd-C" >&2
+  exit 1
+fi
 
 for _ in {1..20}; do
   if grep -q "$UI_TODO" "$WEEKLY_NOTE"; then
