@@ -12,7 +12,7 @@ These instructions apply to the whole repository unless a deeper `AGENTS.md` ove
 2. Check `git status --short` and preserve user edits.
 3. Use project skills in `.github/skills/` when the task matches one.
 4. For Brain extension work, read `packages/vscode/package.json`, `packages/vscode/README.md`, and `packages/vscode/src/extension.ts`.
-5. Work directly on `main` for this repo unless @jonmagic or a repository rule explicitly asks for a branch.
+5. Work directly on `main` for this repo. Do not create or retain work branches unless @jonmagic explicitly asks for one; finish and fast-forward existing branches into `main` before starting unrelated work.
 
 ## Non-negotiables
 
