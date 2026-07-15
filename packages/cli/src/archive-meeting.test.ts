@@ -5,7 +5,9 @@ import * as path from "node:path"
 import {
   buildCommitmentCaptureArgs,
   checkOffWeeklyNote,
+  convertVttToMarkdown,
   defaultCommitmentCaptureRunnerPath,
+  findNextNumber,
   replacePendingPlaceholders,
 } from "./archive-meeting.js"
 
@@ -96,5 +98,45 @@ describe("archive meeting weekly note updates", () => {
       "- [ ] 2026 [[Meeting Notes/other]] {{Meeting Notes/other}}",
       "",
     ].join("\n"))
+  })
+})
+
+describe("archive meeting transcript preparation", () => {
+  test("removes VTT voice tags from single-line and continued cues", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "archive-meeting-vtt-"))
+    tempDirs.push(tempDir)
+    const vttPath = path.join(tempDir, "meeting.vtt")
+    fs.writeFileSync(vttPath, [
+      "WEBVTT",
+      "",
+      "00:00:01.000 --> 00:00:03.000",
+      "<v Jonathan Hoyt>Hello there,</v>",
+      "",
+      "00:00:03.000 --> 00:00:05.000",
+      "<v Jonathan Hoyt>continued thought</v>",
+      "without another opening tag</v>",
+      "",
+    ].join("\n"))
+
+    expect(convertVttToMarkdown(vttPath)).toBe([
+      "- [00:00:01] Jonathan Hoyt: Hello there,",
+      "- [00:00:03] Jonathan Hoyt: continued thought without another opening tag",
+      "",
+    ].join("\n"))
+  })
+
+  test("allocates after existing meeting notes for the target", () => {
+    const brainDir = fs.mkdtempSync(path.join(os.tmpdir(), "archive-meeting-number-"))
+    tempDirs.push(brainDir)
+    const meetingNotesDir = path.join(
+      brainDir,
+      "Meeting Notes",
+      "Copilot",
+      "2026-07-15"
+    )
+    fs.mkdirSync(meetingNotesDir, { recursive: true })
+    fs.writeFileSync(path.join(meetingNotesDir, "01.md"), "existing")
+
+    expect(findNextNumber(brainDir, "2026-07-15", "Copilot")).toBe(2)
   })
 })

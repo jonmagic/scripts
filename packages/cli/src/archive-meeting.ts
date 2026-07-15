@@ -308,14 +308,28 @@ function getExistingNumbers(directory: string): Set<number> {
 /**
  * Find next available file number across Transcripts and Executive Summaries
  */
-function findNextNumber(brainDir: string, date: string): number {
+export function findNextNumber(
+  brainDir: string,
+  date: string,
+  meetingNotesTarget?: string
+): number {
   const transcriptsDir = path.join(brainDir, "Transcripts", date)
   const execSummariesDir = path.join(brainDir, "Executive Summaries", date)
+  const meetingNotesDir = meetingNotesTarget
+    ? path.join(brainDir, "Meeting Notes", meetingNotesTarget, date)
+    : null
 
   const transcriptNums = getExistingNumbers(transcriptsDir)
   const execSummaryNums = getExistingNumbers(execSummariesDir)
+  const meetingNoteNums = meetingNotesDir
+    ? getExistingNumbers(meetingNotesDir)
+    : new Set<number>()
 
-  const allNums = new Set([...transcriptNums, ...execSummaryNums])
+  const allNums = new Set([
+    ...transcriptNums,
+    ...execSummaryNums,
+    ...meetingNoteNums,
+  ])
   if (allNums.size === 0) return 1
 
   return Math.max(...allNums) + 1
@@ -365,13 +379,15 @@ function getDateFromFile(filePath: string): string {
 /**
  * Convert VTT to markdown
  */
-function convertVttToMarkdown(vttPath: string): string {
+export function convertVttToMarkdown(vttPath: string): string {
   const vttText = fs.readFileSync(vttPath, "utf-8")
   const lines = vttText.split("\n")
   const out: string[] = []
 
   const cueRe = /^(\d{2}:\d{2}:\d{2})(?:\.\d{3})?\s+-->\s+\d{2}:\d{2}:\d{2}/
-  const voiceTagRe = /<v\s+([^>]+)>(.*)(?:<\/v>)?/
+  const voiceTagRe = /^<v\s+([^>]+)>(.*)$/i
+  const cleanVoiceTags = (value: string): string =>
+    value.replace(/<\/?v(?:\s+[^>]*)?>/gi, "").trim()
 
   let i = 0
   while (i < lines.length) {
@@ -406,19 +422,19 @@ function convertVttToMarkdown(vttPath: string): string {
       const voiceMatch = voiceTagRe.exec(p)
       if (voiceMatch) {
         speaker = voiceMatch[1]!.trim()
-        const text = voiceMatch[2]!.replace(/<\/v>/, "").trim()
+        const text = cleanVoiceTags(voiceMatch[2]!)
         if (text) textParts.push(text)
       } else if (p.includes(":") && p.split(":")[0]!.length <= 60) {
         const [maybeSpeaker, ...rest] = p.split(":")
-        const restText = rest.join(":").trim()
+        const restText = cleanVoiceTags(rest.join(":"))
         if (maybeSpeaker && restText) {
           speaker = speaker || maybeSpeaker.trim()
           textParts.push(restText)
         } else {
-          textParts.push(p)
+          textParts.push(cleanVoiceTags(p))
         }
       } else {
-        textParts.push(p)
+        textParts.push(cleanVoiceTags(p))
       }
     }
 
@@ -782,7 +798,7 @@ export async function archiveMeeting(
   }
 
   // Step 1: Get next file number
-  const nextNum = findNextNumber(brainDir, meetingDate)
+  const nextNum = findNextNumber(brainDir, meetingDate, meetingNotesTarget)
   const nextNumStr = nextNum.toString().padStart(2, "0")
   console.log(`File number: ${nextNumStr}`)
 
@@ -802,7 +818,7 @@ export async function archiveMeeting(
     console.log("\n[DRY RUN] Would create:")
     console.log(`  - ${transcriptPath}`)
     console.log(`  - ${execSummaryPath}`)
-    console.log(`  - Update Meeting Notes/${meetingNotesTarget}.md`)
+    console.log(`  - ${meetingNotesPath}`)
     return
   }
 
@@ -818,7 +834,14 @@ export async function archiveMeeting(
     transcriptMd = fs.readFileSync(input, "utf-8")
   }
 
-  // Step 3: Write transcript with frontmatter
+  // Step 3: Generate executive summary and meeting notes before writing files
+  console.log("\nGenerating executive summary and meeting notes...")
+  const [execSummary, meetingNotes] = await Promise.all([
+    callLlm(transcriptMd, executiveSummaryPromptPath, model),
+    callLlm(transcriptMd, detailedNotesPromptPath, model),
+  ])
+
+  // Step 4: Write transcript and executive summary
   fs.mkdirSync(transcriptsDir, { recursive: true })
   const transcriptFrontmatter = createFrontmatter("transcript", meetingDate)
   fs.writeFileSync(
@@ -827,13 +850,6 @@ export async function archiveMeeting(
     "utf-8"
   )
   console.log(`Created: ${transcriptPath}`)
-
-  // Step 4: Generate executive summary and meeting notes concurrently
-  console.log("\nGenerating executive summary and meeting notes...")
-  const [execSummary, meetingNotes] = await Promise.all([
-    callLlm(transcriptMd, executiveSummaryPromptPath, model),
-    callLlm(transcriptMd, detailedNotesPromptPath, model),
-  ])
 
   fs.mkdirSync(execSummariesDir, { recursive: true })
   const summaryFrontmatter = createFrontmatter("executive.summary", meetingDate)
