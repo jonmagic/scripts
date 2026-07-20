@@ -80,6 +80,12 @@ enum FocusColors {
             ? NSColor(red: 0xff / 255, green: 0x6b / 255, blue: 0x57 / 255, alpha: 1)
             : NSColor(red: 0xc4 / 255, green: 0x3e / 255, blue: 0x2a / 255, alpha: 1)
     }
+
+    static let link = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x92 / 255, green: 0x9b / 255, blue: 0xa5 / 255, alpha: 1)
+            : NSColor(red: 0x77 / 255, green: 0x77 / 255, blue: 0x77 / 255, alpha: 1)
+    }
 }
 
 @MainActor
@@ -315,6 +321,7 @@ final class TodoRowButton: NSControl {
     private let todoTitle: String
     private let layoutScale: CGFloat
     private static let urlPattern = #"https?://[^\s)\]]+"#
+    private static let urlAttribute = NSAttributedString.Key("weeklyFocusURLTarget")
     private static let brainWikilinkAttribute = NSAttributedString.Key("weeklyFocusBrainWikilinkTarget")
 
     init(index: Int, title: String, scale: CGFloat) {
@@ -512,17 +519,15 @@ final class TodoRowButton: NSControl {
                 }
 
                 attributed.addAttributes([
-                    .foregroundColor: NSColor.systemBlue,
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    .link: url
+                    .foregroundColor: FocusColors.link,
+                    urlAttribute: url
                 ], range: match.range)
             }
         }
 
         for wikilink in BrainWikilinkResolver.wikilinks(in: fullTitle) {
             attributed.addAttributes([
-                .foregroundColor: NSColor.systemBlue,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .foregroundColor: FocusColors.link,
                 brainWikilinkAttribute: wikilink.target
             ], range: wikilink.range)
         }
@@ -579,7 +584,7 @@ final class TodoRowButton: NSControl {
         }
 
         if let url = title.attribute(
-            .link,
+            Self.urlAttribute,
             at: characterIndex,
             effectiveRange: nil
         ) as? URL {
