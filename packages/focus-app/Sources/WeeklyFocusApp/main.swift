@@ -107,6 +107,8 @@ final class FocusWindow: NSWindow {
 }
 
 final class FocusRootView: NSView {
+    private weak var scalableContentView: NSView?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -122,6 +124,67 @@ final class FocusRootView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateAppearance()
+    }
+
+    func setScalableContentView(_ view: NSView) {
+        scalableContentView?.removeFromSuperview()
+        scalableContentView = view
+        addSubview(view)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+
+        guard let contentView = scalableContentView else {
+            return
+        }
+
+        contentView.needsLayout = true
+        contentView.layoutSubtreeIfNeeded()
+
+        let contentSize = measuredSize(of: contentView)
+        let availableBounds = availableContentBounds
+        contentView.frame = NSRect(
+            x: availableBounds.midX - (contentSize.width / 2),
+            y: availableBounds.midY - (contentSize.height / 2),
+            width: contentSize.width,
+            height: contentSize.height
+        )
+        contentView.layoutSubtreeIfNeeded()
+    }
+
+    private func measuredSize(of view: NSView) -> NSSize {
+        guard let stack = view as? NSStackView,
+              stack.orientation == .vertical else {
+            return view.fittingSize
+        }
+
+        let arrangedSubviews = stack.arrangedSubviews.filter { !$0.isHidden }
+        let sizes = arrangedSubviews.map(\.fittingSize)
+        return NSSize(
+            width: sizes.map(\.width).max() ?? 0,
+            height: sizes.map(\.height).reduce(0, +)
+                + (CGFloat(Swift.max(0, sizes.count - 1)) * stack.spacing)
+        )
+    }
+
+    private var safeContentBounds: NSRect {
+        guard let window,
+              let screen = window.screen else {
+            return bounds
+        }
+
+        let visibleWindowRect = window.convertFromScreen(screen.visibleFrame)
+        return bounds.intersection(convert(visibleWindowRect, from: nil))
+    }
+
+    var availableContentSize: NSSize {
+        availableContentBounds.size
+    }
+
+    private var availableContentBounds: NSRect {
+        safeContentBounds.insetBy(dx: 48, dy: 32)
     }
 
     private func updateAppearance() {
@@ -250,12 +313,14 @@ final class TodoRowButton: NSControl {
         }
     }
     private let todoTitle: String
+    private let layoutScale: CGFloat
     private static let urlPattern = #"https?://[^\s)\]]+"#
     private static let brainWikilinkAttribute = NSAttributedString.Key("weeklyFocusBrainWikilinkTarget")
 
-    init(index: Int, title: String) {
+    init(index: Int, title: String, scale: CGFloat) {
         self.todoIndex = index
         self.todoTitle = title
+        self.layoutScale = scale
         super.init(frame: .zero)
         toolTip = title
         translatesAutoresizingMaskIntoConstraints = false
@@ -263,17 +328,21 @@ final class TodoRowButton: NSControl {
         setAccessibilityRole(.button)
         setAccessibilityLabel("\(index + 1). \(title)")
         setAccessibilityTitle("\(index + 1). \(title)")
-        widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
-        heightAnchor.constraint(equalToConstant: Self.height(for: title, index: index)).isActive = true
+        widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth(scale: scale)).isActive = true
+        heightAnchor.constraint(equalToConstant: Self.height(for: title, index: index, scale: scale)).isActive = true
     }
 
     required init?(coder: NSCoder) {
         self.todoTitle = ""
+        self.layoutScale = 1
         super.init(coder: coder)
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: FocusLayout.rowWidth, height: Self.height(for: todoTitle, index: todoIndex))
+        NSSize(
+            width: FocusLayout.rowWidth(scale: layoutScale),
+            height: Self.height(for: todoTitle, index: todoIndex, scale: layoutScale)
+        )
     }
 
     override var isFlipped: Bool {
@@ -320,7 +389,7 @@ final class TodoRowButton: NSControl {
             NSBezierPath(roundedRect: highlightRect, xRadius: 12, yRadius: 12).fill()
         }
 
-        let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
+        let title = Self.attributedTitle(index: todoIndex, title: todoTitle, scale: layoutScale)
         let textHeight = title.boundingRect(
             with: NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -404,30 +473,33 @@ final class TodoRowButton: NSControl {
         NSApp.sendAction(action, to: target, from: self)
     }
 
-    static func height(for title: String, index: Int) -> CGFloat {
-        let font = FocusFonts.todo(index: index)
+    static func height(for title: String, index: Int, scale: CGFloat) -> CGFloat {
+        let font = FocusFonts.todo(index: index, scale: scale)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .paragraphStyle: paragraphStyle(index: index, font: font)
+            .paragraphStyle: paragraphStyle(index: index, font: font, scale: scale)
         ]
         let rect = NSString(string: "\(index + 1). \(title)").boundingRect(
-            with: NSSize(width: FocusLayout.rowWidth, height: CGFloat.greatestFiniteMagnitude),
+            with: NSSize(
+                width: FocusLayout.rowWidth(scale: scale),
+                height: CGFloat.greatestFiniteMagnitude
+            ),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: attributes
         )
 
-        return max(42, ceil(rect.height) + 6)
+        return max(42 * scale, ceil(rect.height) + (6 * scale))
     }
 
-    private static func attributedTitle(index: Int, title: String) -> NSAttributedString {
-        let font = FocusFonts.todo(index: index)
+    private static func attributedTitle(index: Int, title: String, scale: CGFloat) -> NSAttributedString {
+        let font = FocusFonts.todo(index: index, scale: scale)
         let fullTitle = "\(index + 1). \(title)"
         let attributed = NSMutableAttributedString(
             string: fullTitle,
             attributes: [
                 .font: font,
                 .foregroundColor: FocusColors.text,
-                .paragraphStyle: paragraphStyle(index: index, font: font)
+                .paragraphStyle: paragraphStyle(index: index, font: font, scale: scale)
             ]
         )
 
@@ -458,10 +530,10 @@ final class TodoRowButton: NSControl {
         return attributed
     }
 
-    private static func paragraphStyle(index: Int, font: NSFont) -> NSParagraphStyle {
+    private static func paragraphStyle(index: Int, font: NSFont, scale: CGFloat) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byWordWrapping
-        style.lineSpacing = 2
+        style.lineSpacing = 2 * scale
         style.headIndent = prefixWidth(index: index, font: font)
         return style
     }
@@ -471,7 +543,7 @@ final class TodoRowButton: NSControl {
     }
 
     private func linkTarget(at point: NSPoint) -> LinkTarget? {
-        let title = Self.attributedTitle(index: todoIndex, title: todoTitle)
+        let title = Self.attributedTitle(index: todoIndex, title: todoTitle, scale: layoutScale)
         let textRect = self.textRect(for: title)
         guard textRect.contains(point) else {
             return nil
@@ -536,21 +608,38 @@ enum FocusLayout {
     static let numberWidth: CGFloat = 44
     static let columnGap: CGFloat = 12
     static let bodyWidth: CGFloat = 940
-    static let rowWidth: CGFloat = numberWidth + columnGap + bodyWidth
+    static let baseRowWidth: CGFloat = numberWidth + columnGap + bodyWidth
+    static let baseSpacing: CGFloat = 16
     static let overflowTodoLimit = 5
+
+    static func rowWidth(scale: CGFloat) -> CGFloat {
+        baseRowWidth * scale
+    }
+
+    static func spacing(scale: CGFloat) -> CGFloat {
+        baseSpacing * scale
+    }
 }
 
 enum FocusFonts {
-    static func todo(index: Int) -> NSFont {
-        named("Avenir Next", size: index == 0 ? 30 : 28, weight: index == 0 ? .semibold : .medium)
+    static func todo(index: Int, scale: CGFloat) -> NSFont {
+        named(
+            "Avenir Next",
+            size: (index == 0 ? 30 : 28) * scale,
+            weight: index == 0 ? .semibold : .medium
+        )
     }
 
-    static func overflow(index: Int) -> NSFont {
-        named("Avenir Next", size: CGFloat(Swift.max(13, 18 - index)), weight: .regular)
+    static func overflow(index: Int, scale: CGFloat) -> NSFont {
+        named(
+            "Avenir Next",
+            size: CGFloat(Swift.max(13, 18 - index)) * scale,
+            weight: .regular
+        )
     }
 
-    static func input() -> NSFont {
-        named("Avenir Next", size: 24, weight: .regular)
+    static func input(scale: CGFloat) -> NSFont {
+        named("Avenir Next", size: 24 * scale, weight: .regular)
     }
 
     private static func named(_ name: String, size: CGFloat, weight: NSFont.Weight) -> NSFont {
@@ -573,6 +662,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private let selfTestLaunchMode = CommandLine.arguments.contains("--self-test-launch")
     private let contentStack = NSStackView()
     private let captureField = NSTextField()
+    private var contentScale: CGFloat = 1
+    private var displayedOverflowLimit = 1
 
     private var primaryTextColor: NSColor {
         FocusColors.text
@@ -766,27 +857,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let root = FocusRootView(frame: frame)
         root.autoresizingMask = [.width, .height]
 
-        let container = NSStackView()
-        container.orientation = .vertical
-        container.alignment = .leading
-        container.spacing = 18
-        container.translatesAutoresizingMaskIntoConstraints = false
-
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 16
-
-        container.addArrangedSubview(contentStack)
-        root.addSubview(container)
-
-        NSLayoutConstraint.activate([
-            container.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            container.leadingAnchor.constraint(greaterThanOrEqualTo: root.leadingAnchor, constant: 72),
-            container.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -72),
-            container.centerYAnchor.constraint(equalTo: root.centerYAnchor),
-            container.topAnchor.constraint(greaterThanOrEqualTo: root.topAnchor, constant: 60),
-            container.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -60)
-        ])
+        contentStack.spacing = FocusLayout.spacing(scale: contentScale)
+        root.setScalableContentView(contentStack)
 
         return root
     }
@@ -847,6 +921,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func render(snapshot: WeeklyFocusSnapshot) {
+        let layout = fittedLayout(for: snapshot)
+        contentScale = layout.scale
+        displayedOverflowLimit = layout.overflowLimit
+        contentStack.spacing = FocusLayout.spacing(scale: contentScale)
         clearContent()
 
         if snapshot.todos.isEmpty {
@@ -858,10 +936,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         if !snapshot.overflowTodos.isEmpty {
-            contentStack.addArrangedSubview(overflowSection(snapshot.overflowTodos))
+            addOverflowTodos(snapshot.overflowTodos)
         }
 
         contentStack.addArrangedSubview(captureRow())
+        contentStack.superview?.needsLayout = true
+        contentStack.superview?.layoutSubtreeIfNeeded()
         DispatchQueue.main.async {
             self.window?.makeFirstResponder(self.captureField)
         }
@@ -870,6 +950,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private func renderError(_ error: Error) {
         clearContent()
         contentStack.addArrangedSubview(messageLabel(error.localizedDescription))
+        contentStack.superview?.needsLayout = true
+        contentStack.superview?.layoutSubtreeIfNeeded()
     }
 
     private func clearContent() {
@@ -889,18 +971,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         return row
     }
 
-    private func overflowSection(_ todos: [String]) -> NSStackView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-
-        let shown = Array(todos.prefix(FocusLayout.overflowTodoLimit))
+    private func addOverflowTodos(_ todos: [String]) {
+        let shown = Array(todos.prefix(displayedOverflowLimit))
         for (index, todo) in shown.enumerated() {
-            stack.addArrangedSubview(overflowLabel(todo, index: index))
+            let label = overflowLabel(todo, index: index)
+            contentStack.addArrangedSubview(label)
         }
-
-        return stack
     }
 
     private func captureRow() -> NSStackView {
@@ -910,7 +986,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         row.spacing = 0
 
         captureField.placeholderString = ""
-        captureField.font = FocusFonts.input()
+        captureField.font = FocusFonts.input(scale: contentScale)
         captureField.textColor = primaryTextColor
         captureField.backgroundColor = FocusColors.fieldBackground
         captureField.layer?.borderColor = FocusColors.fieldBorder.cgColor
@@ -919,14 +995,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         captureField.action = #selector(todoSubmitted(_:))
         captureField.delegate = self
         captureField.translatesAutoresizingMaskIntoConstraints = false
-        captureField.widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth).isActive = true
+        captureField.widthAnchor.constraint(
+            equalToConstant: FocusLayout.rowWidth(scale: contentScale)
+        ).isActive = true
 
         row.addArrangedSubview(captureField)
         return row
     }
 
     private func todoButton(index: Int, title: String) -> TodoRowButton {
-        let button = TodoRowButton(index: index, title: title)
+        let button = TodoRowButton(index: index, title: title, scale: contentScale)
         button.target = self
         button.action = #selector(todoButtonPressed(_:))
         button.linkHandler = { [weak self] target in
@@ -938,7 +1016,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private func messageLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = FocusFonts.todo(index: 0)
+        label.font = FocusFonts.todo(index: 0, scale: contentScale)
         label.textColor = primaryTextColor
         label.maximumNumberOfLines = 0
         return label
@@ -954,11 +1032,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private func overflowLabel(_ text: String, index: Int) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = FocusFonts.overflow(index: index)
+        label.font = FocusFonts.overflow(index: index, scale: contentScale)
         let alpha = Swift.max(0.10, 0.38 - (Double(index) * 0.035))
         label.textColor = secondaryTextColor.withAlphaComponent(alpha)
         label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(
+            equalToConstant: FocusLayout.rowWidth(scale: contentScale)
+        ).isActive = true
         return label
+    }
+
+    private func fittedLayout(for snapshot: WeeklyFocusSnapshot) -> (scale: CGFloat, overflowLimit: Int) {
+        let availableSize = (window?.contentView as? FocusRootView)?.availableContentSize
+            ?? NSSize(width: 1100, height: 700)
+        let overflowLimit: Int
+        if availableSize.height < 650 {
+            overflowLimit = 1
+        } else if availableSize.height < 850 {
+            overflowLimit = 2
+        } else {
+            overflowLimit = 3
+        }
+
+        var lowerBound: CGFloat = 0.05
+        var upperBound = max(
+            lowerBound,
+            min(1, availableSize.width / FocusLayout.baseRowWidth)
+        )
+        for _ in 0..<18 {
+            let candidate = (lowerBound + upperBound) / 2
+            if estimatedContentHeight(
+                snapshot: snapshot,
+                scale: candidate,
+                overflowLimit: overflowLimit
+            ) <= availableSize.height {
+                lowerBound = candidate
+            } else {
+                upperBound = candidate
+            }
+        }
+
+        return (lowerBound * 0.98, overflowLimit)
+    }
+
+    private func estimatedContentHeight(
+        snapshot: WeeklyFocusSnapshot,
+        scale: CGFloat,
+        overflowLimit: Int
+    ) -> CGFloat {
+        var heights = snapshot.todos.enumerated().map { index, todo in
+            TodoRowButton.height(for: todo, index: index, scale: scale)
+        }
+
+        let shownOverflowCount = min(snapshot.overflowTodos.count, overflowLimit)
+        for index in 0..<shownOverflowCount {
+            heights.append(ceil(FocusFonts.overflow(index: index, scale: scale).boundingRectForFont.height))
+        }
+
+        heights.append(ceil(FocusFonts.input(scale: scale).boundingRectForFont.height) + (10 * scale))
+        return heights.reduce(0, +)
+            + (CGFloat(Swift.max(0, heights.count - 1)) * FocusLayout.spacing(scale: scale))
     }
 
     @objc private func todoButtonPressed(_ sender: TodoRowButton) {
@@ -1300,6 +1435,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let frame = window.screen?.frame ?? NSScreen.main?.frame
         if let frame {
             window.setFrame(frame, display: true, animate: false)
+            window.contentView?.layoutSubtreeIfNeeded()
+            if let snapshot {
+                render(snapshot: snapshot)
+            }
         }
     }
 
