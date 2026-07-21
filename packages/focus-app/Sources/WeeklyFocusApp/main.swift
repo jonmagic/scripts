@@ -401,7 +401,7 @@ final class TodoRowButton: NSControl {
         ).height
         let rect = NSRect(
             x: Self.leadingGutter(scale: layoutScale),
-            y: Swift.max(0, floor((bounds.height - textHeight) / 2)),
+            y: Self.textOriginY(textHeight: textHeight, boundsHeight: bounds.height),
             width: Self.textWidth(scale: layoutScale),
             height: bounds.height
         )
@@ -566,12 +566,28 @@ final class TodoRowButton: NSControl {
 
     private var completionRect: NSRect {
         let size = max(16, 18 * layoutScale)
+        let title = Self.attributedTitle(index: todoIndex, title: todoTitle, scale: layoutScale)
+        let textHeight = title.boundingRect(
+            with: NSSize(width: Self.textWidth(scale: layoutScale), height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).height
+        let firstLineHeight = FocusFonts.todo(index: todoIndex, scale: layoutScale)
+            .boundingRectForFont
+            .height
+        let firstLineCenterY = Self.textOriginY(
+            textHeight: textHeight,
+            boundsHeight: bounds.height
+        ) + (firstLineHeight / 2)
         return NSRect(
-            x: (Self.leadingGutter(scale: layoutScale) - size) / 2,
-            y: floor((bounds.height - size) / 2),
+            x: (Self.leadingGutter(scale: layoutScale) - size - 10) / 2,
+            y: floor(firstLineCenterY - (size / 2)),
             width: size,
             height: size
         )
+    }
+
+    private static func textOriginY(textHeight: CGFloat, boundsHeight: CGFloat) -> CGFloat {
+        Swift.max(0, floor((boundsHeight - textHeight) / 2))
     }
 
     private func drawCompletionCheckbox() {
@@ -603,7 +619,7 @@ enum FocusLayout {
     }
 
     static func hoverGutter(scale: CGFloat) -> CGFloat {
-        28 * scale
+        34 * scale
     }
 
     static func interactiveRowWidth(scale: CGFloat) -> CGFloat {
