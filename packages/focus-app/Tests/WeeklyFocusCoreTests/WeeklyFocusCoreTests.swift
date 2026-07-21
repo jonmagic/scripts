@@ -114,6 +114,71 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertEqual(links[1].displayText, "Projects/foo")
     }
 
+    func testTodoActionCopiesBareSessionIDBeforeOpeningLinks() {
+        let sessionID = "58e236ee-546d-421e-bbae-98dc9743fdd0"
+
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve(
+                "Continue the investigation \(sessionID) https://github.com/github/github/pull/1"
+            ),
+            .copySessionID(sessionID)
+        )
+    }
+
+    func testTodoActionOpensURLWhenUUIDIsPartOfURL() {
+        let url = URL(string: "https://example.com/copilot/c/58e236ee-546d-421e-bbae-98dc9743fdd0")!
+
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve("Continue \(url.absoluteString)"),
+            .openURL(url)
+        )
+    }
+
+    func testTodoActionCopiesSessionIDFromResumeSyntax() {
+        let sessionID = "58e236ee-546d-421e-bbae-98dc9743fdd0"
+
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve("Continue with copilot --resume=\(sessionID)"),
+            .copySessionID(sessionID)
+        )
+    }
+
+    func testTodoActionOpensOnlyFirstLink() {
+        let firstURL = URL(string: "https://github.com/github/github/pull/1")!
+
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve(
+                "Review \(firstURL.absoluteString) and https://github.com/github/github/pull/2"
+            ),
+            .openURL(firstURL)
+        )
+    }
+
+    func testTodoActionTrimsTrailingURLPunctuation() {
+        let url = URL(string: "https://github.com/github/github/pull/1")!
+
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve("Review \(url.absoluteString), then reply."),
+            .openURL(url)
+        )
+    }
+
+    func testTodoActionOpensBrainWikilinkWhenNoURLExists() {
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve(
+                "Follow up. (source: [[Meeting Notes/Safety Eng LT/2026-07-20/03]])"
+            ),
+            .openBrainWikilink("Meeting Notes/Safety Eng LT/2026-07-20/03")
+        )
+    }
+
+    func testTodoActionLaunchesCopilotWithoutSessionOrLink() {
+        XCTAssertEqual(
+            WeeklyFocusTodoActionResolver.resolve("Check the Redis cutover state"),
+            .launchCopilot
+        )
+    }
+
     func testResolvesPathWikilinkWithImplicitMarkdownExtension() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -381,6 +446,53 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertTrue(updated.contains("- [ ] One"))
         XCTAssertTrue(updated.contains("- [x] Two"))
         XCTAssertTrue(updated.contains("- [ ] Scheduled item"))
+
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func testMarksTodoDoneAtBottomOfCompletedItemsAndPreservesOtherLines() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: weeklyDirectory,
+            withIntermediateDirectories: true
+        )
+        let weeklyNote = weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md")
+        try [
+            "# Week",
+            "",
+            "## TODO<!-- {\"fold\":true} -->",
+            "- [x] Done one",
+            "- [ ] Pending one",
+            "  - detail for pending one",
+            "- [x] Done two",
+            "- [ ] Pending two",
+            "  - detail for pending two",
+            "",
+            "## Schedule",
+            "- [ ] Scheduled item",
+            ""
+        ].joined(separator: "\n").write(to: weeklyNote, atomically: true, encoding: .utf8)
+
+        try WeeklyFocusReader.markTodoDone("Pending two", weeklyNotePath: weeklyNote.path)
+
+        let updated = try String(contentsOf: weeklyNote, encoding: .utf8)
+        let todoSection = updated
+            .components(separatedBy: "## TODO<!-- {\"fold\":true} -->\n")[1]
+            .components(separatedBy: "\n## Schedule")[0]
+        XCTAssertEqual(
+            todoSection,
+            [
+                "- [x] Done one",
+                "- [x] Done two",
+                "- [x] Pending two",
+                "  - detail for pending two",
+                "- [ ] Pending one",
+                "  - detail for pending one",
+                ""
+            ].joined(separator: "\n")
+        )
 
         try FileManager.default.removeItem(at: directory)
     }

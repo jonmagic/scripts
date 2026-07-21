@@ -93,12 +93,14 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 
 `weekly-focus-app` opens a native macOS app that reads the current weekly note,
 fills the current monitor by default, and shows at most five unchecked `## TODO`
-items. Click an item, press `1`-`5`, or press `⌘1`-`⌘5` to briefly highlight
-the row, open a new cmux workspace in `~/Brain`, and bring cmux forward with
-`c` started on that TODO. Command-click an item to mark it complete in the
-weekly note. Links inside TODO text open directly when clicked, and Brain
-wikilinks open in VS Code Insiders. Press `⌘O` to open the source weekly note
-in VS Code Insiders. The app also watches the
+items. Each whole TODO row has one action: a bare Copilot session ID is copied
+to the clipboard; otherwise the first URL or Brain wikilink opens; otherwise a
+new cmux workspace opens in `~/Brain` with `c` started on that TODO. Click an
+item, press `1`-`5`, or press `⌘1`-`⌘5` to run that action. Hover a row to show
+its completion checkbox, or command-click the row, to check it off in the
+weekly note. Completed TODOs are kept above unchecked TODOs, with the newly
+completed item last in the completed group. Press `⌘O` to open the source
+weekly note in VS Code Insiders. The app also watches the
 weekly note and refreshes automatically when an external markdown edit checks
 off or adds TODOs. Up to five items after the top five fade below the main
 focus area.

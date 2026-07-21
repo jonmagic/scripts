@@ -65,6 +65,68 @@ public struct BrainWikilink: Equatable {
     public let range: NSRange
 }
 
+public enum WeeklyFocusTodoAction: Equatable {
+    case launchCopilot
+    case copySessionID(String)
+    case openURL(URL)
+    case openBrainWikilink(String)
+}
+
+public enum WeeklyFocusTodoActionResolver {
+    private static let sessionIDPattern =
+        #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#
+    private static let urlPattern = #"https?://[^\s)\]]+"#
+    private static let trailingURLPunctuation = CharacterSet(charactersIn: ".,;:!?>}\"'")
+
+    private struct TextMatch {
+        let text: String
+        let range: NSRange
+    }
+
+    public static func resolve(_ todo: String) -> WeeklyFocusTodoAction {
+        let urlMatches = matches(in: todo, pattern: urlPattern)
+        let sessionMatches = matches(in: todo, pattern: sessionIDPattern)
+        if let sessionMatch = sessionMatches.first(where: { sessionMatch in
+            !urlMatches.contains(where: { urlMatch in
+                NSLocationInRange(sessionMatch.range.location, urlMatch.range) &&
+                    NSMaxRange(sessionMatch.range) <= NSMaxRange(urlMatch.range)
+            })
+        }) {
+            return .copySessionID(sessionMatch.text)
+        }
+
+        if let rawURL = urlMatches.first?.text,
+           let urlText = rawURL.trimmingCharacters(in: trailingURLPunctuation).nonEmpty,
+           let url = URL(string: urlText) {
+            return .openURL(url)
+        }
+
+        if let wikilink = BrainWikilinkResolver.wikilinks(in: todo).first {
+            return .openBrainWikilink(wikilink.target)
+        }
+
+        return .launchCopilot
+    }
+
+    private static func matches(in text: String, pattern: String) -> [TextMatch] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+
+        let nsText = NSString(string: text)
+        let range = NSRange(location: 0, length: nsText.length)
+        return regex.matches(in: text, range: range).map { match in
+            TextMatch(text: nsText.substring(with: match.range), range: match.range)
+        }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
 public enum BrainWikilinkResolver {
     private static let pattern = #"\[\[([^\]\|\n]+)(?:\|([^\]\n]+))?\]\]"#
 
@@ -196,6 +258,12 @@ public enum BrainWikilinkResolver {
 }
 
 public struct WeeklyFocusReader {
+    private struct ChecklistBlock {
+        var lines: [String]
+        let isCompleted: Bool
+        let isSelected: Bool
+    }
+
     public let brainRoot: String
     public let weeklyNotePath: String
 
@@ -261,8 +329,11 @@ public struct WeeklyFocusReader {
                 continue
             }
 
-            let originalItem = String(line.dropFirst("- [ ] ".count))
-            lines[index] = "- [x] \(originalItem)"
+            let reorderedSection = reorderedTodoSection(
+                Array(lines[bounds.start..<bounds.end]),
+                selectedOffset: index - bounds.start
+            )
+            lines.replaceSubrange(bounds.start..<bounds.end, with: reorderedSection)
             try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
             return true
         }
@@ -522,13 +593,74 @@ public struct WeeklyFocusReader {
     }
 
     private static func sectionBounds(in lines: [String], heading: String) -> (start: Int, end: Int)? {
-        guard let headingIndex = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == heading }) else {
+        guard let headingIndex = lines.firstIndex(where: { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed == heading || trimmed.hasPrefix("\(heading)<!--")
+        }) else {
             return nil
         }
 
         let start = headingIndex + 1
         let end = lines[start...].firstIndex(where: { $0.hasPrefix("## ") }) ?? lines.count
         return (start, end)
+    }
+
+    private static func isChecklistLine(_ line: String) -> Bool {
+        line.hasPrefix("- [ ] ") || isCompletedChecklistLine(line)
+    }
+
+    private static func isCompletedChecklistLine(_ line: String) -> Bool {
+        line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ")
+    }
+
+    private static func reorderedTodoSection(
+        _ sectionLines: [String],
+        selectedOffset: Int
+    ) -> [String] {
+        guard let firstChecklistOffset = sectionLines.firstIndex(where: isChecklistLine) else {
+            return sectionLines
+        }
+
+        var contentEnd = sectionLines.count
+        while contentEnd > firstChecklistOffset &&
+            sectionLines[contentEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            contentEnd -= 1
+        }
+
+        let prefix = Array(sectionLines[..<firstChecklistOffset])
+        let suffix = Array(sectionLines[contentEnd...])
+        var blocks: [ChecklistBlock] = []
+        var currentBlock: ChecklistBlock?
+
+        for offset in firstChecklistOffset..<contentEnd {
+            let line = sectionLines[offset]
+            if isChecklistLine(line) {
+                if let currentBlock {
+                    blocks.append(currentBlock)
+                }
+
+                let isSelected = offset == selectedOffset
+                let itemLine = isSelected
+                    ? "- [x] \(line.dropFirst("- [ ] ".count))"
+                    : line
+                currentBlock = ChecklistBlock(
+                    lines: [itemLine],
+                    isCompleted: isSelected || isCompletedChecklistLine(line),
+                    isSelected: isSelected
+                )
+            } else {
+                currentBlock?.lines.append(line)
+            }
+        }
+
+        if let currentBlock {
+            blocks.append(currentBlock)
+        }
+
+        let completed = blocks.filter { $0.isCompleted && !$0.isSelected }
+        let selected = blocks.filter(\.isSelected)
+        let pending = blocks.filter { !$0.isCompleted }
+        return prefix + (completed + selected + pending).flatMap(\.lines) + suffix
     }
 
     private static func insertBeforeSectionTrailingBlank(

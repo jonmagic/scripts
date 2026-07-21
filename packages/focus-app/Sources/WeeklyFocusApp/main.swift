@@ -296,14 +296,9 @@ final class WeeklyNoteWatcher {
 }
 
 final class TodoRowButton: NSControl {
-    enum LinkTarget {
-        case url(URL)
-        case brainWikilink(String)
-    }
-
     var todoIndex: Int = 0
-    var linkHandler: ((LinkTarget) -> Void)?
-    var isLaunching = false {
+    var completionHandler: (() -> Void)?
+    var isActivating = false {
         didSet {
             needsDisplay = true
         }
@@ -318,11 +313,13 @@ final class TodoRowButton: NSControl {
             needsDisplay = true
         }
     }
+    private var isCompletionPressed = false {
+        didSet {
+            needsDisplay = true
+        }
+    }
     private let todoTitle: String
     private let layoutScale: CGFloat
-    private static let urlPattern = #"https?://[^\s)\]]+"#
-    private static let urlAttribute = NSAttributedString.Key("weeklyFocusURLTarget")
-    private static let brainWikilinkAttribute = NSAttributedString.Key("weeklyFocusBrainWikilinkTarget")
 
     init(index: Int, title: String, scale: CGFloat) {
         self.todoIndex = index
@@ -384,31 +381,35 @@ final class TodoRowButton: NSControl {
     override func mouseExited(with event: NSEvent) {
         isHovering = false
         isPressed = false
+        isCompletionPressed = false
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        if isLaunching || isPressed || isHovering {
+        if isActivating || isPressed || isHovering {
             let highlightRect = bounds.insetBy(dx: -10, dy: 0)
-            let alpha = isLaunching ? 0.12 : isPressed ? 0.10 : 0.045
+            let alpha = isActivating ? 0.12 : isPressed ? 0.10 : 0.045
             FocusColors.accent.withAlphaComponent(alpha).setFill()
             NSBezierPath(roundedRect: highlightRect, xRadius: 12, yRadius: 12).fill()
         }
 
         let title = Self.attributedTitle(index: todoIndex, title: todoTitle, scale: layoutScale)
         let textHeight = title.boundingRect(
-            with: NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude),
+            with: NSSize(width: Self.textWidth(scale: layoutScale), height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).height
         let rect = NSRect(
             x: 0,
             y: Swift.max(0, floor((bounds.height - textHeight) / 2)),
-            width: bounds.width,
+            width: Self.textWidth(scale: layoutScale),
             height: bounds.height
         )
 
         title.draw(in: rect)
+        if isHovering || isCompletionPressed {
+            drawCompletionCheckbox()
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -417,10 +418,14 @@ final class TodoRowButton: NSControl {
     }
 
     override func mouseDown(with event: NSEvent) {
-        isPressed = true
+        let initialPoint = convert(event.locationInWindow, from: nil)
+        let isCompleting = completionRect.contains(initialPoint)
+        isCompletionPressed = isCompleting
+        isPressed = !isCompleting
         displayIfNeeded()
         guard let window else {
             isPressed = false
+            isCompletionPressed = false
             return
         }
 
@@ -435,21 +440,25 @@ final class TodoRowButton: NSControl {
             }
 
             let point = convert(nextEvent.locationInWindow, from: nil)
-            let isInside = bounds.contains(point)
-            isPressed = isInside
+            let isInside = isCompleting
+                ? completionRect.contains(point)
+                : bounds.contains(point) && !completionRect.contains(point)
+            isCompletionPressed = isCompleting && isInside
+            isPressed = !isCompleting && isInside
             displayIfNeeded()
 
             if nextEvent.type == .leftMouseUp {
                 if isInside {
-                    if let target = linkTarget(at: point) {
-                        linkHandler?(target)
+                    if isCompleting {
+                        completionHandler?()
                     } else {
-                        showLaunchFeedback()
+                        showActionFeedback()
                         DispatchQueue.main.async { [weak self] in
                             self?.sendConfiguredAction()
                         }
                     }
                 }
+                isCompletionPressed = false
                 return
             }
         }
@@ -464,11 +473,11 @@ final class TodoRowButton: NSControl {
         return true
     }
 
-    func showLaunchFeedback() {
-        isLaunching = true
+    func showActionFeedback() {
+        isActivating = true
         displayIfNeeded()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.isLaunching = false
+            self?.isActivating = false
         }
     }
 
@@ -488,7 +497,7 @@ final class TodoRowButton: NSControl {
         ]
         let rect = NSString(string: "\(index + 1). \(title)").boundingRect(
             with: NSSize(
-                width: FocusLayout.rowWidth(scale: scale),
+                width: textWidth(scale: scale),
                 height: CGFloat.greatestFiniteMagnitude
             ),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
@@ -510,26 +519,26 @@ final class TodoRowButton: NSControl {
             ]
         )
 
-        if let regex = try? NSRegularExpression(pattern: urlPattern) {
-            let range = NSRange(location: 0, length: NSString(string: fullTitle).length)
-            for match in regex.matches(in: fullTitle, range: range) {
-                let urlText = NSString(string: fullTitle).substring(with: match.range)
-                guard let url = URL(string: urlText) else {
-                    continue
-                }
-
-                attributed.addAttributes([
-                    .foregroundColor: FocusColors.link,
-                    urlAttribute: url
-                ], range: match.range)
-            }
+        let actionableRange: NSRange?
+        switch WeeklyFocusTodoActionResolver.resolve(title) {
+        case .copySessionID(let sessionID):
+            actionableRange = NSString(string: fullTitle).range(of: sessionID)
+        case .openURL(let url):
+            actionableRange = NSString(string: fullTitle).range(of: url.absoluteString)
+        case .openBrainWikilink(let target):
+            actionableRange = BrainWikilinkResolver.wikilinks(in: fullTitle)
+                .first(where: { $0.target == target })?
+                .range
+        case .launchCopilot:
+            actionableRange = nil
         }
 
-        for wikilink in BrainWikilinkResolver.wikilinks(in: fullTitle) {
-            attributed.addAttributes([
-                .foregroundColor: FocusColors.link,
-                brainWikilinkAttribute: wikilink.target
-            ], range: wikilink.range)
+        if let actionableRange, actionableRange.location != NSNotFound {
+            attributed.addAttribute(
+                .foregroundColor,
+                value: FocusColors.link,
+                range: actionableRange
+            )
         }
 
         return attributed
@@ -547,65 +556,33 @@ final class TodoRowButton: NSControl {
         NSString(string: "\(index + 1). ").size(withAttributes: [.font: font]).width
     }
 
-    private func linkTarget(at point: NSPoint) -> LinkTarget? {
-        let title = Self.attributedTitle(index: todoIndex, title: todoTitle, scale: layoutScale)
-        let textRect = self.textRect(for: title)
-        guard textRect.contains(point) else {
-            return nil
-        }
-
-        let textStorage = NSTextStorage(attributedString: title)
-        let layoutManager = NSLayoutManager()
-        let textContainer = NSTextContainer(size: textRect.size)
-        textContainer.lineFragmentPadding = 0
-        textContainer.lineBreakMode = .byWordWrapping
-        textStorage.addLayoutManager(layoutManager)
-        layoutManager.addTextContainer(textContainer)
-
-        let pointInText = NSPoint(
-            x: point.x - textRect.minX,
-            y: point.y - textRect.minY
-        )
-        let glyphIndex = layoutManager.glyphIndex(
-            for: pointInText,
-            in: textContainer
-        )
-        guard glyphIndex < layoutManager.numberOfGlyphs else {
-            return nil
-        }
-
-        let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-        if let target = title.attribute(
-            Self.brainWikilinkAttribute,
-            at: characterIndex,
-            effectiveRange: nil
-        ) as? String {
-            return .brainWikilink(target)
-        }
-
-        if let url = title.attribute(
-            Self.urlAttribute,
-            at: characterIndex,
-            effectiveRange: nil
-        ) as? URL {
-            return .url(url)
-        }
-
-        return nil
+    private static func textWidth(scale: CGFloat) -> CGFloat {
+        FocusLayout.rowWidth(scale: scale) - (34 * scale)
     }
 
-    private func textRect(for title: NSAttributedString) -> NSRect {
-        let textHeight = title.boundingRect(
-            with: NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        ).height
-
+    private var completionRect: NSRect {
+        let size = max(16, 18 * layoutScale)
         return NSRect(
-            x: 0,
-            y: Swift.max(0, floor((bounds.height - textHeight) / 2)),
-            width: bounds.width,
-            height: bounds.height
+            x: bounds.maxX - size - (4 * layoutScale),
+            y: floor((bounds.height - size) / 2),
+            width: size,
+            height: size
         )
+    }
+
+    private func drawCompletionCheckbox() {
+        let rect = completionRect.insetBy(dx: 1, dy: 1)
+        let color = isCompletionPressed
+            ? FocusColors.accent
+            : FocusColors.text.withAlphaComponent(0.45)
+        color.setStroke()
+        let path = NSBezierPath(
+            roundedRect: rect,
+            xRadius: 4 * layoutScale,
+            yRadius: 4 * layoutScale
+        )
+        path.lineWidth = max(1, 1.5 * layoutScale)
+        path.stroke()
     }
 }
 
@@ -811,7 +788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let focusMenu = NSMenu(title: "Focus")
         for index in 0..<5 {
             let item = NSMenuItem(
-                title: "Open Item \(index + 1)",
+                title: "Activate Item \(index + 1)",
                 action: #selector(openTodoMenuItem(_:)),
                 keyEquivalent: "\(index + 1)"
             )
@@ -1012,8 +989,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let button = TodoRowButton(index: index, title: title, scale: contentScale)
         button.target = self
         button.action = #selector(todoButtonPressed(_:))
-        button.linkHandler = { [weak self] target in
-            self?.openTodoLink(target)
+        button.completionHandler = { [weak self] in
+            self?.markDone(at: index)
         }
         todoButtons.append(button)
         return button
@@ -1105,7 +1082,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
             markDone(at: sender.todoIndex)
         } else {
-            launchTodo(at: sender.todoIndex)
+            activateTodo(at: sender.todoIndex)
         }
     }
 
@@ -1114,7 +1091,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     @objc private func openTodoMenuItem(_ sender: NSMenuItem) {
-        launchTodo(at: sender.tag)
+        activateTodo(at: sender.tag)
     }
 
     @objc private func openWeeklyNoteMenuItem(_ sender: Any) {
@@ -1175,8 +1152,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
     }
 
+    private func activateTodo(at index: Int) {
+        guard let snapshot, snapshot.todos.indices.contains(index) else {
+            return
+        }
+
+        showActionFeedback(at: index)
+        let todo = snapshot.todos[index]
+        switch WeeklyFocusTodoActionResolver.resolve(todo) {
+        case .copySessionID(let sessionID):
+            copySessionID(sessionID)
+        case .openURL(let url):
+            NSWorkspace.shared.open(url)
+        case .openBrainWikilink(let target):
+            openBrainWikilink(target)
+        case .launchCopilot:
+            launchTodo(at: index)
+        }
+    }
+
     private func launchTodo(at index: Int) {
-        showLaunchFeedback(at: index)
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
@@ -1203,12 +1198,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         )
     }
 
-    private func showLaunchFeedback(at index: Int) {
+    private func showActionFeedback(at index: Int) {
         guard todoButtons.indices.contains(index) else {
             return
         }
 
-        todoButtons[index].showLaunchFeedback()
+        todoButtons[index].showActionFeedback()
     }
 
     private func openWeeklyNote() {
@@ -1241,29 +1236,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
     }
 
-    private func openTodoLink(_ target: TodoRowButton.LinkTarget) {
-        switch target {
-        case .url(let url):
-            NSWorkspace.shared.open(url)
-        case .brainWikilink(let wikilinkTarget):
-            guard let snapshot else {
-                showAlert(title: "Could not open Brain link", message: "Weekly note is not loaded.")
-                return
-            }
+    private func copySessionID(_ sessionID: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(sessionID, forType: .string) else {
+            showAlert(title: "Could not copy session ID", message: "The system pasteboard rejected the session ID.")
+            return
+        }
+    }
 
-            guard let path = BrainWikilinkResolver.resolvePath(
-                target: wikilinkTarget,
-                brainRoot: snapshot.brainRoot
-            ) else {
-                showAlert(title: "Could not open Brain link", message: "No Brain file matched [[\(wikilinkTarget)]].")
-                return
-            }
+    private func openBrainWikilink(_ wikilinkTarget: String) {
+        guard let snapshot else {
+            showAlert(title: "Could not open Brain link", message: "Weekly note is not loaded.")
+            return
+        }
 
-            do {
-                try openWeeklyNoteInVSCodeInsiders(path: path)
-            } catch {
-                showAlert(title: "Could not open Brain link", message: error.localizedDescription)
-            }
+        guard let path = BrainWikilinkResolver.resolvePath(
+            target: wikilinkTarget,
+            brainRoot: snapshot.brainRoot
+        ) else {
+            showAlert(title: "Could not open Brain link", message: "No Brain file matched [[\(wikilinkTarget)]].")
+            return
+        }
+
+        do {
+            try openWeeklyNoteInVSCodeInsiders(path: path)
+        } catch {
+            showAlert(title: "Could not open Brain link", message: error.localizedDescription)
         }
     }
 
@@ -1372,7 +1371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         if let number = Int(characters), (1...5).contains(number) {
-            launchTodo(at: number - 1)
+            activateTodo(at: number - 1)
             return nil
         }
 
@@ -1390,7 +1389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         if let number = Int(characters), (1...5).contains(number) {
-            launchTodo(at: number - 1)
+            activateTodo(at: number - 1)
             return true
         }
 
