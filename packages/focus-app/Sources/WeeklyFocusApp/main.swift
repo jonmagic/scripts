@@ -332,7 +332,7 @@ final class TodoRowButton: NSControl {
         setAccessibilityRole(.button)
         setAccessibilityLabel("\(index + 1). \(title)")
         setAccessibilityTitle("\(index + 1). \(title)")
-        widthAnchor.constraint(equalToConstant: FocusLayout.rowWidth(scale: scale)).isActive = true
+        widthAnchor.constraint(equalToConstant: FocusLayout.interactiveRowWidth(scale: scale)).isActive = true
         heightAnchor.constraint(equalToConstant: Self.height(for: title, index: index, scale: scale)).isActive = true
     }
 
@@ -344,7 +344,7 @@ final class TodoRowButton: NSControl {
 
     override var intrinsicContentSize: NSSize {
         NSSize(
-            width: FocusLayout.rowWidth(scale: layoutScale),
+            width: FocusLayout.interactiveRowWidth(scale: layoutScale),
             height: Self.height(for: todoTitle, index: todoIndex, scale: layoutScale)
         )
     }
@@ -557,17 +557,17 @@ final class TodoRowButton: NSControl {
     }
 
     private static func textWidth(scale: CGFloat) -> CGFloat {
-        FocusLayout.rowWidth(scale: scale) - leadingGutter(scale: scale)
+        FocusLayout.rowWidth(scale: scale)
     }
 
     private static func leadingGutter(scale: CGFloat) -> CGFloat {
-        28 * scale
+        FocusLayout.hoverGutter(scale: scale)
     }
 
     private var completionRect: NSRect {
         let size = max(16, 18 * layoutScale)
         return NSRect(
-            x: 2 * layoutScale,
+            x: (Self.leadingGutter(scale: layoutScale) - size) / 2,
             y: floor((bounds.height - size) / 2),
             width: size,
             height: size
@@ -600,6 +600,14 @@ enum FocusLayout {
 
     static func rowWidth(scale: CGFloat) -> CGFloat {
         baseRowWidth * scale
+    }
+
+    static func hoverGutter(scale: CGFloat) -> CGFloat {
+        28 * scale
+    }
+
+    static func interactiveRowWidth(scale: CGFloat) -> CGFloat {
+        rowWidth(scale: scale) + (2 * hoverGutter(scale: scale))
     }
 
     static func spacing(scale: CGFloat) -> CGFloat {
@@ -960,8 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private func addOverflowTodos(_ todos: [String]) {
         let shown = Array(todos.prefix(displayedOverflowLimit))
         for (index, todo) in shown.enumerated() {
-            let label = overflowLabel(todo, index: index)
-            contentStack.addArrangedSubview(label)
+            contentStack.addArrangedSubview(overflowRow(todo, index: index))
         }
     }
 
@@ -985,7 +992,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             equalToConstant: FocusLayout.rowWidth(scale: contentScale)
         ).isActive = true
 
+        row.addArrangedSubview(horizontalGutter())
         row.addArrangedSubview(captureField)
+        row.addArrangedSubview(horizontalGutter())
         return row
     }
 
@@ -1028,6 +1037,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             equalToConstant: FocusLayout.rowWidth(scale: contentScale)
         ).isActive = true
         return label
+    }
+
+    private func overflowRow(_ text: String, index: Int) -> NSStackView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 0
+        row.addArrangedSubview(horizontalGutter())
+        row.addArrangedSubview(overflowLabel(text, index: index))
+        row.addArrangedSubview(horizontalGutter())
+        return row
+    }
+
+    private func horizontalGutter() -> NSView {
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.widthAnchor.constraint(
+            equalToConstant: FocusLayout.hoverGutter(scale: contentScale)
+        ).isActive = true
+        return spacer
     }
 
     private func fittedLayout(for snapshot: WeeklyFocusSnapshot) -> (scale: CGFloat, overflowLimit: Int) {
