@@ -400,7 +400,7 @@ final class TodoRowButton: NSControl {
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).height
         let rect = NSRect(
-            x: 0,
+            x: Self.leadingGutter(scale: layoutScale),
             y: Swift.max(0, floor((bounds.height - textHeight) / 2)),
             width: Self.textWidth(scale: layoutScale),
             height: bounds.height
@@ -557,13 +557,17 @@ final class TodoRowButton: NSControl {
     }
 
     private static func textWidth(scale: CGFloat) -> CGFloat {
-        FocusLayout.rowWidth(scale: scale) - (34 * scale)
+        FocusLayout.rowWidth(scale: scale) - leadingGutter(scale: scale)
+    }
+
+    private static func leadingGutter(scale: CGFloat) -> CGFloat {
+        28 * scale
     }
 
     private var completionRect: NSRect {
         let size = max(16, 18 * layoutScale)
         return NSRect(
-            x: bounds.maxX - size - (4 * layoutScale),
+            x: 2 * layoutScale,
             y: floor((bounds.height - size) / 2),
             width: size,
             height: size
