@@ -619,18 +619,23 @@ final class TodoRowButton: NSControl {
 
     private var completionRect: NSRect {
         let size = max(16, 18 * layoutScale)
+        let font = FocusFonts.todo(index: todoIndex, scale: layoutScale)
         let title = Self.attributedTitle(index: todoIndex, title: todoTitle, scale: layoutScale)
         let textHeight = title.boundingRect(
             with: NSSize(width: Self.textWidth(scale: layoutScale), height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         ).height
-        let firstLineHeight = FocusFonts.todo(index: todoIndex, scale: layoutScale)
-            .boundingRectForFont
-            .height
-        let firstLineCenterY = Self.textOriginY(
+        let textTop = Self.textOriginY(
             textHeight: textHeight,
             boundsHeight: bounds.height
-        ) + (firstLineHeight / 2)
+        )
+        // The view is flipped, so the first line starts at the top of the text block
+        // and its baseline sits one ascender below that. Center on the cap-height
+        // midpoint rather than the line box: every row starts with a lining figure,
+        // and the line box includes descender space the eye does not count.
+        // `boundingRectForFont` is the union of every glyph box, which is far taller
+        // than a line and put the checkbox down at the baseline.
+        let firstLineCenterY = textTop + font.ascender - (font.capHeight / 2)
         return NSRect(
             x: (Self.leadingGutter(scale: layoutScale) - size - 10) / 2,
             y: floor(firstLineCenterY - (size / 2)),
