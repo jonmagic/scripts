@@ -51,6 +51,27 @@ cat >"$APP_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# The app reads a GitHub token from the login keychain. macOS ties a keychain ACL
+# to the caller's code signature, so an ad-hoc signature -- whose hash changes on
+# every build -- makes macOS re-prompt for the keychain password after each rebuild.
+# Signing with a real identity yields a stable designated requirement, so "Always
+# Allow" survives rebuilds. Fall back to ad-hoc when no identity is available.
+SIGN_IDENTITY="${WEEKLY_FOCUS_SIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  SIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null |
+      sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' |
+      head -1
+  )"
+fi
+if [[ -z "$SIGN_IDENTITY" ]]; then
+  SIGN_IDENTITY="-"
+fi
+
+codesign --force --sign "$SIGN_IDENTITY" \
+  --identifier com.jonmagic.weekly-focus \
+  "$APP_DIR" >&2
+
 mkdir -p "$INSTALL_DIR"
 rm -rf "$INSTALLED_APP_DIR"
 cp -R "$APP_DIR" "$INSTALLED_APP_DIR"

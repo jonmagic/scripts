@@ -87,32 +87,69 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 | `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
 | `weekly-focus` | Print a low-noise Now/Next/Waiting/Captured view from the current weekly note | bun |
 | `weekly-focus-card` | Print a sparse focus card capped at five current weekly-note TODOs | bun |
-| `weekly-focus-app` | Build and open the native full-screen Weekly Focus app | swift |
+| `weekly-focus-app` | Build and open the native full-screen Weekly Focus app, backed by the GitHub Projects task board | swift |
 
 ## Native Weekly Focus App
 
-`weekly-focus-app` opens a native macOS app that reads the current weekly note,
-fills the current monitor by default, and shows at most five unchecked `## TODO`
-items. Each whole TODO row has one action: a bare Copilot session ID is copied
-to the clipboard; otherwise the first URL or Brain wikilink opens; otherwise a
-new cmux workspace opens in `~/Brain` with `c` started on that TODO. Click an
-item, press `1`-`5`, or press `⌘1`-`⌘5` to run that action. Hover a row to show
-its completion checkbox, or command-click the row, to check it off in the
-weekly note. Completed TODOs are kept above unchecked TODOs, with the newly
-completed item last in the completed group. Press `⌘O` to open the source
-weekly note in VS Code Insiders. The app also watches the
-weekly note and refreshes automatically when an external markdown edit checks
-off or adds TODOs. Up to five items after the top five fade below the main
-focus area.
-Type in the empty field and press Return to add a new TODO. Press `R` to
-refresh and `Q`, `Esc`, or `⌘Q` to quit.
+`weekly-focus-app` opens a native macOS app that shows at most five open tasks,
+fills the current monitor by default, and gives each row one action: a bare
+Copilot session ID is copied to the clipboard; otherwise the first URL or Brain
+wikilink opens; otherwise a new cmux workspace opens in `~/Brain` with `c`
+started on that task. Click an item, press `1`-`5`, or press `⌘1`-`⌘5` to run
+that action. Hover a row to show its completion checkbox, or command-click the
+row, to check it off. Press `⌘O` to open the source weekly note in VS Code
+Insiders. Up to five items after the top five fade below the main focus area.
+Type in the empty field and press Return to add a task. Press `R` to refresh
+and `Q`, `Esc`, or `⌘Q` to quit.
 
-Weekly Focus reads the current week's note when it exists. If the current week
-file has not been created yet, it falls back to the latest existing weekly note
+### Task source
+
+Tasks come from a private GitHub Projects V2 board, which is the canonical
+store. The app talks to the Projects REST API directly over `URLSession`; it
+does not shell out to `gh`. The five focus slots are ordered by the board's
+`Focus` field, and unranked items follow in board order. Completing a task sets
+`Status` to `Done` and stamps `Reviewed`.
+
+The weekly note remains a fallback. When no credential is available or the
+board has never been fetched, the app reads the current week's `## TODO`
+section exactly as before, so it still works offline. If the current week file
+has not been created yet, it falls back to the latest existing weekly note
 instead of failing on Sunday morning.
+
+Reads are served from a local cache at `~/.cache/weekly-focus/board.json` so the
+window paints immediately, then a background refresh reconciles it. A live board
+read costs roughly 550-700ms and no request to `api.github.com` beats about
+320ms from a laptop, so caching is what makes the app usable on a hotkey.
+Refreshes send `If-None-Match`, so an unchanged board costs a cheap `304`. The
+board is shared state that other tools write to, so an open window also refreshes
+every 60 seconds rather than drifting until the next launch.
+
+### Credentials
+
+The token is resolved lazily, off the paint path, in this order:
+
+1. `BRAIN_GITHUB_TOKEN` or `GITHUB_TOKEN`
+2. the macOS Keychain, service `com.jonmagic.brainos.github`, account
+   `github-token` -- the same entry BrainOS uses, so the two share one credential
+3. a one-time bootstrap from `gh auth token`, which is then written to the Keychain
+
+macOS ties a Keychain ACL to the caller's code signature, so an ad-hoc signature
+-- whose hash changes on every build -- would re-prompt after every rebuild.
+`bin/build-weekly-focus-app` therefore signs the bundle with the first
+`Developer ID Application` identity it finds (override with
+`WEEKLY_FOCUS_SIGN_IDENTITY`, falls back to ad-hoc when none exists). That gives
+a stable designated requirement, so answering **Always Allow** once survives
+later rebuilds. The prompt appears during the background refresh rather than at
+launch, so the window still paints instantly from cache.
+
+Point the app at a different board with `WEEKLY_FOCUS_PROJECT_OWNER`,
+`WEEKLY_FOCUS_PROJECT_NUMBER`, and `WEEKLY_FOCUS_PROJECT_NODE_ID`. Set
+`WEEKLY_FOCUS_TIMING=1` to print a startup and refresh timing breakdown to
+stderr, which distinguishes a slow Keychain authorization from a slow network.
 
 ```bash
 bin/weekly-focus-app
+bin/weekly-focus-app --print-focus   # prints the card; exits 2 if state is stale
 ```
 
 The build script installs the Dock-safe app bundle at
@@ -122,7 +159,8 @@ The build script installs the Dock-safe app bundle at
 The native app has a self-test that creates a temporary Brain, opens a TODO,
 checks `⌘1` while the text field is focused, verifies automatic refresh after
 an external markdown edit, checks input-field copy/paste and `⌘Q`, adds a TODO,
-marks a TODO done, and asks cmux to open a harmless workspace command:
+marks a TODO done, and asks cmux to open a harmless workspace command. It runs
+against markdown only so it never writes throwaway items to the real board:
 
 ```bash
 bin/test-weekly-focus-app

@@ -50,6 +50,9 @@ MARKDOWN
 
 rm -f "$LAUNCH_FILE"
 
+# Keep the whole run on markdown so it never reads or writes the real task board.
+export WEEKLY_FOCUS_DISABLE_BOARD=1
+
 BRAIN_ROOT="$TMPDIR" swift run \
   --package-path "$ROOT_DIR/packages/focus-app" \
   weekly-focus-app \

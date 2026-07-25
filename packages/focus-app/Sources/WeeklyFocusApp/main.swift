@@ -2,10 +2,63 @@ import AppKit
 import Darwin
 import WeeklyFocusCore
 
+private final class ResultBox<T: Sendable>: @unchecked Sendable {
+    var result: Result<T, Error>?
+}
+
+/// Bridges the async board API into the synchronous CLI entry points.
+private func runBlocking<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) throws -> T {
+    let box = ResultBox<T>()
+    let semaphore = DispatchSemaphore(value: 0)
+
+    Task {
+        do {
+            box.result = .success(try await operation())
+        } catch {
+            box.result = .failure(error)
+        }
+        semaphore.signal()
+    }
+
+    semaphore.wait()
+    return try box.result!.get()
+}
+
 private func printFocusAndExit() {
+    let t0 = Date()
+    let source = FocusSource()
+    if ProcessInfo.processInfo.environment["WEEKLY_FOCUS_TIMING"] == "1" {
+        fputs("timing: source init \(Int(Date().timeIntervalSince(t0) * 1000))ms\n", stderr)
+    }
     do {
-        let snapshot = try WeeklyFocusReader().read(todoLimit: 5)
+        // Prefer fresh board state, but stay useful offline. A stale card is fine as
+        // long as the staleness is visible -- silently serving cache would hide a
+        // broken token or a board that stopped syncing.
+        var snapshot: WeeklyFocusSnapshot
+        var staleReason: String?
+
+        if source.isBoardEnabled {
+            do {
+                let t1 = Date()
+                snapshot = try runBlocking { try await source.refreshed(todoLimit: 5) }
+                if ProcessInfo.processInfo.environment["WEEKLY_FOCUS_TIMING"] == "1" {
+                    fputs("timing: refresh \(Int(Date().timeIntervalSince(t1) * 1000))ms\n", stderr)
+                }
+            } catch {
+                staleReason = error.localizedDescription
+                snapshot = try source.currentSnapshot(todoLimit: 5)
+            }
+        } else {
+            snapshot = try source.currentSnapshot(todoLimit: 5)
+        }
+
         print(WeeklyFocusFormatter.card(snapshot))
+
+        if let staleReason {
+            fputs("warning: showing cached board state; refresh failed: \(staleReason)\n", stderr)
+            exit(2)
+        }
+
         exit(0)
     } catch {
         fputs("\(error.localizedDescription)\n", stderr)
@@ -661,9 +714,16 @@ enum FocusFonts {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSMenuItemValidation, FocusCommandHandling {
     private var window: NSWindow?
     private var snapshot: WeeklyFocusSnapshot?
+    // The self-test exercises the write paths end to end, so it stays on markdown
+    // rather than creating throwaway items on the real board.
+    private let source: FocusSource = CommandLine.arguments.contains("--self-test")
+        ? FocusSource.markdownOnly()
+        : FocusSource()
+    private var isRefreshingBoard = false
     private var keyMonitor: Any?
     private var weeklyNoteWatcher: WeeklyNoteWatcher?
     private var weeklyNotePollTimer: Timer?
+    private var boardRefreshTimer: Timer?
     private var watchedWeeklyNotePath: String?
     private var watchedWeeklyNoteContent: String?
     private var todoButtons: [TodoRowButton] = []
@@ -722,9 +782,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             object: nil
         )
 
+        startBoardRefreshTimer()
+
         if selfTestMode {
-            DispatchQueue.main.async {
-                self.runSelfTest()
+            Task { @MainActor in
+                await self.runSelfTest()
             }
         }
     }
@@ -735,6 +797,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
         weeklyNoteWatcher?.stop()
         weeklyNotePollTimer?.invalidate()
+        boardRefreshTimer?.invalidate()
+    }
+
+    /// The board is shared state that other tools write to, so a window left open
+    /// should not drift. Unchanged boards answer 304, which is cheap and does not
+    /// count against the rate limit.
+    private func startBoardRefreshTimer() {
+        guard source.isBoardEnabled, !selfTestMode else {
+            return
+        }
+
+        boardRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshBoard()
+            }
+        }
     }
 
     func windowDidChangeScreen(_ notification: Notification) {
@@ -875,9 +953,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         return root
     }
 
-    private func reload() {
+    private func reload(force: Bool = false) {
         do {
-            let snapshot = try WeeklyFocusReader().read(
+            // Paint from cache first; the board read costs hundreds of milliseconds
+            // and this app is summoned by a hotkey.
+            let snapshot = try source.currentSnapshot(
                 todoLimit: 5,
                 overflowLimit: FocusLayout.overflowTodoLimit
             )
@@ -887,6 +967,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         } catch {
             snapshot = nil
             renderError(error)
+        }
+
+        refreshBoard(force: force)
+    }
+
+    /// Pulls fresh board state in the background. Failures are intentionally quiet:
+    /// the cached or markdown view stays on screen rather than replacing the list
+    /// with an error the user cannot act on.
+    private func refreshBoard(force: Bool = false) {
+        guard source.isBoardEnabled, !isRefreshingBoard else {
+            return
+        }
+
+        isRefreshingBoard = true
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            defer { self.isRefreshingBoard = false }
+
+            do {
+                let fresh = try await self.source.refreshed(
+                    todoLimit: 5,
+                    overflowLimit: FocusLayout.overflowTodoLimit
+                )
+                guard fresh != self.snapshot else {
+                    return
+                }
+
+                self.snapshot = fresh
+                self.render(snapshot: fresh)
+            } catch {
+                if force {
+                    self.showAlert(
+                        title: "Could not refresh from GitHub",
+                        message: error.localizedDescription
+                    )
+                }
+            }
         }
     }
 
@@ -1181,23 +1301,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             return
         }
 
-        guard let snapshot else {
+        guard snapshot != nil else {
             return
         }
 
-        do {
-            isSubmittingTodo = true
-            try WeeklyFocusReader.appendTodo(
-                text,
-                weeklyNotePath: snapshot.weeklyNotePath
-            )
-            captureField.stringValue = ""
-            window?.makeFirstResponder(nil)
-            reload()
-            isSubmittingTodo = false
-        } catch {
-            isSubmittingTodo = false
-            showAlert(title: "Could not capture", message: error.localizedDescription)
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                self.isSubmittingTodo = true
+                try await self.source.add(text)
+                self.captureField.stringValue = ""
+                self.window?.makeFirstResponder(nil)
+                self.reload()
+                self.isSubmittingTodo = false
+            } catch {
+                self.isSubmittingTodo = false
+                self.showAlert(title: "Could not capture", message: error.localizedDescription)
+            }
         }
     }
 
@@ -1207,7 +1330,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         showActionFeedback(at: index)
-        let todo = snapshot.todos[index]
+        guard let todo = FocusSource.actionText(for: snapshot, at: index) else {
+            return
+        }
+
         switch WeeklyFocusTodoActionResolver.resolve(todo) {
         case .copySessionID(let sessionID):
             copySessionID(sessionID)
@@ -1373,14 +1499,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             return
         }
 
-        do {
-            try WeeklyFocusReader.markTodoDone(
-                snapshot.todos[index],
-                weeklyNotePath: snapshot.weeklyNotePath
-            )
-            reload()
-        } catch {
-            showAlert(title: "Could not mark TODO done", message: error.localizedDescription)
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                try await self.source.complete(snapshot, at: index)
+                self.reload()
+            } catch {
+                self.showAlert(title: "Could not mark TODO done", message: error.localizedDescription)
+            }
         }
     }
 
@@ -1410,7 +1539,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
 
         if characters == "r" {
-            reload()
+            // An explicit refresh should say so when GitHub is unreachable.
+            reload(force: true)
             return nil
         }
 
@@ -1503,6 +1633,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         alert.runModal()
     }
 
+    private func waitUntilAsync(timeout: TimeInterval, _ condition: @MainActor () -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            reloadIfWeeklyNoteChanged()
+            if condition() {
+                return true
+            }
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        return condition()
+    }
+
     private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -1517,7 +1661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         return condition()
     }
 
-    private func runSelfTest() {
+    private func runSelfTest() async {
         do {
             guard let window else {
                 throw WeeklyFocusError.launchFailed("self-test window missing")
@@ -1530,7 +1674,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             captureField.stringValue = "Self-test todo"
             todoSubmitted(self)
 
-            guard let afterTodo = snapshot, afterTodo.todos.contains("Self-test todo") else {
+            // Capture now completes asynchronously, so wait for the snapshot to catch up.
+            let captured = await waitUntilAsync(timeout: 5) {
+                self.snapshot?.todos.contains("Self-test todo") == true
+            }
+            guard captured, let afterTodo = snapshot else {
                 throw WeeklyFocusError.launchFailed("self-test TODO entry did not refresh snapshot")
             }
 
@@ -1539,7 +1687,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                     externallyEditedTodo,
                     weeklyNotePath: afterTodo.weeklyNotePath
                 )
-                let reloaded = waitUntil(timeout: 3) {
+                let reloaded = await waitUntilAsync(timeout: 3) {
                     self.snapshot?.todos.first != externallyEditedTodo
                 }
                 if !reloaded {
@@ -1548,10 +1696,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             }
 
             let firstTodo = snapshot?.todos.first
-            if firstTodo != nil {
+            if let firstTodo {
                 markDone(at: 0)
-                let afterDone = try WeeklyFocusReader().read(todoLimit: 5)
-                if afterDone.todos.first == firstTodo {
+                let updated = await waitUntilAsync(timeout: 5) {
+                    (try? WeeklyFocusReader().read(todoLimit: 5))?.todos.first != firstTodo
+                }
+                if !updated {
                     throw WeeklyFocusError.launchFailed("self-test mark done did not update TODO list")
                 }
             }

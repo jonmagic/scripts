@@ -18,8 +18,12 @@ case "${1:-}" in
     cat <<'USAGE'
 Usage: weekly-focus-app [--print-focus]
 
+Tasks come from the private GitHub Projects board. The weekly note is used as a
+fallback when no credential is available or the board has not been fetched yet.
+
 Options:
   --print-focus                 Print the weekly focus card and exit
+                                (exit 2 when showing stale cached board state)
   --self-test                   Run the AppKit capture/done self-test
   --self-test-launch            Include harmless cmux launch in self-test
   --self-test-copilot-launch    Launch a real cmux Copilot smoke workspace

@@ -1,13 +1,24 @@
 import Foundation
 import Darwin
 
-public struct WeeklyFocusSnapshot: Equatable {
+public struct WeeklyFocusSnapshot: Equatable, Sendable {
     public let brainRoot: String
     public let weeklyNotePath: String
     public let todos: [String]
     public let overflowTodos: [String]
     public let waiting: [String]
     public let capturedCount: Int
+
+    /// Board-backed tasks, parallel to `todos`. Empty when the snapshot came from
+    /// markdown, which is what the app falls back to when the board is unreachable.
+    public let tasks: [FocusTask]
+
+    /// Board items behind the focus list, used for the overflow count.
+    public let overflowTasks: [FocusTask]
+
+    public var isBoardBacked: Bool {
+        !tasks.isEmpty
+    }
 
     public var now: String? {
         todos.first
@@ -23,7 +34,9 @@ public struct WeeklyFocusSnapshot: Equatable {
         todos: [String],
         overflowTodos: [String] = [],
         waiting: [String],
-        capturedCount: Int
+        capturedCount: Int,
+        tasks: [FocusTask] = [],
+        overflowTasks: [FocusTask] = []
     ) {
         self.brainRoot = brainRoot
         self.weeklyNotePath = weeklyNotePath
@@ -31,6 +44,39 @@ public struct WeeklyFocusSnapshot: Equatable {
         self.overflowTodos = overflowTodos
         self.waiting = waiting
         self.capturedCount = capturedCount
+        self.tasks = tasks
+        self.overflowTasks = overflowTasks
+    }
+
+    /// Builds a snapshot from board items, preserving the shape the UI already renders.
+    public static func fromBoard(
+        _ boardTasks: [FocusTask],
+        brainRoot: String,
+        weeklyNotePath: String,
+        todoLimit: Int = 5,
+        overflowLimit: Int? = nil,
+        waitingLimit: Int = 3
+    ) -> WeeklyFocusSnapshot {
+        let ordered = focusOrdered(boardTasks)
+        let open = ordered.filter { $0.isOpen && !$0.isWaiting }
+        let waiting = ordered.filter(\.isWaiting)
+
+        let focused = Array(open.prefix(todoLimit))
+        var overflow = Array(open.dropFirst(todoLimit))
+        if let overflowLimit {
+            overflow = Array(overflow.prefix(overflowLimit))
+        }
+
+        return WeeklyFocusSnapshot(
+            brainRoot: brainRoot,
+            weeklyNotePath: weeklyNotePath,
+            todos: focused.map(\.displayText),
+            overflowTodos: overflow.map(\.displayText),
+            waiting: waiting.prefix(waitingLimit).map(\.displayText),
+            capturedCount: boardTasks.filter { !$0.isOpen }.count,
+            tasks: focused,
+            overflowTasks: overflow
+        )
     }
 }
 
