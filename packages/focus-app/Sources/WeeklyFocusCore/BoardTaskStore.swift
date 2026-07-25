@@ -19,6 +19,11 @@ public struct CachedBoard: Codable, Sendable {
 
 public enum BoardCache {
     public static var defaultURL: URL {
+        // Overridable so the end-to-end test never clobbers the real cache.
+        if let override = BrainBoard.environment("WEEKLY_FOCUS_CACHE") {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+        }
+
         let base = FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent(".cache/weekly-focus", isDirectory: true)
@@ -72,6 +77,10 @@ public final class BoardTaskStore: @unchecked Sendable {
     private let lock = NSLock()
     private var cached: CachedBoard?
 
+    /// Bumped by every local write. A fetch that started before a write finishes
+    /// after it would otherwise resurrect the task that was just completed.
+    private var localWrites = 0
+
     public init(client: ProjectsV2Client, cacheURL: URL = BoardCache.defaultURL) {
         self.client = client
         self.cacheURL = cacheURL
@@ -92,11 +101,17 @@ public final class BoardTaskStore: @unchecked Sendable {
 
     @discardableResult
     public func refresh() async throws -> [FocusTask] {
-        let etag = lock.withLock { cached?.etag }
+        let (etag, writesAtStart) = lock.withLock { (cached?.etag, localWrites) }
 
         let result = try await client.fetchItems(query: Self.currentWeekQuery, etag: etag)
 
         return lock.withLock {
+            // A local write landed while this fetch was in flight, so the response
+            // predates it. Keep the optimistic state; the next refresh reconciles.
+            guard localWrites == writesAtStart else {
+                return cached?.tasks ?? []
+            }
+
             if let tasks = result.tasks {
                 let board = CachedBoard(tasks: tasks, etag: result.etag, fetchedAt: Date())
                 cached = board
@@ -149,6 +164,13 @@ public final class BoardTaskStore: @unchecked Sendable {
 
     /// Adds a task to the current week as Todo.
     public func add(title: String, target: String? = nil, source: String? = nil) async throws {
+        let title = Self.normalizedTitle(title)
+        guard !title.isEmpty else {
+            throw WeeklyFocusError.writeFailed("Task text is required")
+        }
+
+        noteLocalWrite()
+
         var fields: [ProjectsV2Client.FieldUpdate] = [
             .init(id: BrainBoard.Field.status, value: BrainBoard.Status.todo)
         ]
@@ -163,8 +185,14 @@ public final class BoardTaskStore: @unchecked Sendable {
         _ = try await refresh()
     }
 
+    private func noteLocalWrite() {
+        lock.withLock { localWrites += 1 }
+    }
+
     private func applyLocally(id: Int, transform: (FocusTask) -> FocusTask) {
         lock.withLock {
+            localWrites += 1
+
             guard var board = cached, let index = board.tasks.firstIndex(where: { $0.id == id }) else {
                 return
             }
@@ -173,6 +201,15 @@ public final class BoardTaskStore: @unchecked Sendable {
             cached = board
             BoardCache.save(board, to: cacheURL)
         }
+    }
+
+    /// Board titles are single-line, so collapse pasted text rather than letting a
+    /// newline land in the middle of a title.
+    static func normalizedTitle(_ text: String) -> String {
+        text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     static func today(_ now: Date = Date(), calendar: Calendar = .current) -> String {

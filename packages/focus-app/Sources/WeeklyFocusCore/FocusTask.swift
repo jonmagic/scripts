@@ -21,6 +21,28 @@ public enum BrainBoard {
         environment("WEEKLY_FOCUS_PROJECT_NODE_ID") ?? "PVT_kwHNAm_OAXnL6Q"
     }
 
+    /// API root, so the app can be pointed at a GitHub Enterprise Server install or at
+    /// a local stub. Tests rely on this to exercise the real client without touching
+    /// the live board.
+    public static let defaultAPIBase = URL(string: "https://api.github.com")!
+
+    public static func apiBaseURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL {
+        guard
+            let raw = environment["WEEKLY_FOCUS_API_BASE"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !raw.isEmpty
+        else {
+            return defaultAPIBase
+        }
+
+        // A trailing slash would produce "//graphql" once we append paths.
+        var trimmed = raw
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        return URL(string: trimmed) ?? defaultAPIBase
+    }
+
     public static func environment(_ key: String) -> String? {
         guard let value = ProcessInfo.processInfo.environment[key]?
             .trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty

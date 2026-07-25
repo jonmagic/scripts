@@ -104,17 +104,15 @@ and `Q`, `Esc`, or `⌘Q` to quit.
 
 ### Task source
 
-Tasks come from a private GitHub Projects V2 board, which is the canonical
-store. The app talks to the Projects REST API directly over `URLSession`; it
-does not shell out to `gh`. The five focus slots are ordered by the board's
-`Focus` field, and unranked items follow in board order. Completing a task sets
-`Status` to `Done` and stamps `Reviewed`.
+A private GitHub Projects V2 board is the only task source. The app talks to
+the Projects REST API directly over `URLSession`; it does not shell out to `gh`.
+The five focus slots are ordered by the board's `Focus` field, and unranked
+items follow in board order. Completing a task sets `Status` to `Done` and
+stamps `Reviewed`.
 
-The weekly note remains a fallback. When no credential is available or the
-board has never been fetched, the app reads the current week's `## TODO`
-section exactly as before, so it still works offline. If the current week file
-has not been created yet, it falls back to the latest existing weekly note
-instead of failing on Sunday morning.
+There is no markdown fallback. Weekly notes are still used for wikilink
+resolution and for `⌘O`, but they no longer hold tasks, so reading and writing
+cannot disagree about which store is canonical.
 
 Reads are served from a local cache at `~/.cache/weekly-focus/board.json` so the
 window paints immediately, then a background refresh reconciles it. A live board
@@ -143,8 +141,11 @@ later rebuilds. The prompt appears during the background refresh rather than at
 launch, so the window still paints instantly from cache.
 
 Point the app at a different board with `WEEKLY_FOCUS_PROJECT_OWNER`,
-`WEEKLY_FOCUS_PROJECT_NUMBER`, and `WEEKLY_FOCUS_PROJECT_NODE_ID`. Set
-`WEEKLY_FOCUS_TIMING=1` to print a startup and refresh timing breakdown to
+`WEEKLY_FOCUS_PROJECT_NUMBER`, and `WEEKLY_FOCUS_PROJECT_NODE_ID`, and at a
+different API root with `WEEKLY_FOCUS_API_BASE`. `WEEKLY_FOCUS_CACHE` moves the
+cache file and `WEEKLY_FOCUS_REFRESH_SECONDS` changes the open-window refresh
+interval; both exist so the end-to-end test can run without touching real state.
+Set `WEEKLY_FOCUS_TIMING=1` to print a startup and refresh timing breakdown to
 stderr, which distinguishes a slow Keychain authorization from a slow network.
 
 ```bash
@@ -156,11 +157,12 @@ The build script installs the Dock-safe app bundle at
 `~/Applications/Weekly Focus.app` with the bundled app icon from
 `packages/focus-app/Resources/WeeklyFocus.icns`.
 
-The native app has a self-test that creates a temporary Brain, opens a TODO,
-checks `⌘1` while the text field is focused, verifies automatic refresh after
-an external markdown edit, checks input-field copy/paste and `⌘Q`, adds a TODO,
-marks a TODO done, and asks cmux to open a harmless workspace command. It runs
-against markdown only so it never writes throwaway items to the real board:
+The native app has an end-to-end test that stands up a local stub of the
+Projects API (`packages/focus-app/Tools/stub-projects-api.py`) and points the
+app at it, so it never reads or writes the real board. It captures a task,
+completes one, checks `⌘1` while the text field is focused, verifies the open
+window picks up a change made to the board elsewhere, checks input-field
+copy/paste and `⌘Q`, and asks cmux to open a harmless workspace command:
 
 ```bash
 bin/test-weekly-focus-app

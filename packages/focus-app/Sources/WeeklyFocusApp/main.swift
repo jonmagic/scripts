@@ -30,40 +30,31 @@ private func printFocusAndExit() {
     if ProcessInfo.processInfo.environment["WEEKLY_FOCUS_TIMING"] == "1" {
         fputs("timing: source init \(Int(Date().timeIntervalSince(t0) * 1000))ms\n", stderr)
     }
+    // Prefer fresh board state, but stay useful offline. A stale card is fine as
+    // long as the staleness is visible -- silently serving cache would hide a
+    // broken token or a board that stopped syncing.
+    var snapshot: WeeklyFocusSnapshot
+    var staleReason: String?
+
     do {
-        // Prefer fresh board state, but stay useful offline. A stale card is fine as
-        // long as the staleness is visible -- silently serving cache would hide a
-        // broken token or a board that stopped syncing.
-        var snapshot: WeeklyFocusSnapshot
-        var staleReason: String?
-
-        if source.isBoardEnabled {
-            do {
-                let t1 = Date()
-                snapshot = try runBlocking { try await source.refreshed(todoLimit: 5) }
-                if ProcessInfo.processInfo.environment["WEEKLY_FOCUS_TIMING"] == "1" {
-                    fputs("timing: refresh \(Int(Date().timeIntervalSince(t1) * 1000))ms\n", stderr)
-                }
-            } catch {
-                staleReason = error.localizedDescription
-                snapshot = try source.currentSnapshot(todoLimit: 5)
-            }
-        } else {
-            snapshot = try source.currentSnapshot(todoLimit: 5)
+        let t1 = Date()
+        snapshot = try runBlocking { try await source.refreshed(todoLimit: 5) }
+        if ProcessInfo.processInfo.environment["WEEKLY_FOCUS_TIMING"] == "1" {
+            fputs("timing: refresh \(Int(Date().timeIntervalSince(t1) * 1000))ms\n", stderr)
         }
-
-        print(WeeklyFocusFormatter.card(snapshot))
-
-        if let staleReason {
-            fputs("warning: showing cached board state; refresh failed: \(staleReason)\n", stderr)
-            exit(2)
-        }
-
-        exit(0)
     } catch {
-        fputs("\(error.localizedDescription)\n", stderr)
-        exit(1)
+        staleReason = error.localizedDescription
+        snapshot = source.currentSnapshot(todoLimit: 5)
     }
+
+    print(WeeklyFocusFormatter.card(snapshot))
+
+    if let staleReason {
+        fputs("warning: showing cached board state; refresh failed: \(staleReason)\n", stderr)
+        exit(2)
+    }
+
+    exit(0)
 }
 
 if CommandLine.arguments.contains("--print-focus") {
@@ -75,7 +66,7 @@ if CommandLine.arguments.contains("--self-test-copilot-launch") {
     do {
         try CmuxFocusLauncher.launch(
             todo: todo,
-            brainRoot: WeeklyFocusReader().brainRoot,
+            brainRoot: BrainPaths().brainRoot,
             focus: true
         )
         print(todo)
@@ -253,99 +244,10 @@ final class FocusRootView: NSView {
     }
 }
 
-final class WeeklyNoteWatcher {
-    private let path: String
-    private let onChange: @MainActor @Sendable () -> Void
-    private let queue = DispatchQueue(label: "weekly-focus.weekly-note-watcher")
-    private var fileSource: DispatchSourceFileSystemObject?
-    private var directorySource: DispatchSourceFileSystemObject?
-    private var pendingReload: DispatchWorkItem?
-
-    init(path: String, onChange: @escaping @MainActor @Sendable () -> Void) {
-        self.path = path
-        self.onChange = onChange
-        watchFile()
-        watchDirectory()
-    }
-
-    deinit {
-        stop()
-    }
-
-    func stop() {
-        pendingReload?.cancel()
-        fileSource?.cancel()
-        directorySource?.cancel()
-        pendingReload = nil
-        fileSource = nil
-        directorySource = nil
-    }
-
-    private func watchFile() {
-        let descriptor = open(path, O_EVTONLY)
-        guard descriptor >= 0 else {
-            return
-        }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.attrib, .delete, .extend, .link, .rename, .revoke, .write],
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in
-            self?.scheduleReload()
-        }
-        source.setCancelHandler {
-            close(descriptor)
-        }
-        source.resume()
-        fileSource = source
-    }
-
-    private func watchDirectory() {
-        let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
-        let descriptor = open(directory, O_EVTONLY)
-        guard descriptor >= 0 else {
-            return
-        }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.delete, .rename, .write],
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in
-            self?.scheduleReload()
-        }
-        source.setCancelHandler {
-            close(descriptor)
-        }
-        source.resume()
-        directorySource = source
-    }
-
-    private func scheduleReload() {
-        pendingReload?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-
-            self.rewatchFile()
-            let callback = self.onChange
-            Task { @MainActor in
-                callback()
-            }
-        }
-        pendingReload = work
-        queue.asyncAfter(deadline: .now() + 0.20, execute: work)
-    }
-
-    private func rewatchFile() {
-        fileSource?.cancel()
-        fileSource = nil
-        watchFile()
-    }
+/// A fixed-width spacer that keeps a handle on its own width constraint so the
+/// layout can be rescaled without rebuilding the view.
+final class GutterView: NSView {
+    var gutterWidth: NSLayoutConstraint?
 }
 
 final class TodoRowButton: NSControl {
@@ -719,18 +621,10 @@ enum FocusFonts {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate, NSMenuItemValidation, FocusCommandHandling {
     private var window: NSWindow?
     private var snapshot: WeeklyFocusSnapshot?
-    // The self-test exercises the write paths end to end, so it stays on markdown
-    // rather than creating throwaway items on the real board.
-    private let source: FocusSource = CommandLine.arguments.contains("--self-test")
-        ? FocusSource.markdownOnly()
-        : FocusSource()
+    private let source = FocusSource()
     private var isRefreshingBoard = false
     private var keyMonitor: Any?
-    private var weeklyNoteWatcher: WeeklyNoteWatcher?
-    private var weeklyNotePollTimer: Timer?
     private var boardRefreshTimer: Timer?
-    private var watchedWeeklyNotePath: String?
-    private var watchedWeeklyNoteContent: String?
     private var todoButtons: [TodoRowButton] = []
     private var isSubmittingTodo = false
     private let selfTestMode = CommandLine.arguments.contains("--self-test")
@@ -739,6 +633,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private let captureField = NSTextField()
     private var contentScale: CGFloat = 1
     private var displayedOverflowLimit = 1
+    private var captureFieldWidth: NSLayoutConstraint?
+    private var captureGutters: [GutterView] = []
+    private lazy var captureRowView: NSStackView = makeCaptureRow()
 
     private var primaryTextColor: NSColor {
         FocusColors.text
@@ -800,8 +697,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
         }
-        weeklyNoteWatcher?.stop()
-        weeklyNotePollTimer?.invalidate()
         boardRefreshTimer?.invalidate()
     }
 
@@ -809,11 +704,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     /// should not drift. Unchanged boards answer 304, which is cheap and does not
     /// count against the rate limit.
     private func startBoardRefreshTimer() {
-        guard source.isBoardEnabled, !selfTestMode else {
+        guard !selfTestMode else {
             return
         }
 
-        boardRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        let interval = BrainBoard.environment("WEEKLY_FOCUS_REFRESH_SECONDS")
+            .flatMap(Double.init)
+            .map { max(0.25, $0) } ?? 60
+
+        boardRefreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshBoard()
             }
@@ -959,29 +858,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     }
 
     private func reload(force: Bool = false) {
-        do {
-            // Paint from cache first; the board read costs hundreds of milliseconds
-            // and this app is summoned by a hotkey.
-            let snapshot = try source.currentSnapshot(
-                todoLimit: 5,
-                overflowLimit: FocusLayout.overflowTodoLimit
-            )
-            self.snapshot = snapshot
-            watchWeeklyNote(at: snapshot.weeklyNotePath)
-            render(snapshot: snapshot)
-        } catch {
-            snapshot = nil
-            renderError(error)
-        }
-
+        // Paint from cache first; the board read costs hundreds of milliseconds and
+        // this app is summoned by a hotkey.
+        let snapshot = source.currentSnapshot(
+            todoLimit: 5,
+            overflowLimit: FocusLayout.overflowTodoLimit
+        )
+        self.snapshot = snapshot
+        render(snapshot: snapshot)
         refreshBoard(force: force)
     }
 
-    /// Pulls fresh board state in the background. Failures are intentionally quiet:
-    /// the cached or markdown view stays on screen rather than replacing the list
-    /// with an error the user cannot act on.
+    /// Pulls fresh board state in the background. Failures are intentionally quiet
+    /// unless forced: the cached view stays on screen rather than being replaced by an
+    /// error the user cannot act on.
     private func refreshBoard(force: Bool = false) {
-        guard source.isBoardEnabled, !isRefreshingBoard else {
+        guard !isRefreshingBoard else {
             return
         }
 
@@ -1015,46 +907,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         }
     }
 
-    private func watchWeeklyNote(at path: String) {
-        watchedWeeklyNoteContent = weeklyNoteContent(path)
-        guard watchedWeeklyNotePath != path else {
-            return
-        }
-
-        weeklyNoteWatcher?.stop()
-        weeklyNotePollTimer?.invalidate()
-        watchedWeeklyNotePath = path
-        weeklyNoteWatcher = WeeklyNoteWatcher(path: path) { [weak self] in
-            self?.reload()
-        }
-        weeklyNotePollTimer = Timer.scheduledTimer(
-            withTimeInterval: 0.50,
-            repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.reloadIfWeeklyNoteChanged()
-            }
-        }
-    }
-
-    private func reloadIfWeeklyNoteChanged() {
-        guard let path = watchedWeeklyNotePath,
-              let content = weeklyNoteContent(path) else {
-            return
-        }
-
-        guard content != watchedWeeklyNoteContent else {
-            return
-        }
-
-        watchedWeeklyNoteContent = content
-        reload()
-    }
-
-    private func weeklyNoteContent(_ path: String) -> String? {
-        try? String(contentsOfFile: path, encoding: .utf8)
-    }
-
     private func render(snapshot: WeeklyFocusSnapshot) {
         let layout = fittedLayout(for: snapshot)
         contentScale = layout.scale
@@ -1062,11 +914,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         contentStack.spacing = FocusLayout.spacing(scale: contentScale)
         clearContent()
 
+        if contentStack.arrangedSubviews.isEmpty {
+            contentStack.addArrangedSubview(captureRowView)
+        }
+
         if snapshot.todos.isEmpty {
-            contentStack.addArrangedSubview(messageLabel("No TODOs"))
+            insertAboveCapture(messageLabel("No tasks"))
         } else {
             for (index, todo) in snapshot.todos.enumerated() {
-                contentStack.addArrangedSubview(todoRow(index: index, title: todo))
+                insertAboveCapture(todoRow(index: index, title: todo))
             }
         }
 
@@ -1074,12 +930,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             addOverflowTodos(snapshot.overflowTodos)
         }
 
-        contentStack.addArrangedSubview(captureRow())
+        styleCaptureRow()
         contentStack.superview?.needsLayout = true
         contentStack.superview?.layoutSubtreeIfNeeded()
+
+        // Only claim focus when nothing is being typed into, so a refresh cannot
+        // reset the insertion point out from under the user.
+        guard !isEditingCapture else {
+            return
+        }
+
         DispatchQueue.main.async {
             self.window?.makeFirstResponder(self.captureField)
         }
+    }
+
+    private func insertAboveCapture(_ view: NSView) {
+        let index = contentStack.arrangedSubviews.firstIndex(of: captureRowView)
+            ?? contentStack.arrangedSubviews.count
+        contentStack.insertArrangedSubview(view, at: index)
+    }
+
+    private var isEditingCapture: Bool {
+        guard let window, let editor = window.fieldEditor(false, for: captureField) else {
+            return false
+        }
+
+        return window.firstResponder === editor
     }
 
     private func renderError(_ error: Error) {
@@ -1091,7 +968,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
 
     private func clearContent() {
         todoButtons = []
-        for view in contentStack.arrangedSubviews {
+        for view in contentStack.arrangedSubviews where view !== captureRowView {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -1109,18 +986,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     private func addOverflowTodos(_ todos: [String]) {
         let shown = Array(todos.prefix(displayedOverflowLimit))
         for (index, todo) in shown.enumerated() {
-            contentStack.addArrangedSubview(overflowRow(todo, index: index))
+            insertAboveCapture(overflowRow(todo, index: index))
         }
     }
 
-    private func captureRow() -> NSStackView {
+    /// Built once and never torn down. Rebuilding it on every render would end the
+    /// field editor session mid-keystroke, which loses the selection (and with it
+    /// Cmd-C) whenever a background board refresh lands while the user is typing.
+    private func makeCaptureRow() -> NSStackView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 0
 
         captureField.placeholderString = ""
-        captureField.font = FocusFonts.input(scale: contentScale)
         captureField.textColor = primaryTextColor
         captureField.backgroundColor = FocusColors.fieldBackground
         captureField.layer?.borderColor = FocusColors.fieldBorder.cgColor
@@ -1129,14 +1008,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         captureField.action = #selector(todoSubmitted(_:))
         captureField.delegate = self
         captureField.translatesAutoresizingMaskIntoConstraints = false
-        captureField.widthAnchor.constraint(
-            equalToConstant: FocusLayout.rowWidth(scale: contentScale)
-        ).isActive = true
 
-        row.addArrangedSubview(horizontalGutter())
+        let width = captureField.widthAnchor.constraint(equalToConstant: 0)
+        width.isActive = true
+        captureFieldWidth = width
+
+        let leading = horizontalGutter()
+        let trailing = horizontalGutter()
+        captureGutters = [leading, trailing]
+
+        row.addArrangedSubview(leading)
         row.addArrangedSubview(captureField)
-        row.addArrangedSubview(horizontalGutter())
+        row.addArrangedSubview(trailing)
         return row
+    }
+
+    /// The row survives renders, so scale-dependent styling has to be reapplied
+    /// rather than rebuilt.
+    private func styleCaptureRow() {
+        captureField.font = FocusFonts.input(scale: contentScale)
+        captureFieldWidth?.constant = FocusLayout.rowWidth(scale: contentScale)
+        for gutter in captureGutters {
+            gutter.gutterWidth?.constant = FocusLayout.hoverGutter(scale: contentScale)
+        }
     }
 
     private func todoButton(index: Int, title: String) -> TodoRowButton {
@@ -1191,12 +1085,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         return row
     }
 
-    private func horizontalGutter() -> NSView {
-        let spacer = NSView()
+    private func horizontalGutter() -> GutterView {
+        let spacer = GutterView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.widthAnchor.constraint(
+        let width = spacer.widthAnchor.constraint(
             equalToConstant: FocusLayout.hoverGutter(scale: contentScale)
-        ).isActive = true
+        )
+        width.isActive = true
+        spacer.gutterWidth = width
         return spacer
     }
 
@@ -1638,29 +1534,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         alert.runModal()
     }
 
+    /// Polls with `Task.sleep` rather than a nested `RunLoop.run`. A nested run loop
+    /// does not drain main-actor work queued after it starts, so the async writes this
+    /// waits on would never actually run.
     private func waitUntilAsync(timeout: TimeInterval, _ condition: @MainActor () -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            reloadIfWeeklyNoteChanged()
             if condition() {
                 return true
             }
 
             try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-
-        return condition()
-    }
-
-    private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            reloadIfWeeklyNoteChanged()
-            if condition() {
-                return true
-            }
-
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
 
         return condition()
@@ -1676,38 +1560,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 throw WeeklyFocusError.launchFailed("self-test window cannot focus capture field")
             }
 
-            captureField.stringValue = "Self-test todo"
+            let captureText = "Self-test todo \(UUID().uuidString.prefix(8))"
+            captureField.stringValue = captureText
             todoSubmitted(self)
 
-            // Capture now completes asynchronously, so wait for the snapshot to catch up.
-            let captured = await waitUntilAsync(timeout: 5) {
-                self.snapshot?.todos.contains("Self-test todo") == true
+            // Writes are asynchronous now, so wait for the board round trip.
+            let captured = await waitUntilAsync(timeout: 10) {
+                self.snapshot?.todos.contains(captureText) == true
             }
-            guard captured, let afterTodo = snapshot else {
-                throw WeeklyFocusError.launchFailed("self-test TODO entry did not refresh snapshot")
-            }
-
-            if let externallyEditedTodo = afterTodo.todos.first {
-                try WeeklyFocusReader.markTodoDone(
-                    externallyEditedTodo,
-                    weeklyNotePath: afterTodo.weeklyNotePath
-                )
-                let reloaded = await waitUntilAsync(timeout: 3) {
-                    self.snapshot?.todos.first != externallyEditedTodo
-                }
-                if !reloaded {
-                    throw WeeklyFocusError.launchFailed("self-test external weekly note edit did not refresh snapshot")
-                }
+            guard captured else {
+                throw WeeklyFocusError.launchFailed("self-test capture did not reach the board")
             }
 
-            let firstTodo = snapshot?.todos.first
-            if let firstTodo {
+            if let firstTodo = snapshot?.todos.first {
                 markDone(at: 0)
-                let updated = await waitUntilAsync(timeout: 5) {
-                    (try? WeeklyFocusReader().read(todoLimit: 5))?.todos.first != firstTodo
+                let updated = await waitUntilAsync(timeout: 10) {
+                    self.snapshot?.todos.first != firstTodo
                 }
                 if !updated {
-                    throw WeeklyFocusError.launchFailed("self-test mark done did not update TODO list")
+                    throw WeeklyFocusError.launchFailed("self-test mark done did not update the focus list")
                 }
             }
 

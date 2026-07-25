@@ -39,14 +39,24 @@ public struct ProjectsV2Client: Sendable {
 
     private let token: String
     private let session: URLSession
+    private let baseURL: URL
 
-    public init(token: String, session: URLSession = .shared) {
+    public init(
+        token: String,
+        session: URLSession = .shared,
+        baseURL: URL = BrainBoard.apiBaseURL()
+    ) {
         self.token = token
         self.session = session
+        self.baseURL = baseURL
     }
 
-    private var itemsBase: String {
-        "https://api.github.com/users/\(BrainBoard.owner)/projectsV2/\(BrainBoard.projectNumber)/items"
+    var itemsBase: String {
+        "\(baseURL.absoluteString)/users/\(BrainBoard.owner)/projectsV2/\(BrainBoard.projectNumber)/items"
+    }
+
+    var graphQLURL: URL {
+        URL(string: "\(baseURL.absoluteString)/graphql")!
     }
 
     private func request(_ url: URL, method: String = "GET") -> URLRequest {
@@ -155,7 +165,7 @@ public struct ProjectsV2Client: Sendable {
         }
         """
 
-        var urlRequest = request(URL(string: "https://api.github.com/graphql")!, method: "POST")
+        var urlRequest = request(graphQLURL, method: "POST")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
             "query": mutation,

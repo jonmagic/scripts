@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 #
-# Exercise the native Weekly Focus app against a temporary Brain.
+# Exercise the native Weekly Focus app against a stub task board.
+#
+# The app's only task source is the GitHub Projects board, so this test stands up
+# a local stub of that API rather than touching the real one. Nothing here reads
+# or writes @jonmagic's actual tasks.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+PACKAGE_DIR="$ROOT_DIR/packages/focus-app"
 TMPDIR="$(mktemp -d)"
 LAUNCH_FILE="/tmp/weekly-focus-app-launch-self-test.txt"
 TEST_RUN_ID="weekly-focus-test-$$"
 TODO_ONE="One $TEST_RUN_ID"
 TODO_TWO="Two $TEST_RUN_ID"
-APP_EXECUTABLE="$ROOT_DIR/packages/focus-app/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus"
+APP_EXECUTABLE="$PACKAGE_DIR/.build/Weekly Focus.app/Contents/MacOS/Weekly Focus"
 APP_PID=""
+STUB_PID=""
+STUB_PORT=""
 
 stop_existing_app() {
   while read -r pid; do
@@ -27,7 +34,16 @@ cleanup() {
     kill "$APP_PID" >/dev/null 2>&1 || true
     wait "$APP_PID" 2>/dev/null || true
   fi
-  for workspace in $(cmux workspace list 2>/dev/null | awk -v id="$TEST_RUN_ID" '/Self-test launch/ || index($0, id) {print $1}'); do
+  if [[ -n "${STUB_PID:-}" ]]; then
+    kill "$STUB_PID" >/dev/null 2>&1 || true
+    wait "$STUB_PID" 2>/dev/null || true
+  fi
+  # The selected row is prefixed with "*", so match the ref rather than field 1.
+  for workspace in $(cmux workspace list 2>/dev/null \
+    | awk -v id="$TEST_RUN_ID" '/Self-test/ || index($0, id) {
+        match($0, /workspace:[0-9]+/)
+        if (RSTART) print substr($0, RSTART, RLENGTH)
+      }'); do
     cmux workspace close "$workspace" >/dev/null 2>&1 || true
   done
   rm -rf "$TMPDIR"
@@ -35,58 +51,106 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$TMPDIR/Weekly Notes"
-WEEKLY_NOTE="$TMPDIR/Weekly Notes/Week of 2026-07-05.md"
+# --- stub board -------------------------------------------------------------
 
-cat >"$WEEKLY_NOTE" <<MARKDOWN
-# Week
+python3 "$PACKAGE_DIR/Tools/stub-projects-api.py" --port 0 >"$TMPDIR/stub.log" 2>&1 &
+STUB_PID=$!
 
-## TODO
-- [ ] $TODO_ONE
-- [ ] $TODO_TWO
+for _ in {1..40}; do
+  STUB_PORT="$(awk '/^listening /{print $2; exit}' "$TMPDIR/stub.log" 2>/dev/null || true)"
+  [[ -n "$STUB_PORT" ]] && break
+  sleep 0.25
+done
 
-## Captured
-MARKDOWN
+if [[ -z "$STUB_PORT" ]]; then
+  echo "stub Projects API did not start" >&2
+  cat "$TMPDIR/stub.log" >&2
+  exit 1
+fi
 
+STUB_BASE="http://127.0.0.1:$STUB_PORT"
+STUB_ITEMS="$STUB_BASE/users/jonmagic/projectsV2/6/items"
+
+board_reset() {
+  for id in $(board_ids); do
+    curl -sf -X DELETE "$STUB_BASE/__control/items/$id" >/dev/null
+  done
+  board_add "$TODO_ONE" 1
+  board_add "$TODO_TWO" 2
+}
+
+board_add() {
+  curl -sf -X POST "$STUB_BASE/__control/items" \
+    -d "$(printf '{"title":%s,"focus":%s}' "$(json_string "$1")" "$2")" >/dev/null
+}
+
+board_ids() {
+  curl -sf "$STUB_BASE/__control/items" | python3 -c 'import json,sys; [print(i["id"]) for i in json.load(sys.stdin)]'
+}
+
+board_titles() {
+  curl -sf "$STUB_BASE/__control/items" | python3 -c '
+import json, sys
+for item in json.load(sys.stdin):
+    fields = {f["name"]: f["value"] for f in item["fields"]}
+    status = fields.get("Status")
+    print("%s\t%s" % (status["name"]["raw"] if status else "-", fields["Title"]["raw"]))
+'
+}
+
+json_string() {
+  python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+# The app needs a Brain root for wikilink resolution even though tasks live on the board.
+mkdir -p "$TMPDIR/Brain/Weekly Notes"
+
+export WEEKLY_FOCUS_API_BASE="$STUB_BASE"
+export WEEKLY_FOCUS_CACHE="$TMPDIR/cache/board.json"
+export WEEKLY_FOCUS_REFRESH_SECONDS=1
+export BRAIN_GITHUB_TOKEN="stub-token"
+export BRAIN_ROOT="$TMPDIR/Brain"
+
+# --- headless self-test -----------------------------------------------------
+
+board_reset
 rm -f "$LAUNCH_FILE"
 
-# Keep the whole run on markdown so it never reads or writes the real task board.
-export WEEKLY_FOCUS_DISABLE_BOARD=1
+swift run --package-path "$PACKAGE_DIR" weekly-focus-app --self-test --self-test-launch
 
-BRAIN_ROOT="$TMPDIR" swift run \
-  --package-path "$ROOT_DIR/packages/focus-app" \
-  weekly-focus-app \
-  --self-test \
-  --self-test-launch
+if ! board_titles | grep -q 'Self-test todo'; then
+  echo "self-test capture never reached the board" >&2
+  board_titles >&2
+  exit 1
+fi
 
-grep -q 'Self-test todo' "$WEEKLY_NOTE"
-grep -q -- "- \\[x\\] $TODO_ONE" "$WEEKLY_NOTE"
+if ! board_titles | grep -q "^Done	" ; then
+  echo "self-test never completed an item on the board" >&2
+  board_titles >&2
+  exit 1
+fi
 
 for _ in {1..20}; do
-  if [[ -f "$LAUNCH_FILE" ]]; then
-    break
-  fi
+  [[ -f "$LAUNCH_FILE" ]] && break
   sleep 0.25
 done
 
 grep -q 'weekly-focus-launch-ok' "$LAUNCH_FILE"
 
-cat >"$WEEKLY_NOTE" <<MARKDOWN
-# Week
+# --- windowed test ----------------------------------------------------------
 
-## TODO
-- [ ] $TODO_ONE
-- [ ] $TODO_TWO
+board_reset
+rm -f "$WEEKLY_FOCUS_CACHE"
 
-## Captured
-MARKDOWN
-
-UI_TODO="UI pasted TODO https://example.test/$TEST_RUN_ID"
+UI_TODO="UI captured task https://example.test/$TEST_RUN_ID"
 COPY_SENTINEL="weekly-focus-copy-failed-$TEST_RUN_ID"
+
+# Build the bundle under test so this never measures a stale install.
+WEEKLY_FOCUS_INSTALL_DIR="$TMPDIR/Applications" "$SCRIPT_DIR/build-weekly-focus-app" >/dev/null
 
 stop_existing_app
 
-BRAIN_ROOT="$TMPDIR" "$APP_EXECUTABLE" &
+"$APP_EXECUTABLE" &
 APP_PID=$!
 
 for _ in {1..40}; do
@@ -96,12 +160,8 @@ for _ in {1..40}; do
   sleep 0.25
 done
 
-perl -0pi -e "s/- \\[ \\] \\Q$TODO_ONE\\E/- [x] $TODO_ONE/" "$WEEKLY_NOTE"
-grep -q -- "- \\[x\\] $TODO_ONE" "$WEEKLY_NOTE"
-
-FIRST_TODO_TITLE=""
-for _ in {1..40}; do
-  FIRST_TODO_TITLE="$(osascript <<APPLESCRIPT 2>/dev/null || true
+first_row_title() {
+  osascript <<APPLESCRIPT 2>/dev/null || true
 set appPid to $APP_PID
 tell application "System Events"
   set appProcess to first process whose unix id is appPid
@@ -110,17 +170,30 @@ tell application "System Events"
   end tell
 end tell
 APPLESCRIPT
-)"
-  if [[ "$FIRST_TODO_TITLE" == *"$TODO_TWO"* ]]; then
-    break
-  fi
-  sleep 0.25
-done
+}
 
-if [[ "$FIRST_TODO_TITLE" != *"$TODO_TWO"* ]]; then
-  echo "Weekly Focus did not refresh after external weekly note edit; saw: $FIRST_TODO_TITLE" >&2
-  exit 1
-fi
+wait_for_first_row() {
+  local expected="$1" seen=""
+  for _ in {1..60}; do
+    seen="$(first_row_title)"
+    if [[ "$seen" == *"$expected"* ]]; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Weekly Focus first row never became \"$expected\"; saw: $seen" >&2
+  return 1
+}
+
+wait_for_first_row "$TODO_ONE"
+
+# Someone completing the item elsewhere (web UI, another tool) should reach the
+# open window on the next refresh.
+FIRST_ID="$(board_ids | head -1)"
+curl -sf -X PATCH "$STUB_ITEMS/$FIRST_ID" \
+  -d '{"fields":[{"id":372695109,"value":"d976124a"}]}' >/dev/null
+
+wait_for_first_row "$TODO_TWO"
 
 osascript <<APPLESCRIPT
 set appPid to $APP_PID
@@ -142,17 +215,25 @@ APPLESCRIPT
 
 if [[ "$(pbpaste)" != "$UI_TODO" ]]; then
   echo "Weekly Focus input field did not support Cmd-C" >&2
+  echo "  clipboard: $(pbpaste)" >&2
+  echo "  field value: $(osascript -e "tell application \"System Events\" to value of text field 1 of window \"Weekly Focus\" of (first process whose unix id is $APP_PID)" 2>&1)" >&2
+  echo "  focused: $(osascript -e "tell application \"System Events\" to value of attribute \"AXRole\" of (value of attribute \"AXFocusedUIElement\" of (first process whose unix id is $APP_PID))" 2>&1)" >&2
+  echo "  frontmost app: $(osascript -e 'tell application "System Events" to name of first process whose frontmost is true' 2>&1)" >&2
   exit 1
 fi
 
-for _ in {1..20}; do
-  if grep -q "$UI_TODO" "$WEEKLY_NOTE"; then
+for _ in {1..40}; do
+  if board_titles | grep -qF "$UI_TODO"; then
     break
   fi
   sleep 0.25
 done
 
-grep -q "$UI_TODO" "$WEEKLY_NOTE"
+if ! board_titles | grep -qF "$UI_TODO"; then
+  echo "captured task never reached the board" >&2
+  board_titles >&2
+  exit 1
+fi
 
 osascript <<APPLESCRIPT
 set appPid to $APP_PID

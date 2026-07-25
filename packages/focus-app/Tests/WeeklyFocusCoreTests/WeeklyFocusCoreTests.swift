@@ -2,84 +2,15 @@ import XCTest
 @testable import WeeklyFocusCore
 
 final class WeeklyFocusCoreTests: XCTestCase {
-    func testParsesWeeklyFocusSectionsWithFiveTodoCap() {
-        let content = [
-            "# Week",
-            "",
-            "## TODO",
-            "- [x] Done",
-            "- [ ] One",
-            "- [ ] Two",
-            "- [ ] Three",
-            "- [ ] Four",
-            "- [ ] Five",
-            "- [ ] Six",
-            "",
-            "## Captured",
-            "- [ ] 2026-07-07 20:34 Rough capture",
-            "- [x] 2026-07-07 20:35 Done capture",
-            "",
-            "## Waiting",
-            "- [ ] Waiting on review",
-            "",
-            "## Schedule",
-            "- [ ] 0900 Scheduled item should not count"
-        ].joined(separator: "\n")
-
-        let snapshot = WeeklyFocusReader.parse(
-            content,
-            brainRoot: "/tmp/Brain",
-            weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-            todoLimit: 5
-        )
-
-        XCTAssertEqual(snapshot.todos, ["One", "Two", "Three", "Four", "Five"])
-        XCTAssertEqual(snapshot.overflowTodos, ["Six"])
-        XCTAssertEqual(snapshot.now, "One")
-        XCTAssertEqual(snapshot.next, "Two")
-        XCTAssertEqual(snapshot.waiting, ["Waiting on review"])
-        XCTAssertEqual(snapshot.capturedCount, 1)
-    }
-
-    func testParsesWeeklyFocusWithOverflowLimit() {
-        let content = [
-            "# Week",
-            "",
-            "## TODO",
-            "- [ ] One",
-            "- [ ] Two",
-            "- [ ] Three",
-            "- [ ] Four",
-            "- [ ] Five",
-            "- [ ] Six",
-            "- [ ] Seven",
-            "- [ ] Eight",
-            "- [ ] Nine",
-            "- [ ] Ten",
-            "- [ ] Eleven",
-            "",
-            "## Captured"
-        ].joined(separator: "\n")
-
-        let snapshot = WeeklyFocusReader.parse(
-            content,
-            brainRoot: "/tmp/Brain",
-            weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-            todoLimit: 5,
-            overflowLimit: 5
-        )
-
-        XCTAssertEqual(snapshot.todos, ["One", "Two", "Three", "Four", "Five"])
-        XCTAssertEqual(snapshot.overflowTodos, ["Six", "Seven", "Eight", "Nine", "Ten"])
-    }
-
     func testFormatterPrintsSparseCard() {
-        let snapshot = WeeklyFocusSnapshot(
+        let snapshot = WeeklyFocusSnapshot.fromBoard(
+            [
+                FocusTask(id: 1, nodeID: "a", title: "One", status: "Todo", focus: 1),
+                FocusTask(id: 2, nodeID: "b", title: "Two", status: "Todo", focus: 2),
+                FocusTask(id: 3, nodeID: "c", title: "Done one", status: "Done")
+            ],
             brainRoot: "/tmp/Brain",
-            weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-            todos: ["One", "Two"],
-            waiting: [],
-            capturedCount: 1
+            weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md"
         )
 
         XCTAssertEqual(
@@ -95,9 +26,9 @@ final class WeeklyFocusCoreTests: XCTestCase {
                 "Waiting",
                 "- (none)",
                 "",
-                "Captured: 1 unchecked item",
+                "Completed this week: 1 item",
                 "",
-                "Source: /tmp/Brain/Weekly Notes/Week of 2026-07-05.md"
+                "Source: Brain Tasks board (project \(BrainBoard.projectNumber))"
             ].joined(separator: "\n")
         )
     }
@@ -419,165 +350,6 @@ final class WeeklyFocusCoreTests: XCTestCase {
         XCTAssertEqual(environment["HOME"], directory.path)
     }
 
-    func testMarksSelectedTodoDoneInWeeklyNote() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: weeklyDirectory,
-            withIntermediateDirectories: true
-        )
-        let weeklyNote = weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md")
-        try [
-            "# Week",
-            "",
-            "## TODO",
-            "- [ ] One",
-            "- [ ] Two",
-            "",
-            "## Schedule",
-            "- [ ] Scheduled item",
-            ""
-        ].joined(separator: "\n").write(to: weeklyNote, atomically: true, encoding: .utf8)
-
-        try WeeklyFocusReader.markTodoDone("Two", weeklyNotePath: weeklyNote.path)
-
-        let updated = try String(contentsOf: weeklyNote, encoding: .utf8)
-        XCTAssertTrue(updated.contains("- [ ] One"))
-        XCTAssertTrue(updated.contains("- [x] Two"))
-        XCTAssertTrue(updated.contains("- [ ] Scheduled item"))
-
-        try FileManager.default.removeItem(at: directory)
-    }
-
-    func testMarksTodoDoneAtBottomOfCompletedItemsAndPreservesOtherLines() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: weeklyDirectory,
-            withIntermediateDirectories: true
-        )
-        let weeklyNote = weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md")
-        try [
-            "# Week",
-            "",
-            "## TODO<!-- {\"fold\":true} -->",
-            "- [x] Done one",
-            "- [ ] Pending one",
-            "  - detail for pending one",
-            "- [x] Done two",
-            "- [ ] Pending two",
-            "  - detail for pending two",
-            "",
-            "## Schedule",
-            "- [ ] Scheduled item",
-            ""
-        ].joined(separator: "\n").write(to: weeklyNote, atomically: true, encoding: .utf8)
-
-        try WeeklyFocusReader.markTodoDone("Pending two", weeklyNotePath: weeklyNote.path)
-
-        let updated = try String(contentsOf: weeklyNote, encoding: .utf8)
-        let todoSection = updated
-            .components(separatedBy: "## TODO<!-- {\"fold\":true} -->\n")[1]
-            .components(separatedBy: "\n## Schedule")[0]
-        XCTAssertEqual(
-            todoSection,
-            [
-                "- [x] Done one",
-                "- [x] Done two",
-                "- [x] Pending two",
-                "  - detail for pending two",
-                "- [ ] Pending one",
-                "  - detail for pending one",
-                ""
-            ].joined(separator: "\n")
-        )
-
-        try FileManager.default.removeItem(at: directory)
-    }
-
-    func testAppendsTodoIntoTodoSection() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: weeklyDirectory,
-            withIntermediateDirectories: true
-        )
-        let weeklyNote = weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md")
-        try [
-            "# Week",
-            "",
-            "## TODO",
-            "- [ ] One",
-            "",
-            "## Schedule",
-            "- [ ] Scheduled item",
-            ""
-        ].joined(separator: "\n").write(to: weeklyNote, atomically: true, encoding: .utf8)
-
-        let line = try WeeklyFocusReader.appendTodo("New TODO from field", weeklyNotePath: weeklyNote.path)
-
-        let updated = try String(contentsOf: weeklyNote, encoding: .utf8)
-        XCTAssertEqual(line, "- [ ] New TODO from field")
-        XCTAssertLessThan(
-            updated.range(of: "- [ ] New TODO from field")!.lowerBound,
-            updated.range(of: "## Schedule")!.lowerBound
-        )
-
-        try FileManager.default.removeItem(at: directory)
-    }
-
-    func testAppendsCaptureAfterTodoSection() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let weeklyDirectory = directory.appendingPathComponent("Weekly Notes", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: weeklyDirectory,
-            withIntermediateDirectories: true
-        )
-        let weeklyNote = weeklyDirectory.appendingPathComponent("Week of 2026-07-05.md")
-        try [
-            "# Week",
-            "",
-            "## TODO",
-            "- [ ] One",
-            "",
-            "## Schedule",
-            "- [ ] Scheduled item",
-            ""
-        ].joined(separator: "\n").write(to: weeklyNote, atomically: true, encoding: .utf8)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let now = DateComponents(
-            calendar: calendar,
-            timeZone: calendar.timeZone,
-            year: 2026,
-            month: 7,
-            day: 7,
-            hour: 20,
-            minute: 34
-        ).date!
-
-        let line = try WeeklyFocusReader.appendCapture(
-            "Follow up from app",
-            weeklyNotePath: weeklyNote.path,
-            now: now,
-            calendar: calendar
-        )
-
-        let updated = try String(contentsOf: weeklyNote, encoding: .utf8)
-        XCTAssertEqual(line, "- [ ] 2026-07-07 20:34 Follow up from app")
-        XCTAssertTrue(updated.contains("## Captured\n- [ ] 2026-07-07 20:34 Follow up from app"))
-        XCTAssertLessThan(
-            updated.range(of: "## Captured")!.lowerBound,
-            updated.range(of: "## Schedule")!.lowerBound
-        )
-
-        try FileManager.default.removeItem(at: directory)
-    }
-
     func testWeeklyNotePathUsesSundayWeekStart() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -591,7 +363,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
         let date = components.date!
 
         XCTAssertEqual(
-            WeeklyFocusReader.weeklyNotePath(
+            BrainPaths.weeklyNotePath(
                 brainRoot: "/tmp/Brain",
                 date: date,
                 calendar: calendar
@@ -631,7 +403,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
             day: 12
         ).date!
 
-        let reader = WeeklyFocusReader(
+        let reader = BrainPaths(
             brainRoot: directory.path,
             date: date,
             calendar: calendar
@@ -674,7 +446,7 @@ final class WeeklyFocusCoreTests: XCTestCase {
             day: 12
         ).date!
 
-        let reader = WeeklyFocusReader(
+        let reader = BrainPaths(
             brainRoot: directory.path,
             date: date,
             calendar: calendar

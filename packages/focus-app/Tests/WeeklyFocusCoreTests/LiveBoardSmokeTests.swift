@@ -46,6 +46,6 @@ final class LiveBoardSmokeTests: XCTestCase {
             overflowLimit: 6
         )
         print("LIVE: focus list -> \(snapshot.todos.count) items, overflow=\(snapshot.overflowTodos.count), done=\(snapshot.capturedCount)")
-        XCTAssertTrue(snapshot.isBoardBacked)
+        XCTAssertFalse(snapshot.tasks.isEmpty)
     }
 }

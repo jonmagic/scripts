@@ -153,7 +153,6 @@ final class BoardSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.todos, ["a", "b"])
         XCTAssertEqual(snapshot.waiting, ["w"])
         XCTAssertEqual(snapshot.capturedCount, 2)
-        XCTAssertTrue(snapshot.isBoardBacked)
         XCTAssertEqual(snapshot.now, "a")
         XCTAssertEqual(snapshot.next, "b")
     }
@@ -173,18 +172,6 @@ final class BoardSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.tasks.count, 5)
     }
 
-    func testMarkdownSnapshotsAreNotBoardBacked() {
-        let snapshot = WeeklyFocusSnapshot(
-            brainRoot: "/tmp/brain",
-            weeklyNotePath: "/tmp/brain/note.md",
-            todos: ["a"],
-            waiting: [],
-            capturedCount: 0
-        )
-
-        XCTAssertFalse(snapshot.isBoardBacked)
-        XCTAssertTrue(snapshot.tasks.isEmpty)
-    }
 }
 
 final class LinkHeaderTests: XCTestCase {
@@ -250,44 +237,16 @@ final class TodayStampTests: XCTestCase {
 }
 
 final class FocusSourceTests: XCTestCase {
-    private func makeWeeklyNote() throws -> (root: String, path: String) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("weekly-focus-src-\(UUID().uuidString)")
-        let notes = root.appendingPathComponent("Weekly Notes")
-        try FileManager.default.createDirectory(at: notes, withIntermediateDirectories: true)
-
-        let path = notes.appendingPathComponent("Week of 2026-07-19.md")
-        try """
-        # Week
-
-        ## TODO
-        - [ ] markdown item
-
-        ## Waiting
-        - [ ] waiting item
-        """.write(to: path, atomically: true, encoding: .utf8)
-
-        return (root.path, path.path)
+    private func paths() -> BrainPaths {
+        BrainPaths(brainRoot: "/tmp/brain", weeklyNotePath: "/tmp/brain/Weekly Notes/Week of 2026-07-19.md")
     }
 
-    func testMarkdownOnlySourceIgnoresTheBoard() throws {
-        let note = try makeWeeklyNote()
-        defer { try? FileManager.default.removeItem(atPath: note.root) }
-
-        let source = FocusSource.markdownOnly(
-            reader: WeeklyFocusReader(brainRoot: note.root, weeklyNotePath: note.path)
-        )
-
-        XCTAssertFalse(source.isBoardEnabled)
-        let snapshot = try source.currentSnapshot()
-        XCTAssertEqual(snapshot.todos, ["markdown item"])
-        XCTAssertFalse(snapshot.isBoardBacked)
+    /// A store factory that throws proves the paint path never authenticates.
+    private let failingStore: @Sendable () throws -> BoardTaskStore = {
+        throw GitHubToken.Failure.notFound
     }
 
-    func testCurrentSnapshotPrefersCachedBoardWithoutAuthenticating() throws {
-        let note = try makeWeeklyNote()
-        defer { try? FileManager.default.removeItem(atPath: note.root) }
-
+    func testCurrentSnapshotPrefersCachedBoardWithoutAuthenticating() {
         let cacheURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("weekly-focus-cache-\(UUID().uuidString)")
             .appendingPathComponent("board.json")
@@ -302,49 +261,58 @@ final class FocusSourceTests: XCTestCase {
             to: cacheURL
         )
 
-        // A store factory that would fail if called proves the paint path never authenticates.
-        let source = FocusSource(
-            reader: WeeklyFocusReader(brainRoot: note.root, weeklyNotePath: note.path),
-            cacheURL: cacheURL,
-            makeStore: { throw GitHubToken.Failure.notFound }
-        )
+        let source = FocusSource(paths: paths(), cacheURL: cacheURL, makeStore: failingStore)
 
-        let snapshot = try source.currentSnapshot()
+        let snapshot = source.currentSnapshot()
         XCTAssertEqual(snapshot.todos, ["board item"])
-        XCTAssertTrue(snapshot.isBoardBacked)
+        XCTAssertEqual(snapshot.tasks.count, 1)
     }
 
-    func testFallsBackToMarkdownWhenCacheIsEmpty() throws {
-        let note = try makeWeeklyNote()
-        defer { try? FileManager.default.removeItem(atPath: note.root) }
-
+    func testEmptyCacheYieldsAnEmptySnapshotInsteadOfFailing() {
         let cacheURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("weekly-focus-empty-\(UUID().uuidString).json")
 
-        let source = FocusSource(
-            reader: WeeklyFocusReader(brainRoot: note.root, weeklyNotePath: note.path),
-            cacheURL: cacheURL,
-            makeStore: { throw GitHubToken.Failure.notFound }
-        )
+        let source = FocusSource(paths: paths(), cacheURL: cacheURL, makeStore: failingStore)
 
-        let snapshot = try source.currentSnapshot()
-        XCTAssertEqual(snapshot.todos, ["markdown item"])
-        XCTAssertFalse(snapshot.isBoardBacked)
+        let snapshot = source.currentSnapshot()
+        XCTAssertTrue(snapshot.todos.isEmpty)
+        XCTAssertTrue(snapshot.tasks.isEmpty)
+        XCTAssertEqual(snapshot.brainRoot, "/tmp/brain")
     }
 
     func testActionTextPrefersBoardTargetOverTitle() {
-        let boardSnapshot = WeeklyFocusSnapshot.fromBoard(
-            [FocusTask(id: 1, nodeID: "n", title: "do it", status: "Todo", target: "https://example.com/a")],
+        let snapshot = WeeklyFocusSnapshot.fromBoard(
+            [
+                FocusTask(id: 1, nodeID: "n", title: "do it", status: "Todo", target: "https://example.com/a"),
+                FocusTask(id: 2, nodeID: "m", title: "plain task", status: "Todo")
+            ],
             brainRoot: "/tmp",
             weeklyNotePath: "/tmp/n.md"
         )
-        XCTAssertEqual(FocusSource.actionText(for: boardSnapshot, at: 0), "do it https://example.com/a")
 
-        let markdownSnapshot = WeeklyFocusSnapshot(
-            brainRoot: "/tmp", weeklyNotePath: "/tmp/n.md",
-            todos: ["plain todo"], waiting: [], capturedCount: 0
+        XCTAssertEqual(FocusSource.actionText(for: snapshot, at: 0), "do it https://example.com/a")
+        XCTAssertEqual(FocusSource.actionText(for: snapshot, at: 1), "plain task")
+        XCTAssertNil(FocusSource.actionText(for: snapshot, at: 3))
+    }
+}
+
+final class APIBaseURLTests: XCTestCase {
+    func testDefaultsToPublicGitHubAPI() {
+        XCTAssertEqual(BrainBoard.apiBaseURL(environment: [:]).absoluteString, "https://api.github.com")
+    }
+
+    func testHonorsOverrideAndTrimsTrailingSlash() {
+        let env = ["WEEKLY_FOCUS_API_BASE": "http://127.0.0.1:8123/"]
+        XCTAssertEqual(BrainBoard.apiBaseURL(environment: env).absoluteString, "http://127.0.0.1:8123")
+    }
+
+    func testClientDerivesRESTAndGraphQLURLsFromTheBase() {
+        let client = ProjectsV2Client(token: "t", baseURL: URL(string: "http://127.0.0.1:8123")!)
+
+        XCTAssertEqual(
+            client.itemsBase,
+            "http://127.0.0.1:8123/users/\(BrainBoard.owner)/projectsV2/\(BrainBoard.projectNumber)/items"
         )
-        XCTAssertEqual(FocusSource.actionText(for: markdownSnapshot, at: 0), "plain todo")
-        XCTAssertNil(FocusSource.actionText(for: markdownSnapshot, at: 3))
+        XCTAssertEqual(client.graphQLURL.absoluteString, "http://127.0.0.1:8123/graphql")
     }
 }

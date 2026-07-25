@@ -4,20 +4,30 @@ import Darwin
 public struct WeeklyFocusSnapshot: Equatable, Sendable {
     public let brainRoot: String
     public let weeklyNotePath: String
-    public let todos: [String]
-    public let overflowTodos: [String]
-    public let waiting: [String]
-    public let capturedCount: Int
 
-    /// Board-backed tasks, parallel to `todos`. Empty when the snapshot came from
-    /// markdown, which is what the app falls back to when the board is unreachable.
+    /// The focus list itself. Board tasks are the only representation; the string
+    /// views below exist because the renderer and the printed card want text.
     public let tasks: [FocusTask]
 
-    /// Board items behind the focus list, used for the overflow count.
+    /// Open tasks behind the focus list, shown dimmed.
     public let overflowTasks: [FocusTask]
 
-    public var isBoardBacked: Bool {
-        !tasks.isEmpty
+    /// Tasks parked on someone else.
+    public let waitingTasks: [FocusTask]
+
+    /// Tasks already closed in the current week.
+    public let capturedCount: Int
+
+    public var todos: [String] {
+        tasks.map(\.displayText)
+    }
+
+    public var overflowTodos: [String] {
+        overflowTasks.map(\.displayText)
+    }
+
+    public var waiting: [String] {
+        waitingTasks.map(\.displayText)
     }
 
     public var now: String? {
@@ -31,24 +41,20 @@ public struct WeeklyFocusSnapshot: Equatable, Sendable {
     public init(
         brainRoot: String,
         weeklyNotePath: String,
-        todos: [String],
-        overflowTodos: [String] = [],
-        waiting: [String],
-        capturedCount: Int,
         tasks: [FocusTask] = [],
-        overflowTasks: [FocusTask] = []
+        overflowTasks: [FocusTask] = [],
+        waitingTasks: [FocusTask] = [],
+        capturedCount: Int = 0
     ) {
         self.brainRoot = brainRoot
         self.weeklyNotePath = weeklyNotePath
-        self.todos = todos
-        self.overflowTodos = overflowTodos
-        self.waiting = waiting
-        self.capturedCount = capturedCount
         self.tasks = tasks
         self.overflowTasks = overflowTasks
+        self.waitingTasks = waitingTasks
+        self.capturedCount = capturedCount
     }
 
-    /// Builds a snapshot from board items, preserving the shape the UI already renders.
+    /// Splits board items into the focus list, the overflow behind it, and waiting.
     public static func fromBoard(
         _ boardTasks: [FocusTask],
         brainRoot: String,
@@ -61,21 +67,19 @@ public struct WeeklyFocusSnapshot: Equatable, Sendable {
         let open = ordered.filter { $0.isOpen && !$0.isWaiting }
         let waiting = ordered.filter(\.isWaiting)
 
-        let focused = Array(open.prefix(todoLimit))
-        var overflow = Array(open.dropFirst(todoLimit))
+        let focused = Array(open.prefix(Swift.max(0, todoLimit)))
+        var overflow = Array(open.dropFirst(Swift.max(0, todoLimit)))
         if let overflowLimit {
-            overflow = Array(overflow.prefix(overflowLimit))
+            overflow = Array(overflow.prefix(Swift.max(0, overflowLimit)))
         }
 
         return WeeklyFocusSnapshot(
             brainRoot: brainRoot,
             weeklyNotePath: weeklyNotePath,
-            todos: focused.map(\.displayText),
-            overflowTodos: overflow.map(\.displayText),
-            waiting: waiting.prefix(waitingLimit).map(\.displayText),
-            capturedCount: boardTasks.filter { !$0.isOpen }.count,
             tasks: focused,
-            overflowTasks: overflow
+            overflowTasks: overflow,
+            waitingTasks: Array(waiting.prefix(Swift.max(0, waitingLimit))),
+            capturedCount: boardTasks.filter { !$0.isOpen }.count
         )
     }
 }
@@ -88,7 +92,6 @@ public struct LaunchCommand: Equatable {
 public enum WeeklyFocusError: LocalizedError {
     case launchFailed(String)
     case todoNotFound(String)
-    case weeklyNoteMissing(String)
     case writeFailed(String)
 
     public var errorDescription: String? {
@@ -96,11 +99,9 @@ public enum WeeklyFocusError: LocalizedError {
         case .launchFailed(let message):
             return message
         case .todoNotFound(let todo):
-            return "TODO not found in weekly note: \(todo)"
-        case .weeklyNoteMissing(let path):
-            return "Weekly note not found: \(path)"
-        case .writeFailed(let path):
-            return "Could not update weekly note: \(path)"
+            return "Task not found on the board: \(todo)"
+        case .writeFailed(let message):
+            return message
         }
     }
 }
@@ -211,7 +212,7 @@ public enum BrainWikilinkResolver {
             return nil
         }
 
-        let resolvedBrainRoot = URL(fileURLWithPath: WeeklyFocusReader.resolveHome(brainRoot))
+        let resolvedBrainRoot = URL(fileURLWithPath: BrainPaths.resolveHome(brainRoot))
             .standardizedFileURL
 
         if target.hasPrefix("uid:") {
@@ -303,149 +304,28 @@ public enum BrainWikilinkResolver {
     }
 }
 
-public struct WeeklyFocusReader {
-    private struct ChecklistBlock {
-        var lines: [String]
-        let isCompleted: Bool
-        let isSelected: Bool
-    }
-
+/// Locates the Brain root and the current weekly note.
+///
+/// Tasks live on the board, so nothing here reads or writes task state. The app still
+/// needs these paths to open the weekly note and to resolve Brain wikilinks that
+/// appear in task text.
+public struct BrainPaths {
     public let brainRoot: String
     public let weeklyNotePath: String
 
     public init(
-        brainRoot: String = WeeklyFocusReader.defaultBrainRoot(),
+        brainRoot: String = BrainPaths.defaultBrainRoot(),
         date: Date = Date(),
         weeklyNotePath: String? = nil,
         calendar: Calendar = .current
     ) {
-        let resolvedBrainRoot = WeeklyFocusReader.resolveHome(brainRoot)
+        let resolvedBrainRoot = BrainPaths.resolveHome(brainRoot)
         self.brainRoot = resolvedBrainRoot
-        self.weeklyNotePath = weeklyNotePath ?? WeeklyFocusReader.currentOrLatestWeeklyNotePath(
+        self.weeklyNotePath = weeklyNotePath ?? BrainPaths.currentOrLatestWeeklyNotePath(
             brainRoot: resolvedBrainRoot,
             date: date,
             calendar: calendar
         )
-    }
-
-    public func read(
-        todoLimit: Int = 5,
-        overflowLimit: Int? = nil,
-        waitingLimit: Int = 3
-    ) throws -> WeeklyFocusSnapshot {
-        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
-            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
-        }
-
-        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
-        return Self.parse(
-            content,
-            brainRoot: brainRoot,
-            weeklyNotePath: weeklyNotePath,
-            todoLimit: todoLimit,
-            overflowLimit: overflowLimit,
-            waitingLimit: waitingLimit
-        )
-    }
-
-    @discardableResult
-    public static func markTodoDone(
-        _ todo: String,
-        weeklyNotePath: String
-    ) throws -> Bool {
-        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
-            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
-        }
-
-        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
-        var lines = content.components(separatedBy: .newlines)
-
-        guard let bounds = sectionBounds(in: lines, heading: "## TODO") else {
-            throw WeeklyFocusError.todoNotFound(todo)
-        }
-
-        for index in bounds.start..<bounds.end {
-            let line = lines[index]
-            guard line.hasPrefix("- [ ] ") else {
-                continue
-            }
-
-            let item = String(line.dropFirst("- [ ] ".count)).trimmingCharacters(in: .whitespaces)
-            guard item == todo else {
-                continue
-            }
-
-            let reorderedSection = reorderedTodoSection(
-                Array(lines[bounds.start..<bounds.end]),
-                selectedOffset: index - bounds.start
-            )
-            lines.replaceSubrange(bounds.start..<bounds.end, with: reorderedSection)
-            try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
-            return true
-        }
-
-        throw WeeklyFocusError.todoNotFound(todo)
-    }
-
-    @discardableResult
-    public static func appendCapture(
-        _ text: String,
-        weeklyNotePath: String,
-        source: String? = nil,
-        now: Date = Date(),
-        calendar: Calendar = .current
-    ) throws -> String {
-        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
-            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
-        }
-
-        let normalizedText = normalizeSingleLine(text)
-        guard !normalizedText.isEmpty else {
-            throw WeeklyFocusError.writeFailed("Capture text is required")
-        }
-
-        let normalizedSource = source.map { normalizeSingleLine($0) }.flatMap { $0.isEmpty ? nil : $0 }
-        let line = captureLine(text: normalizedText, source: normalizedSource, now: now, calendar: calendar)
-        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
-        var lines = content.components(separatedBy: .newlines)
-
-        if let captured = sectionBounds(in: lines, heading: "## Captured") {
-            insertBeforeSectionTrailingBlank(&lines, sectionStart: captured.start, sectionEnd: captured.end, line: line)
-        } else {
-            let insertionIndex = sectionBounds(in: lines, heading: "## TODO")?.end ?? lines.count
-            insertNewSection(&lines, before: insertionIndex, heading: "## Captured", firstLine: line)
-        }
-
-        try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
-        return line
-    }
-
-    @discardableResult
-    public static func appendTodo(
-        _ text: String,
-        weeklyNotePath: String
-    ) throws -> String {
-        guard FileManager.default.fileExists(atPath: weeklyNotePath) else {
-            throw WeeklyFocusError.weeklyNoteMissing(weeklyNotePath)
-        }
-
-        let normalizedText = normalizeSingleLine(text)
-        guard !normalizedText.isEmpty else {
-            throw WeeklyFocusError.writeFailed("TODO text is required")
-        }
-
-        let line = "- [ ] \(normalizedText)"
-        let content = try String(contentsOfFile: weeklyNotePath, encoding: .utf8)
-        var lines = content.components(separatedBy: .newlines)
-
-        if let todo = sectionBounds(in: lines, heading: "## TODO") {
-            insertBeforeSectionTrailingBlank(&lines, sectionStart: todo.start, sectionEnd: todo.end, line: line)
-        } else {
-            insertNewSection(&lines, before: lines.count, heading: "## TODO", firstLine: line)
-        }
-
-        try writeFileAtomically(lines.joined(separator: "\n"), to: weeklyNotePath)
-        return line
     }
 
     public static func defaultBrainRoot() -> String {
@@ -513,36 +393,6 @@ public struct WeeklyFocusReader {
         return latestPath
     }
 
-    public static func parse(
-        _ content: String,
-        brainRoot: String,
-        weeklyNotePath: String,
-        todoLimit: Int = 5,
-        overflowLimit: Int? = nil,
-        waitingLimit: Int = 3
-    ) -> WeeklyFocusSnapshot {
-        let lines = content.components(separatedBy: .newlines)
-        let todoItems = uncheckedItems(in: lines, heading: "## TODO")
-        let waitingItems = uncheckedItems(in: lines, heading: "## Waiting")
-        let limit = Swift.max(0, todoLimit)
-        let todos = Array(todoItems[..<Swift.min(todoItems.count, limit)])
-        let allOverflowTodos = todoItems.count > limit ? Array(todoItems[limit...]) : []
-        let overflowTodos = overflowLimit.map { overflowLimit in
-            Array(allOverflowTodos.prefix(Swift.max(0, overflowLimit)))
-        } ?? allOverflowTodos
-        let waiting = Array(waitingItems[..<Swift.min(waitingItems.count, Swift.max(0, waitingLimit))])
-        let capturedCount = uncheckedItems(in: lines, heading: "## Captured").count
-
-        return WeeklyFocusSnapshot(
-            brainRoot: brainRoot,
-            weeklyNotePath: weeklyNotePath,
-            todos: todos,
-            overflowTodos: overflowTodos,
-            waiting: waiting,
-            capturedCount: capturedCount
-        )
-    }
-
     private static func startOfWeekSunday(
         _ date: Date,
         calendar inputCalendar: Calendar
@@ -596,170 +446,8 @@ public struct WeeklyFocusReader {
 
         return candidates.sorted { $0.date > $1.date }.first?.path
     }
-
-    private static func uncheckedItems(in lines: [String], heading: String) -> [String] {
-        guard let bounds = sectionBounds(in: lines, heading: heading) else {
-            return []
-        }
-
-        return lines[bounds.start..<bounds.end].compactMap { line in
-            guard line.hasPrefix("- [ ] ") else {
-                return nil
-            }
-
-            return String(line.dropFirst("- [ ] ".count)).trimmingCharacters(in: .whitespaces)
-        }
-    }
-
-    private static func captureLine(
-        text: String,
-        source: String?,
-        now: Date,
-        calendar: Calendar
-    ) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        let timestamp = formatter.string(from: now)
-
-        if let source {
-            return "- [ ] \(timestamp) \(text) (source: \(source))"
-        }
-
-        return "- [ ] \(timestamp) \(text)"
-    }
-
-    private static func normalizeSingleLine(_ text: String) -> String {
-        text
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    private static func sectionBounds(in lines: [String], heading: String) -> (start: Int, end: Int)? {
-        guard let headingIndex = lines.firstIndex(where: { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            return trimmed == heading || trimmed.hasPrefix("\(heading)<!--")
-        }) else {
-            return nil
-        }
-
-        let start = headingIndex + 1
-        let end = lines[start...].firstIndex(where: { $0.hasPrefix("## ") }) ?? lines.count
-        return (start, end)
-    }
-
-    private static func isChecklistLine(_ line: String) -> Bool {
-        line.hasPrefix("- [ ] ") || isCompletedChecklistLine(line)
-    }
-
-    private static func isCompletedChecklistLine(_ line: String) -> Bool {
-        line.hasPrefix("- [x] ") || line.hasPrefix("- [X] ")
-    }
-
-    private static func reorderedTodoSection(
-        _ sectionLines: [String],
-        selectedOffset: Int
-    ) -> [String] {
-        guard let firstChecklistOffset = sectionLines.firstIndex(where: isChecklistLine) else {
-            return sectionLines
-        }
-
-        var contentEnd = sectionLines.count
-        while contentEnd > firstChecklistOffset &&
-            sectionLines[contentEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty {
-            contentEnd -= 1
-        }
-
-        let prefix = Array(sectionLines[..<firstChecklistOffset])
-        let suffix = Array(sectionLines[contentEnd...])
-        var blocks: [ChecklistBlock] = []
-        var currentBlock: ChecklistBlock?
-
-        for offset in firstChecklistOffset..<contentEnd {
-            let line = sectionLines[offset]
-            if isChecklistLine(line) {
-                if let currentBlock {
-                    blocks.append(currentBlock)
-                }
-
-                let isSelected = offset == selectedOffset
-                let itemLine = isSelected
-                    ? "- [x] \(line.dropFirst("- [ ] ".count))"
-                    : line
-                currentBlock = ChecklistBlock(
-                    lines: [itemLine],
-                    isCompleted: isSelected || isCompletedChecklistLine(line),
-                    isSelected: isSelected
-                )
-            } else {
-                currentBlock?.lines.append(line)
-            }
-        }
-
-        if let currentBlock {
-            blocks.append(currentBlock)
-        }
-
-        let completed = blocks.filter { $0.isCompleted && !$0.isSelected }
-        let selected = blocks.filter(\.isSelected)
-        let pending = blocks.filter { !$0.isCompleted }
-        return prefix + (completed + selected + pending).flatMap(\.lines) + suffix
-    }
-
-    private static func insertBeforeSectionTrailingBlank(
-        _ lines: inout [String],
-        sectionStart: Int,
-        sectionEnd: Int,
-        line: String
-    ) {
-        var insertionIndex = sectionEnd
-
-        while insertionIndex > sectionStart + 1 && lines[insertionIndex - 1].trimmingCharacters(in: .whitespaces).isEmpty {
-            insertionIndex -= 1
-        }
-
-        lines.insert(line, at: insertionIndex)
-    }
-
-    private static func insertNewSection(
-        _ lines: inout [String],
-        before index: Int,
-        heading: String,
-        firstLine: String
-    ) {
-        var insertionIndex = index
-
-        while insertionIndex > 0 && lines[insertionIndex - 1].trimmingCharacters(in: .whitespaces).isEmpty {
-            insertionIndex -= 1
-        }
-
-        let removedBlankCount = index - insertionIndex
-        lines.replaceSubrange(insertionIndex..<index, with: Array(repeating: "", count: 0))
-        if removedBlankCount > 0 {
-            lines.insert("", at: insertionIndex)
-            insertionIndex += 1
-        } else if insertionIndex > 0 {
-            lines.insert("", at: insertionIndex)
-            insertionIndex += 1
-        }
-
-        lines.insert(contentsOf: [heading, firstLine, ""], at: insertionIndex)
-    }
-
-    private static func writeFileAtomically(_ content: String, to path: String) throws {
-        let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
-        let tempURL = directory.appendingPathComponent(".\(URL(fileURLWithPath: path).lastPathComponent).\(ProcessInfo.processInfo.processIdentifier).tmp")
-
-        try content.write(to: tempURL, atomically: false, encoding: .utf8)
-        if rename(tempURL.path, path) != 0 {
-            try? FileManager.default.removeItem(at: tempURL)
-            throw WeeklyFocusError.writeFailed(path)
-        }
-    }
 }
+
 
 public enum WeeklyFocusFormatter {
     public static func card(_ snapshot: WeeklyFocusSnapshot) -> String {
@@ -784,9 +472,9 @@ public enum WeeklyFocusFormatter {
             "Waiting"
         ] + waiting + [
             "",
-            "Captured: \(snapshot.capturedCount) unchecked \(capturedLabel)",
+            "Completed this week: \(snapshot.capturedCount) \(capturedLabel)",
             "",
-            "Source: \(snapshot.weeklyNotePath)"
+            "Source: Brain Tasks board (project \(BrainBoard.projectNumber))"
         ]).joined(separator: "\n")
     }
 }

@@ -18,8 +18,9 @@ case "${1:-}" in
     cat <<'USAGE'
 Usage: weekly-focus-app [--print-focus]
 
-Tasks come from the private GitHub Projects board. The weekly note is used as a
-fallback when no credential is available or the board has not been fetched yet.
+Tasks come from the private GitHub Projects board, which is the only task
+source. Reads are served from a local cache first, then reconciled in the
+background, so the window paints instantly.
 
 Options:
   --print-focus                 Print the weekly focus card and exit
