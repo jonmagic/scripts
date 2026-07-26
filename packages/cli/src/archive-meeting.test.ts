@@ -95,7 +95,7 @@ describe("archive meeting task capture", () => {
     expect(resolveEditor({})).toEqual(["vi"])
   })
 
-  test("adds board tasks as Todo with the meeting note as the source", () => {
+  test("adds board tasks into the current week so Weekly Focus can see them", () => {
     expect(
       buildBrainTasksAddArgs({
         title: "Send the timeline to @octocat",
@@ -107,6 +107,8 @@ describe("archive meeting task capture", () => {
       "Send the timeline to @octocat",
       "--status",
       "Todo",
+      "--week",
+      "current",
       "--source",
       "[[Meeting Notes/example/2026-07-08/01]]",
     ])

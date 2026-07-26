@@ -1,8 +1,8 @@
 import {
-  appendWeeklyNoteCapture,
-  parseWeeklyNoteFocus,
-  type AppendWeeklyNoteCaptureResult,
-  type WeeklyNoteFocus,
+  addBrainTask,
+  listBrainTasks,
+  type AddBrainTaskResult,
+  type BrainTask,
 } from "@jonmagic/scripts-core"
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
@@ -10,16 +10,19 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 export interface CaptureWeeklyNoteCliOptions {
-  brainRoot?: string
+  brainTasksPath?: string
   source?: string
   text: string
-  weeklyNotePath?: string
 }
 
 export interface WeeklyFocusCliOptions {
-  brainRoot?: string
+  brainTasksPath?: string
   todoLimit?: number
-  weeklyNotePath?: string
+}
+
+export interface WeeklyFocus {
+  tasks: BrainTask[]
+  waiting: BrainTask[]
 }
 
 export interface LaunchWeeklyTodoOptions {
@@ -82,11 +85,11 @@ function resolveCmuxCommand(cmuxPath?: string): string {
 
 export function buildWeeklyTodoPrompt(todo: string): string {
   return [
-    "I want to work on this weekly note TODO item:",
+    "I want to work on this task from my Brain Tasks board:",
     "",
     todo,
     "",
-    "Start in my Brain. Read the current weekly note for context, then help me clarify the next action and work the item end-to-end. Keep the weekly note as the canonical commitment store.",
+    "Start in my Brain. Read the current weekly note for context, then help me clarify the next action and work the item end-to-end. The Brain Tasks board is the canonical task store, so record status changes there with brain-tasks rather than in the weekly note.",
   ].join("\n")
 }
 
@@ -163,78 +166,83 @@ export async function launchFocusCard(
 
 export async function runCaptureWeeklyNote(
   options: CaptureWeeklyNoteCliOptions
-): Promise<AppendWeeklyNoteCaptureResult> {
-  const captureOptions: Parameters<typeof appendWeeklyNoteCapture>[0] = {
-    text: options.text,
+): Promise<AddBrainTaskResult> {
+  const addOptions: Parameters<typeof addBrainTask>[0] = {
+    title: options.text,
   }
 
-  if (options.brainRoot !== undefined) {
-    captureOptions.brainRoot = options.brainRoot
-  }
   if (options.source !== undefined) {
-    captureOptions.source = options.source
+    addOptions.source = options.source
   }
-  if (options.weeklyNotePath !== undefined) {
-    captureOptions.weeklyNotePath = options.weeklyNotePath
+  if (options.brainTasksPath !== undefined) {
+    addOptions.brainTasksPath = options.brainTasksPath
   }
 
-  return appendWeeklyNoteCapture(captureOptions)
+  return addBrainTask(addOptions)
 }
+
+const WAITING_STATUS = "Waiting"
+const ACTIVE_STATUSES = "Todo,Doing,Waiting"
 
 export async function runWeeklyFocus(
-  options: WeeklyFocusCliOptions
-): Promise<WeeklyNoteFocus> {
-  const focusOptions: Parameters<typeof parseWeeklyNoteFocus>[0] = {}
-
-  if (options.brainRoot !== undefined) {
-    focusOptions.brainRoot = options.brainRoot
-  }
-  if (options.todoLimit !== undefined) {
-    focusOptions.todoLimit = options.todoLimit
-  }
-  if (options.weeklyNotePath !== undefined) {
-    focusOptions.weeklyNotePath = options.weeklyNotePath
+  options: WeeklyFocusCliOptions = {}
+): Promise<WeeklyFocus> {
+  const listOptions: Parameters<typeof listBrainTasks>[0] = {
+    status: ACTIVE_STATUSES,
   }
 
-  return parseWeeklyNoteFocus(focusOptions)
+  if (options.brainTasksPath !== undefined) {
+    listOptions.brainTasksPath = options.brainTasksPath
+  }
+
+  const items = await listBrainTasks(listOptions)
+  const waiting = items.filter((item) => item.status === WAITING_STATUS)
+  const actionable = items.filter((item) => item.status !== WAITING_STATUS)
+  const limit = options.todoLimit ?? 5
+
+  return { tasks: actionable.slice(0, limit), waiting }
 }
 
-export function formatWeeklyFocus(focus: WeeklyNoteFocus): string {
-  const waiting = focus.waiting.length > 0 ? focus.waiting.join("; ") : "(none)"
-  const capturedLabel = focus.capturedCount === 1 ? "item" : "items"
+function taskLabel(task: BrainTask): string {
+  return task.area ? `${task.title} (${task.area})` : task.title
+}
+
+export function formatWeeklyFocus(focus: WeeklyFocus): string {
+  const [now, next] = focus.tasks
+  const waiting =
+    focus.waiting.length > 0
+      ? focus.waiting.map(taskLabel).join("; ")
+      : "(none)"
 
   return [
-    `Weekly note: ${focus.weeklyNotePath}`,
-    `Now: ${focus.now ?? "(none)"}`,
-    `Next: ${focus.next ?? "(none)"}`,
+    "Brain Tasks: week:@current",
+    `Now: ${now ? taskLabel(now) : "(none)"}`,
+    `Next: ${next ? taskLabel(next) : "(none)"}`,
     `Waiting: ${waiting}`,
-    `Captured: ${focus.capturedCount} unchecked ${capturedLabel}`,
+    `Open: ${focus.tasks.length + focus.waiting.length}`,
   ].join("\n")
 }
 
-export function formatWeeklyFocusCard(focus: WeeklyNoteFocus): string {
-  const todos =
-    focus.todos.length > 0
-      ? focus.todos.map((todo, index) => `${index + 1}. ${todo}`)
+export function formatWeeklyFocusCard(focus: WeeklyFocus): string {
+  const tasks =
+    focus.tasks.length > 0
+      ? focus.tasks.map((task, index) => `${index + 1}. ${taskLabel(task)}`)
       : ["(none)"]
   const waiting =
     focus.waiting.length > 0
-      ? focus.waiting.map((item) => `- ${item}`)
+      ? focus.waiting.map((task) => `- ${taskLabel(task)}`)
       : ["- (none)"]
-  const capturedLabel = focus.capturedCount === 1 ? "item" : "items"
 
   return [
     "Weekly Focus",
     "============",
     "",
     "Next items",
-    ...todos,
+    ...tasks,
     "",
     "Waiting",
     ...waiting,
     "",
-    `Captured: ${focus.capturedCount} unchecked ${capturedLabel}`,
-    "",
-    `Source: ${focus.weeklyNotePath}`,
+    "Source: Brain Tasks board (week:@current)",
   ].join("\n")
 }

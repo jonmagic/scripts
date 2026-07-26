@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 /**
- * capture-weekly-note: Append a rough commitment capture to the current weekly note.
+ * capture-weekly-note: Add a task to the Brain Tasks board for the current week.
  *
  * Usage:
- *   capture-weekly-note "text" [--source SOURCE] [--brain-root PATH]
- *   capture-weekly-note --text "text" [--source SOURCE] [--brain-root PATH]
+ *   capture-weekly-note "text" [--source SOURCE]
+ *   capture-weekly-note --text "text" [--source SOURCE]
  */
 
 import { parseArgs } from "node:util"
@@ -14,8 +14,7 @@ const { values, positionals } = parseArgs({
   options: {
     text: { type: "string" },
     source: { type: "string" },
-    "brain-root": { type: "string" },
-    "weekly-note-path": { type: "string" },
+    "brain-tasks-path": { type: "string" },
     help: { type: "boolean", short: "h" },
   },
   allowPositionals: true,
@@ -29,8 +28,7 @@ Usage: capture-weekly-note "text" [options]
 Options:
   --text "text"            Capture text (required if not positional)
   --source SOURCE          Optional source label or URL
-  --brain-root PATH        Override Brain root directory
-  --weekly-note-path PATH  Override the weekly note path
+  --brain-tasks-path PATH  Override the brain-tasks executable
   -h, --help               Show this help message
 `)
   process.exit(0)
@@ -45,10 +43,9 @@ if (!text.trim()) {
 }
 
 const result = await runCaptureWeeklyNote({
-  brainRoot: values["brain-root"],
+  brainTasksPath: values["brain-tasks-path"],
   source: values.source,
   text,
-  weeklyNotePath: values["weekly-note-path"],
 })
 
-console.log(result.line)
+console.log(result.title)

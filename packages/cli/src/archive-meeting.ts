@@ -66,6 +66,7 @@ export interface BrainTaskAddOptions {
   title: string
   source?: string | undefined
   status?: string | undefined
+  week?: string | undefined
 }
 
 export function defaultBrainTasksPath(): string {
@@ -138,12 +139,16 @@ export function resolveEditor(env: NodeJS.ProcessEnv = process.env): string[] {
 }
 
 export function buildBrainTasksAddArgs(options: BrainTaskAddOptions): string[] {
+  // Weekly Focus queries the board with `week:@current`, so an item with no
+  // week is invisible until the next roll. Capture into the current week.
   const args = [
     "add",
     "--title",
     options.title,
     "--status",
     options.status || "Todo",
+    "--week",
+    options.week || "current",
   ]
   if (options.source) {
     args.push("--source", options.source)

@@ -81,11 +81,11 @@
       },
       {
         "command": "jonmagic.appendWeeklyTodo",
-        "title": "Brain: Append Weekly Note TODO"
+        "title": "Brain: Add Brain Task"
       },
       {
         "command": "jonmagic.captureWeeklyNote",
-        "title": "Brain: Capture to Weekly Note",
+        "title": "Brain: Capture Brain Task",
         "icon": "$(add)"
       },
       {

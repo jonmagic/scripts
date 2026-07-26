@@ -81,12 +81,12 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 | Command | Description | Requirements |
 |---------|-------------|--------------|
 | `archive-meeting` | Archive a meeting transcript with AI-generated summaries, then review the tasks it found for you | bun, llm |
-| `capture-weekly-note` | Append a rough commitment capture with optional source under `## Captured` in the current weekly note | bun |
+| `capture-weekly-note` | Add a task to the Brain Tasks board for the current week, with an optional source | bun |
 | `list-recent-meetings` | List recent Zoom and Teams meeting inputs as JSON | bun |
 | `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |
 | `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
-| `weekly-focus` | Print a low-noise Now/Next/Waiting/Captured view from the current weekly note | bun |
-| `weekly-focus-card` | Print a sparse focus card capped at five current weekly-note TODOs | bun |
+| `weekly-focus` | Print a low-noise Now/Next/Waiting view from the Brain Tasks board | bun |
+| `weekly-focus-card` | Print a sparse focus card capped at five open board tasks | bun |
 | `weekly-focus-app` | Build and open the native full-screen Weekly Focus app, backed by the GitHub Projects task board | swift |
 
 ## Native Weekly Focus App
@@ -175,7 +175,7 @@ The Raycast extension includes quick Brain actions for the same weekly-note work
 | Command | Description |
 |---------|-------------|
 | `Create Daily Project Note` | Create a numbered Daily Project note |
-| `Capture Weekly Note` | Capture a rough commitment with optional source under `## Captured` |
+| `Capture Weekly Note` | Add a task to the Brain Tasks board with an optional source |
 | `Weekly Focus` | Open the native full-screen Weekly Focus app |
 
 ## License

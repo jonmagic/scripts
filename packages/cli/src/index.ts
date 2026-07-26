@@ -32,5 +32,6 @@ export {
   type LaunchCommand,
   type LaunchFocusCardOptions,
   type LaunchWeeklyTodoOptions,
+  type WeeklyFocus,
   type WeeklyFocusCliOptions,
 } from "./weekly-note-commitments.js"

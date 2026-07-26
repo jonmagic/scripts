@@ -8,45 +8,52 @@ import {
   formatWeeklyFocusCard,
 } from "./weekly-note-commitments.js"
 
+import type { BrainTask } from "@jonmagic/scripts-core"
+
+function task(title: string, overrides: Partial<BrainTask> = {}): BrainTask {
+  return {
+    id: `PVTI_${title.replace(/\W/g, "")}`,
+    title,
+    status: "Todo",
+    week: "Week of 2026-07-26",
+    focus: null,
+    area: null,
+    source: null,
+    target: null,
+    updated: null,
+    ...overrides,
+  }
+}
+
 describe("weekly note commitment CLI helpers", () => {
   test("formats a sparse weekly focus view", () => {
     expect(
       formatWeeklyFocus({
-        brainRoot: "/tmp/Brain",
-        weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-        now: "Ship the current PR",
-        next: "Write the follow-up ask",
-        todos: ["Ship the current PR", "Write the follow-up ask"],
-        waiting: ["Waiting on review"],
-        capturedCount: 2,
+        tasks: [
+          task("Ship the current PR", { area: "tech-debt" }),
+          task("Write the follow-up ask"),
+        ],
+        waiting: [task("Waiting on review", { status: "Waiting" })],
       })
     ).toBe(
       [
-        "Weekly note: /tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-        "Now: Ship the current PR",
+        "Brain Tasks: week:@current",
+        "Now: Ship the current PR (tech-debt)",
         "Next: Write the follow-up ask",
         "Waiting: Waiting on review",
-        "Captured: 2 unchecked items",
+        "Open: 3",
       ].join("\n")
     )
   })
 
   test("formats empty weekly focus states", () => {
-    expect(
-      formatWeeklyFocus({
-        brainRoot: "/tmp/Brain",
-        weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-        todos: [],
-        waiting: [],
-        capturedCount: 1,
-      })
-    ).toBe(
+    expect(formatWeeklyFocus({ tasks: [], waiting: [] })).toBe(
       [
-        "Weekly note: /tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
+        "Brain Tasks: week:@current",
         "Now: (none)",
         "Next: (none)",
         "Waiting: (none)",
-        "Captured: 1 unchecked item",
+        "Open: 0",
       ].join("\n")
     )
   })
@@ -54,13 +61,10 @@ describe("weekly note commitment CLI helpers", () => {
   test("formats a focus card capped by the supplied focus model", () => {
     expect(
       formatWeeklyFocusCard({
-        brainRoot: "/tmp/Brain",
-        weeklyNotePath: "/tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
-        now: "One",
-        next: "Two",
-        todos: ["One", "Two", "Three", "Four", "Five"],
-        waiting: ["Waiting on review"],
-        capturedCount: 3,
+        tasks: ["One", "Two", "Three", "Four", "Five"].map((title) =>
+          task(title)
+        ),
+        waiting: [task("Waiting on review", { status: "Waiting" })],
       })
     ).toBe(
       [
@@ -77,19 +81,17 @@ describe("weekly note commitment CLI helpers", () => {
         "Waiting",
         "- Waiting on review",
         "",
-        "Captured: 3 unchecked items",
-        "",
-        "Source: /tmp/Brain/Weekly Notes/Week of 2026-07-05.md",
+        "Source: Brain Tasks board (week:@current)",
       ].join("\n")
     )
   })
 
-  test("builds Copilot prompts for selected TODOs", () => {
+  test("builds Copilot prompts for selected tasks", () => {
     const prompt = buildWeeklyTodoPrompt("Ship the current PR")
 
-    expect(prompt).toContain("I want to work on this weekly note TODO item")
+    expect(prompt).toContain("this task from my Brain Tasks board")
     expect(prompt).toContain("Ship the current PR")
-    expect(prompt).toContain("weekly note as the canonical commitment store")
+    expect(prompt).toContain("Brain Tasks board is the canonical task store")
   })
 
   test("builds cmux launch args without interpolating TODO text into shell command", () => {

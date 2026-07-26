@@ -2,10 +2,7 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 
 import { extractUid } from "../frontmatter/parse.js"
-import {
-  formatLocalDateYYYYMMDD,
-  resolveBrainRoot,
-} from "../notes/createDailyProjectNote.js"
+import { resolveBrainRoot } from "../notes/createDailyProjectNote.js"
 import { formatWikilink, pathToDisplayPath } from "../wikilinks/patterns.js"
 
 export interface BrainFileActionOptions {
@@ -19,54 +16,6 @@ export interface BrainWikilinkResult {
   relativePath: string
   displayPath: string
   wikilink: string
-}
-
-export interface AppendWeeklyNoteTodoOptions {
-  brainRoot?: string
-  date?: Date
-  text: string
-  weeklyNotePath?: string
-}
-
-export interface AppendWeeklyNoteTodoResult {
-  brainRoot: string
-  weeklyNotePath: string
-  line: string
-  updated: boolean
-  alreadyPresent: boolean
-}
-
-export interface AppendWeeklyNoteCaptureOptions {
-  brainRoot?: string
-  now?: Date
-  source?: string
-  text: string
-  weeklyNotePath?: string
-}
-
-export interface AppendWeeklyNoteCaptureResult {
-  brainRoot: string
-  weeklyNotePath: string
-  line: string
-  updated: true
-}
-
-export interface ParseWeeklyNoteFocusOptions {
-  brainRoot?: string
-  date?: Date
-  todoLimit?: number
-  waitingLimit?: number
-  weeklyNotePath?: string
-}
-
-export interface WeeklyNoteFocus {
-  brainRoot: string
-  weeklyNotePath: string
-  now?: string
-  next?: string
-  todos: string[]
-  waiting: string[]
-  capturedCount: number
 }
 
 export interface AppendProjectReferenceOptions {
@@ -206,51 +155,6 @@ function normalizeSingleLineText(text: string, label: string): string {
   return normalized
 }
 
-function startOfWeekSunday(date: Date): Date {
-  const weekStart = new Date(date)
-  weekStart.setHours(0, 0, 0, 0)
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay())
-  return weekStart
-}
-
-async function resolveWeeklyNote(
-  options: {
-    brainRoot?: string
-    date?: Date
-    weeklyNotePath?: string
-  },
-  label = "Weekly note"
-): Promise<ResolvedInsideBrainRoot> {
-  const brainRoot = await resolveBrainRoot(options.brainRoot)
-  const date = options.date ?? new Date()
-  const weekStart = startOfWeekSunday(date)
-  const defaultWeeklyPath = path.join(
-    brainRoot,
-    "Weekly Notes",
-    `Week of ${formatLocalDateYYYYMMDD(weekStart)}.md`
-  )
-  const weeklyNotePath = options.weeklyNotePath ?? defaultWeeklyPath
-  const resolved = await resolveInsideBrainRoot(brainRoot, weeklyNotePath, label)
-
-  if (!resolved.relativePath.startsWith("Weekly Notes/")) {
-    throw new Error(
-      `Weekly note must be inside Weekly Notes: ${resolved.relativePath}`
-    )
-  }
-
-  try {
-    await assertMarkdownFile(resolved.absolutePath, label)
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("ENOENT")) {
-      throw new Error(`Weekly note not found: ${weeklyNotePath}`)
-    }
-
-    throw error
-  }
-
-  return resolved
-}
-
 function findSectionBounds(
   lines: string[],
   headingLine: string
@@ -273,24 +177,6 @@ function findSectionBounds(
   return { headingIndex, endIndex }
 }
 
-function findOptionalSectionBounds(
-  lines: string[],
-  headingLine: string
-): { headingIndex: number; endIndex: number } | null {
-  try {
-    return findSectionBounds(lines, headingLine)
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === `Heading "${headingLine.replace(/^## /, "")}" not found`
-    ) {
-      return null
-    }
-
-    throw error
-  }
-}
-
 function insertBeforeSectionTrailingBlank(
   lines: string[],
   sectionStartIndex: number,
@@ -307,43 +193,6 @@ function insertBeforeSectionTrailingBlank(
   }
 
   lines.splice(insertionIndex, 0, line)
-}
-
-function insertNewSectionBefore(
-  lines: string[],
-  beforeIndex: number,
-  headingLine: string,
-  firstLine: string
-): void {
-  let insertionIndex = beforeIndex
-
-  while (insertionIndex > 0 && lines[insertionIndex - 1]?.trim() === "") {
-    insertionIndex -= 1
-  }
-
-  const removedBlankCount = beforeIndex - insertionIndex
-  lines.splice(insertionIndex, removedBlankCount, "", headingLine, firstLine, "")
-}
-
-function uncheckedSectionItems(
-  lines: string[],
-  headingLine: string
-): string[] {
-  const section = findOptionalSectionBounds(lines, headingLine)
-  if (!section) {
-    return []
-  }
-
-  return lines
-    .slice(section.headingIndex + 1, section.endIndex)
-    .map((line) => line.match(/^- \[ \] (.+?)\s*$/)?.[1])
-    .filter((item): item is string => item !== undefined)
-}
-
-function formatLocalTimeHHMM(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, "0")
-  const minutes = String(date.getMinutes()).padStart(2, "0")
-  return `${hours}:${minutes}`
 }
 
 export function parseLocalDateYYYYMMDD(input: string): Date {
@@ -406,135 +255,6 @@ export async function createUidWikilinkForFile(
     ...pathLink,
     wikilink: formatWikilink(uid, pathLink.displayPath),
   }
-}
-
-export async function appendWeeklyNoteTodo(
-  options: AppendWeeklyNoteTodoOptions
-): Promise<AppendWeeklyNoteTodoResult> {
-  const resolved = await resolveWeeklyNote(options)
-
-  const todoText = normalizeSingleLineText(options.text, "TODO text")
-  const line = `- [ ] ${todoText}`
-  const content = await fs.readFile(resolved.absolutePath, "utf8")
-  const lines = content.split(/\r?\n/)
-  const { headingIndex, endIndex } = findSectionBounds(lines, "## TODO")
-  const alreadyPresent = lines
-    .slice(headingIndex + 1, endIndex)
-    .some((candidate) => candidate.trim() === line)
-
-  if (alreadyPresent) {
-    return {
-      brainRoot: resolved.brainRoot,
-      weeklyNotePath: resolved.absolutePath,
-      line,
-      updated: false,
-      alreadyPresent: true,
-    }
-  }
-
-  insertBeforeSectionTrailingBlank(lines, headingIndex, endIndex, line)
-  await writeFileAtomically(resolved.absolutePath, lines.join("\n"))
-
-  return {
-    brainRoot: resolved.brainRoot,
-    weeklyNotePath: resolved.absolutePath,
-    line,
-    updated: true,
-    alreadyPresent: false,
-  }
-}
-
-export async function appendWeeklyNoteCapture(
-  options: AppendWeeklyNoteCaptureOptions
-): Promise<AppendWeeklyNoteCaptureResult> {
-  const now = options.now ?? new Date()
-  const resolveOptions: {
-    brainRoot?: string
-    date: Date
-    weeklyNotePath?: string
-  } = { date: now }
-
-  if (options.brainRoot !== undefined) {
-    resolveOptions.brainRoot = options.brainRoot
-  }
-  if (options.weeklyNotePath !== undefined) {
-    resolveOptions.weeklyNotePath = options.weeklyNotePath
-  }
-
-  const resolved = await resolveWeeklyNote(resolveOptions)
-  const text = normalizeSingleLineText(options.text, "Capture text")
-  const source = options.source
-    ? normalizeSingleLineText(options.source, "Capture source")
-    : undefined
-  const timestamp = `${formatLocalDateYYYYMMDD(now)} ${formatLocalTimeHHMM(now)}`
-  const line = source
-    ? `- [ ] ${timestamp} ${text} (source: ${source})`
-    : `- [ ] ${timestamp} ${text}`
-  const content = await fs.readFile(resolved.absolutePath, "utf8")
-  const lines = content.split(/\r?\n/)
-  const capturedSection = findOptionalSectionBounds(lines, "## Captured")
-
-  if (capturedSection) {
-    insertBeforeSectionTrailingBlank(
-      lines,
-      capturedSection.headingIndex,
-      capturedSection.endIndex,
-      line
-    )
-  } else {
-    const todoSection = findOptionalSectionBounds(lines, "## TODO")
-    insertNewSectionBefore(
-      lines,
-      todoSection?.endIndex ?? lines.length,
-      "## Captured",
-      line
-    )
-  }
-
-  await writeFileAtomically(resolved.absolutePath, lines.join("\n"))
-
-  return {
-    brainRoot: resolved.brainRoot,
-    weeklyNotePath: resolved.absolutePath,
-    line,
-    updated: true,
-  }
-}
-
-export async function parseWeeklyNoteFocus(
-  options: ParseWeeklyNoteFocusOptions = {}
-): Promise<WeeklyNoteFocus> {
-  const resolved = await resolveWeeklyNote(options)
-  const content = await fs.readFile(resolved.absolutePath, "utf8")
-  const lines = content.split(/\r?\n/)
-  const todoLimit = options.todoLimit ?? 5
-  const todos = uncheckedSectionItems(lines, "## TODO").slice(
-    0,
-    Math.max(0, todoLimit)
-  )
-  const waitingLimit = options.waitingLimit ?? 3
-  const waiting = uncheckedSectionItems(lines, "## Waiting").slice(
-    0,
-    Math.max(0, waitingLimit)
-  )
-  const capturedCount = uncheckedSectionItems(lines, "## Captured").length
-
-  const focus: WeeklyNoteFocus = {
-    brainRoot: resolved.brainRoot,
-    weeklyNotePath: resolved.absolutePath,
-    todos,
-    waiting,
-    capturedCount,
-  }
-
-  if (todos[0] !== undefined) {
-    focus.now = todos[0]
-  }
-  if (todos[1] !== undefined) {
-    focus.next = todos[1]
-  }
-
-  return focus
 }
 
 export function extractMarkdownLevelTwoHeadings(content: string): string[] {

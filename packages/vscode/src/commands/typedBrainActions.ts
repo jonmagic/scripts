@@ -3,14 +3,13 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as vscode from "vscode"
 import {
+  addBrainTask,
   appendProjectReference,
-  appendWeeklyNoteCapture,
-  appendWeeklyNoteTodo,
   createPathWikilinkForFile,
   createUidWikilinkForFile,
   extractMarkdownLevelTwoHeadings,
-  parseWeeklyNoteFocus,
-  type WeeklyNoteFocus,
+  listBrainTasks,
+  type BrainTask,
 } from "@jonmagic/scripts-core"
 
 import { getWorkspaceCache } from "../cache/workspaceCache"
@@ -99,11 +98,11 @@ async function copyUidWikilink(target?: ResourceTarget): Promise<void> {
 
 async function appendWeeklyTodo(): Promise<void> {
   const text = await vscode.window.showInputBox({
-    title: "Append Weekly Note TODO",
-    prompt: "TODO text for the current Weekly Note",
+    title: "Add Brain Task",
+    prompt: "Task for the current week on the Brain Tasks board",
     placeHolder: "Follow up on typed Brain actions",
     validateInput: (value) => {
-      return value.trim() ? null : "TODO text is required"
+      return value.trim() ? null : "Task text is required"
     },
   })
 
@@ -112,24 +111,20 @@ async function appendWeeklyTodo(): Promise<void> {
   }
 
   try {
-    const result = await appendWeeklyNoteTodo({
-      brainRoot: getBrainPath(),
-      text,
-    })
-    const action = result.alreadyPresent ? "already present" : "added"
-    await vscode.window.showInformationMessage(`Weekly TODO ${action}`)
+    const result = await addBrainTask({ title: text })
+    await vscode.window.showInformationMessage(`Added task: ${result.title}`)
   } catch (error) {
-    await showActionError("Could not append Weekly Note TODO", error)
+    await showActionError("Could not add Brain task", error)
   }
 }
 
 async function captureWeeklyNote(): Promise<void> {
   const text = await vscode.window.showInputBox({
-    title: "Capture to Weekly Note",
-    prompt: "Rough commitment or follow-up to append under ## Captured",
+    title: "Capture Brain Task",
+    prompt: "Rough commitment or follow-up to add to the Brain Tasks board",
     placeHolder: "Follow up with @handle about the review ask",
     validateInput: (value) => {
-      return value.trim() ? null : "Capture text is required"
+      return value.trim() ? null : "Task text is required"
     },
   })
 
@@ -138,60 +133,56 @@ async function captureWeeklyNote(): Promise<void> {
   }
 
   const source = await vscode.window.showInputBox({
-    title: "Capture to Weekly Note",
+    title: "Capture Brain Task",
     prompt: "Optional source label or URL",
     placeHolder: "Slack thread, meeting note, PR URL, or leave blank",
   })
 
   try {
-    const captureOptions: Parameters<typeof appendWeeklyNoteCapture>[0] = {
-      brainRoot: getBrainPath(),
-      text,
-    }
+    const addOptions: Parameters<typeof addBrainTask>[0] = { title: text }
 
     if (source?.trim()) {
-      captureOptions.source = source
+      addOptions.source = source
     }
 
-    await appendWeeklyNoteCapture(captureOptions)
-    await vscode.window.showInformationMessage("Weekly capture added")
+    const result = await addBrainTask(addOptions)
+    await vscode.window.showInformationMessage(`Added task: ${result.title}`)
   } catch (error) {
-    await showActionError("Could not capture to Weekly Note", error)
+    await showActionError("Could not capture Brain task", error)
   }
 }
 
-function createWeeklyFocusItems(focus: WeeklyNoteFocus): vscode.QuickPickItem[] {
-  const waiting = focus.waiting.length > 0 ? focus.waiting.join("; ") : "(none)"
-  const capturedLabel = focus.capturedCount === 1 ? "item" : "items"
+const STATUS_ICONS: Record<string, string> = {
+  Doing: "$(play)",
+  Todo: "$(circle-outline)",
+  Waiting: "$(clock)",
+  Inbox: "$(inbox)",
+}
 
-  return [
-    {
-      label: "$(target) Now",
-      description: focus.now ?? "(none)",
-    },
-    {
-      label: "$(arrow-right) Next",
-      description: focus.next ?? "(none)",
-    },
-    {
-      label: "$(clock) Waiting",
-      description: waiting,
-    },
-    {
-      label: "$(inbox) Captured",
-      description: `${focus.capturedCount} unchecked ${capturedLabel}`,
-    },
-  ]
+function createWeeklyFocusItems(tasks: BrainTask[]): vscode.QuickPickItem[] {
+  if (tasks.length === 0) {
+    return [{ label: "$(check) No open tasks this week" }]
+  }
+
+  return tasks.map((task) => {
+    const icon = STATUS_ICONS[task.status] ?? "$(circle-outline)"
+    const item: vscode.QuickPickItem = {
+      label: `${icon} ${task.title}`,
+      description: task.status,
+    }
+    if (task.area) {
+      item.detail = task.area
+    }
+    return item
+  })
 }
 
 async function showWeeklyFocus(): Promise<void> {
   try {
-    const focus = await parseWeeklyNoteFocus({
-      brainRoot: getBrainPath(),
-    })
-    await vscode.window.showQuickPick(createWeeklyFocusItems(focus), {
+    const tasks = await listBrainTasks({ status: "Todo,Doing,Waiting" })
+    await vscode.window.showQuickPick(createWeeklyFocusItems(tasks), {
       title: "Weekly Focus",
-      placeHolder: focus.weeklyNotePath,
+      placeHolder: "Brain Tasks board (week:@current)",
       matchOnDescription: true,
     })
   } catch (error) {

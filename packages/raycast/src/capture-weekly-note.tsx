@@ -1,7 +1,7 @@
 import { Form, ActionPanel, Action, showToast, Toast } from "@raycast/api"
 import { useState } from "react"
 
-import { appendWeeklyNoteCapture } from "@jonmagic/scripts-core"
+import { addBrainTask } from "@jonmagic/scripts-core"
 
 export default function Command() {
   const [text, setText] = useState("")
@@ -19,18 +19,18 @@ export default function Command() {
               }
 
               try {
-                const captureOptions: Parameters<typeof appendWeeklyNoteCapture>[0] = {
-                  text,
+                const addOptions: Parameters<typeof addBrainTask>[0] = {
+                  title: text,
                 }
                 if (source.trim()) {
-                  captureOptions.source = source
+                  addOptions.source = source
                 }
 
-                const result = await appendWeeklyNoteCapture(captureOptions)
+                const result = await addBrainTask(addOptions)
                 await showToast({
                   style: Toast.Style.Success,
-                  title: "Captured to Weekly Note",
-                  message: result.line,
+                  title: "Added to Brain Tasks",
+                  message: result.title,
                 })
                 setText("")
                 setSource("")
@@ -49,7 +49,7 @@ export default function Command() {
     >
       <Form.TextField
         id="text"
-        title="Capture"
+        title="Task"
         placeholder="Follow up with @handle about the review ask"
         value={text}
         onChange={setText}
