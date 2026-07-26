@@ -7,6 +7,8 @@ final class WeeklyFocusCoreTests: XCTestCase {
             [
                 FocusTask(id: 1, nodeID: "a", title: "One", status: "Todo", focus: 1),
                 FocusTask(id: 2, nodeID: "b", title: "Two", status: "Todo", focus: 2),
+                // The live fetch filters these out now, but the snapshot should still
+                // drop one if it ever arrives from a stale cache.
                 FocusTask(id: 3, nodeID: "c", title: "Done one", status: "Done")
             ],
             brainRoot: "/tmp/Brain",
@@ -25,8 +27,6 @@ final class WeeklyFocusCoreTests: XCTestCase {
                 "",
                 "Waiting",
                 "- (none)",
-                "",
-                "Completed this week: 1 item",
                 "",
                 "Source: Brain Tasks board (project \(BrainBoard.projectNumber))"
             ].joined(separator: "\n")

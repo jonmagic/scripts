@@ -13,7 +13,7 @@ final class LiveBoardSmokeTests: XCTestCase {
         let client = ProjectsV2Client(token: token)
 
         let started = Date()
-        let result = try await client.fetchItems(query: BoardTaskStore.currentWeekQuery)
+        let result = try await client.fetchItems(query: BoardTaskStore.openTasksQuery)
         let elapsed = Date().timeIntervalSince(started)
         let tasks = try XCTUnwrap(result.tasks)
 
@@ -27,13 +27,15 @@ final class LiveBoardSmokeTests: XCTestCase {
         print("LIVE: \(withStatus.count) items carry a status; open=\(tasks.filter(\.isOpen).count)")
         XCTAssertFalse(withStatus.isEmpty)
 
-        let withWeek = tasks.filter { $0.week != nil }
-        print("LIVE: \(withWeek.count) items carry a week")
-        XCTAssertEqual(withWeek.count, tasks.count, "week:@current should only return scheduled items")
+        // The fetch is scoped by status now, so a task without a week is expected
+        // rather than a bug. What must hold is that nothing closed comes back.
+        let closed = tasks.filter { !$0.isOpen }
+        print("LIVE: \(tasks.filter { $0.week != nil }.count) of \(tasks.count) items carry a week")
+        XCTAssertTrue(closed.isEmpty, "the open query should not return Done or Dropped items")
 
         // Conditional refresh should come back as 304 and preserve the cached copy.
         let conditional = try await client.fetchItems(
-            query: BoardTaskStore.currentWeekQuery,
+            query: BoardTaskStore.openTasksQuery,
             etag: result.etag
         )
         print("LIVE: conditional refresh returned tasks=\(conditional.tasks == nil ? "304" : "200")")
@@ -70,7 +72,7 @@ final class LiveBoardSmokeTests: XCTestCase {
         // The task must be visible immediately, without waiting on the search index.
         let local = try XCTUnwrap(store.cachedTasks?.first { $0.title == title })
         XCTAssertEqual(local.status, "Todo")
-        XCTAssertNotNil(local.week, "add must put the task in a week")
+        XCTAssertNotNil(local.week, "add still records a week even though the fetch ignores it")
         print("LIVE: added \(local.id) into \(local.week ?? "nil")")
 
         // And it must survive a real round trip through the board query. The search
@@ -79,7 +81,7 @@ final class LiveBoardSmokeTests: XCTestCase {
         var found = false
         for _ in 0..<10 {
             try await Task.sleep(nanoseconds: 2_000_000_000)
-            let refreshed = try await client.fetchItems(query: BoardTaskStore.currentWeekQuery)
+            let refreshed = try await client.fetchItems(query: BoardTaskStore.openTasksQuery)
             if refreshed.tasks?.contains(where: { $0.title == title }) == true {
                 found = true
                 break
@@ -87,7 +89,7 @@ final class LiveBoardSmokeTests: XCTestCase {
         }
 
         try await client.delete(itemID: local.id)
-        XCTAssertTrue(found, "week:@current should return the task that add created")
+        XCTAssertTrue(found, "the open query should return the task that add created")
     }
 
 }

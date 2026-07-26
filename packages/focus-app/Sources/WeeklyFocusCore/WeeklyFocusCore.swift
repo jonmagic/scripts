@@ -460,8 +460,6 @@ public enum WeeklyFocusFormatter {
         let waiting = snapshot.waiting.isEmpty
             ? ["- (none)"]
             : snapshot.waiting.map { "- \($0)" }
-        let capturedLabel = snapshot.capturedCount == 1 ? "item" : "items"
-
         return ([
             "Weekly Focus",
             "============",
@@ -471,8 +469,6 @@ public enum WeeklyFocusFormatter {
             "",
             "Waiting"
         ] + waiting + [
-            "",
-            "Completed this week: \(snapshot.capturedCount) \(capturedLabel)",
             "",
             "Source: Brain Tasks board (project \(BrainBoard.projectNumber))"
         ]).joined(separator: "\n")

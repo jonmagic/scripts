@@ -110,6 +110,13 @@ The five focus slots are ordered by the board's `Focus` field, and unranked
 items follow in board order. Completing a task sets `Status` to `Done` and
 stamps `Reviewed`.
 
+The fetch asks for everything that is not `Done` or `Dropped`, which is the same
+rule the app applies client-side. It deliberately does not filter by the board's
+`Week` field: doing that left the app blank whenever the weekly roll had not run
+yet, and hid captured tasks that arrived without a week. Excluding the closed
+statuses is also what keeps the payload flat, since open work stays roughly
+constant while `Done` accumulates.
+
 There is no markdown fallback. Weekly notes are still used for wikilink
 resolution and for `⌘O`, but they no longer hold tasks, so reading and writing
 cannot disagree about which store is canonical.

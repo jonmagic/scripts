@@ -77,9 +77,16 @@ public enum BoardCache {
 /// so the UI never blocks on the network. Completions apply to the cache immediately
 /// and are reconciled by the next refresh.
 public final class BoardTaskStore: @unchecked Sendable {
-    /// One week of items. Scoping the fetch to the current iteration keeps the payload
-    /// flat as the board accumulates history.
-    public static let currentWeekQuery = "week:@current"
+    /// Every task that is still open, whatever week it carries.
+    ///
+    /// This deliberately mirrors `FocusTask.isOpen` so the server and the client
+    /// agree on what "open" means. Scoping by week instead would make the app go
+    /// blank whenever the weekly roll had not run yet, and it hid captured work
+    /// that landed without a week.
+    ///
+    /// Excluding the closed statuses is also what keeps the payload flat: open work
+    /// stays roughly constant while Done and Dropped accumulate forever.
+    public static let openTasksQuery = "-status:Done -status:Dropped"
 
     private let client: ProjectsV2Client
     private let cacheURL: URL
@@ -112,7 +119,7 @@ public final class BoardTaskStore: @unchecked Sendable {
     public func refresh() async throws -> [FocusTask] {
         let (etag, writesAtStart) = lock.withLock { (cached?.etag, localWrites) }
 
-        let result = try await client.fetchItems(query: Self.currentWeekQuery, etag: etag)
+        let result = try await client.fetchItems(query: Self.openTasksQuery, etag: etag)
 
         return lock.withLock {
             // A local write landed while this fetch was in flight, so the response
