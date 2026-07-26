@@ -48,4 +48,46 @@ final class LiveBoardSmokeTests: XCTestCase {
         print("LIVE: focus list -> \(snapshot.todos.count) items, overflow=\(snapshot.overflowTodos.count), done=\(snapshot.capturedCount)")
         XCTAssertFalse(snapshot.tasks.isEmpty)
     }
+
+    /// A task created without a Week is invisible to `week:@current`, which is the
+    /// only query this app runs. This proves `add` schedules what it creates.
+    func testLiveAddSchedulesIntoTheCurrentWeek() async throws {
+        guard ProcessInfo.processInfo.environment["WEEKLY_FOCUS_LIVE"] == "1" else {
+            throw XCTSkip("live test disabled")
+        }
+
+        let token = try GitHubToken.resolve()
+        let client = ProjectsV2Client(token: token)
+        let cacheURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("weekly-focus-live-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: cacheURL) }
+
+        let store = BoardTaskStore(client: client, cacheURL: cacheURL)
+        let title = "TEMP live add probe \(UUID().uuidString.prefix(8))"
+
+        try await store.add(title: title)
+
+        // The task must be visible immediately, without waiting on the search index.
+        let local = try XCTUnwrap(store.cachedTasks?.first { $0.title == title })
+        XCTAssertEqual(local.status, "Todo")
+        XCTAssertNotNil(local.week, "add must put the task in a week")
+        print("LIVE: added \(local.id) into \(local.week ?? "nil")")
+
+        // And it must survive a real round trip through the board query. The search
+        // index behind `q=` trails writes by a few seconds, so poll rather than
+        // asserting on the first read.
+        var found = false
+        for _ in 0..<10 {
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            let refreshed = try await client.fetchItems(query: BoardTaskStore.currentWeekQuery)
+            if refreshed.tasks?.contains(where: { $0.title == title }) == true {
+                found = true
+                break
+            }
+        }
+
+        try await client.delete(itemID: local.id)
+        XCTAssertTrue(found, "week:@current should return the task that add created")
+    }
+
 }

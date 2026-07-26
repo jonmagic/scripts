@@ -315,4 +315,29 @@ final class APIBaseURLTests: XCTestCase {
         )
         XCTAssertEqual(client.graphQLURL.absoluteString, "http://127.0.0.1:8123/graphql")
     }
+
+    func testStartOfWeekResolvesTheSundayTheBoardIterationsUse() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        func startOfWeek(year: Int, month: Int, day: Int) -> String {
+            let date = DateComponents(
+                calendar: calendar,
+                timeZone: calendar.timeZone,
+                year: year,
+                month: month,
+                day: day
+            ).date!
+            return BoardTaskStore.startOfWeek(date, calendar: calendar)
+        }
+
+        // Sunday is already the start of its own week.
+        XCTAssertEqual(startOfWeek(year: 2026, month: 7, day: 26), "2026-07-26")
+        // Saturday is the last day of that same week, not the next one.
+        XCTAssertEqual(startOfWeek(year: 2026, month: 8, day: 1), "2026-07-26")
+        // Crossing a month boundary backwards still lands on the right Sunday.
+        XCTAssertEqual(startOfWeek(year: 2026, month: 8, day: 2), "2026-08-02")
+        XCTAssertEqual(startOfWeek(year: 2026, month: 7, day: 1), "2026-06-28")
+    }
+
 }

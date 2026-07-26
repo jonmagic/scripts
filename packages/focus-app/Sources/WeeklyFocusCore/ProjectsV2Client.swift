@@ -13,6 +13,25 @@ public struct ProjectsV2Client: Sendable {
         public let etag: String?
     }
 
+    /// One configured week on the Week iteration field.
+    public struct Iteration: Sendable, Codable, Equatable {
+        public let id: String
+        /// `YYYY-MM-DD`, always a Sunday on this board.
+        public let startDate: String
+        public let title: String
+
+        public init(id: String, startDate: String, title: String) {
+            self.id = id
+            self.startDate = startDate
+            self.title = title
+        }
+    }
+
+    public struct CreatedItem: Sendable {
+        public let id: Int
+        public let nodeID: String
+    }
+
     public struct FieldUpdate: Sendable {
         public let id: Int
         public let value: String?
@@ -53,6 +72,10 @@ public struct ProjectsV2Client: Sendable {
 
     var itemsBase: String {
         "\(baseURL.absoluteString)/users/\(BrainBoard.owner)/projectsV2/\(BrainBoard.projectNumber)/items"
+    }
+
+    var fieldsBase: String {
+        "\(baseURL.absoluteString)/users/\(BrainBoard.owner)/projectsV2/\(BrainBoard.projectNumber)/fields"
     }
 
     var graphQLURL: URL {
@@ -127,6 +150,46 @@ public struct ProjectsV2Client: Sendable {
     /// Updates one or more fields on an item. Batching matters: GitHub charges about the
     /// same for a multi-field `PATCH` as for a single-field one, while GraphQL would need
     /// a separate round trip per field.
+    /// Reads the configured weeks off the Week field.
+    ///
+    /// Creating an item does not put it in a week, and the board view is scoped to
+    /// `week:@current`, so a new task is invisible until something sets this field.
+    public func fetchIterations(fieldID: Int = BrainBoard.Field.week) async throws -> [Iteration] {
+        var components = URLComponents(string: fieldsBase)!
+        components.queryItems = [URLQueryItem(name: "per_page", value: "50")]
+
+        let (data, response) = try await session.data(for: request(components.url!))
+        guard let http = response as? HTTPURLResponse else {
+            throw Failure.malformedResponse
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            throw Failure.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
+        }
+
+        guard let fields = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw Failure.malformedResponse
+        }
+
+        guard let field = fields.first(where: { $0["id"] as? Int == fieldID }),
+              let configuration = field["configuration"] as? [String: Any],
+              let raw = configuration["iterations"] as? [[String: Any]]
+        else {
+            throw Failure.malformedResponse
+        }
+
+        return raw.compactMap { entry in
+            guard let id = entry["id"] as? String,
+                  let startDate = entry["start_date"] as? String
+            else {
+                return nil
+            }
+
+            let title = (entry["title"] as? [String: Any])?["raw"] as? String
+            return Iteration(id: id, startDate: startDate, title: title ?? startDate)
+        }
+    }
+
     public func update(itemID: Int, fields: [FieldUpdate]) async throws {
         guard !fields.isEmpty else {
             return
@@ -153,14 +216,27 @@ public struct ProjectsV2Client: Sendable {
         }
     }
 
+    /// Removes an item from the board. Used to clean up after live tests.
+    public func delete(itemID: Int) async throws {
+        let url = URL(string: "\(itemsBase)/\(itemID)")!
+        let (data, response) = try await session.data(for: request(url, method: "DELETE"))
+        guard let http = response as? HTTPURLResponse else {
+            throw Failure.malformedResponse
+        }
+
+        guard (200..<300).contains(http.statusCode) else {
+            throw Failure.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
+        }
+    }
+
     /// Creates a draft item. REST cannot do this, so it goes through GraphQL and then
     /// applies field values over REST in one follow-up `PATCH`.
     @discardableResult
-    public func createDraft(title: String, fields: [FieldUpdate] = []) async throws -> Int {
+    public func createDraft(title: String, fields: [FieldUpdate] = []) async throws -> CreatedItem {
         let mutation = """
         mutation($project: ID!, $title: String!) {
           addProjectV2DraftIssue(input: {projectId: $project, title: $title}) {
-            projectItem { databaseId }
+            projectItem { id databaseId }
           }
         }
         """
@@ -193,7 +269,8 @@ public struct ProjectsV2Client: Sendable {
         guard let payload = root["data"] as? [String: Any],
               let mutationResult = payload["addProjectV2DraftIssue"] as? [String: Any],
               let item = mutationResult["projectItem"] as? [String: Any],
-              let databaseID = item["databaseId"] as? Int
+              let databaseID = item["databaseId"] as? Int,
+              let nodeID = item["id"] as? String
         else {
             throw Failure.malformedResponse
         }
@@ -202,7 +279,7 @@ public struct ProjectsV2Client: Sendable {
             try await update(itemID: databaseID, fields: fields)
         }
 
-        return databaseID
+        return CreatedItem(id: databaseID, nodeID: nodeID)
     }
 
     static func nextLink(from response: HTTPURLResponse) -> URL? {

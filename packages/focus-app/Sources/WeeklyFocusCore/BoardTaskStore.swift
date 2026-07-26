@@ -9,11 +9,20 @@ public struct CachedBoard: Codable, Sendable {
     public var tasks: [FocusTask]
     public var etag: String?
     public var fetchedAt: Date
+    /// Last resolved Week iteration. Kept so adding a task does not need a fields
+    /// lookup every time; it is reused only while its start date is still this week.
+    public var currentIteration: ProjectsV2Client.Iteration?
 
-    public init(tasks: [FocusTask], etag: String?, fetchedAt: Date) {
+    public init(
+        tasks: [FocusTask],
+        etag: String?,
+        fetchedAt: Date,
+        currentIteration: ProjectsV2Client.Iteration? = nil
+    ) {
         self.tasks = tasks
         self.etag = etag
         self.fetchedAt = fetchedAt
+        self.currentIteration = currentIteration
     }
 }
 
@@ -113,7 +122,12 @@ public final class BoardTaskStore: @unchecked Sendable {
             }
 
             if let tasks = result.tasks {
-                let board = CachedBoard(tasks: tasks, etag: result.etag, fetchedAt: Date())
+                let board = CachedBoard(
+                    tasks: tasks,
+                    etag: result.etag,
+                    fetchedAt: Date(),
+                    currentIteration: cached?.currentIteration
+                )
                 cached = board
                 BoardCache.save(board, to: cacheURL)
                 return tasks
@@ -163,16 +177,20 @@ public final class BoardTaskStore: @unchecked Sendable {
     }
 
     /// Adds a task to the current week as Todo.
+    ///
+    /// The week matters: the board view is scoped to `week:@current`, so a task
+    /// created without one is invisible here until the next weekly roll moves it.
     public func add(title: String, target: String? = nil, source: String? = nil) async throws {
         let title = Self.normalizedTitle(title)
         guard !title.isEmpty else {
             throw WeeklyFocusError.writeFailed("Task text is required")
         }
 
-        noteLocalWrite()
+        let iteration = try await currentIteration()
 
         var fields: [ProjectsV2Client.FieldUpdate] = [
-            .init(id: BrainBoard.Field.status, value: BrainBoard.Status.todo)
+            .init(id: BrainBoard.Field.status, value: BrainBoard.Status.todo),
+            .init(id: BrainBoard.Field.week, value: iteration.id)
         ]
         if let target, !target.isEmpty {
             fields.append(.init(id: BrainBoard.Field.target, value: target))
@@ -181,12 +199,77 @@ public final class BoardTaskStore: @unchecked Sendable {
             fields.append(.init(id: BrainBoard.Field.source, value: source))
         }
 
-        _ = try await client.createDraft(title: title, fields: fields)
-        _ = try await refresh()
+        noteLocalWrite()
+        let created = try await client.createDraft(title: title, fields: fields)
+
+        // The search index behind `q=` trails writes by a few seconds, so refreshing
+        // here would usually answer without the task that was just added. Insert it
+        // locally instead and let the next natural refresh reconcile.
+        insertLocally(
+            FocusTask(
+                id: created.id,
+                nodeID: created.nodeID,
+                title: title,
+                status: "Todo",
+                statusOptionID: BrainBoard.Status.todo,
+                week: iteration.title,
+                weekStart: iteration.startDate,
+                source: source,
+                target: target
+            )
+        )
+    }
+
+    /// Resolves the week that `week:@current` matches, reusing the cached answer
+    /// while it is still the current Sunday.
+    func currentIteration(now: Date = Date(), calendar: Calendar = .current) async throws -> ProjectsV2Client.Iteration {
+        let startOfWeek = Self.startOfWeek(now, calendar: calendar)
+
+        if let cachedIteration = lock.withLock({ cached?.currentIteration }),
+           cachedIteration.startDate == startOfWeek {
+            return cachedIteration
+        }
+
+        let iterations = try await client.fetchIterations()
+        guard let match = iterations.first(where: { $0.startDate == startOfWeek }) else {
+            throw WeeklyFocusError.writeFailed(
+                "The Week field has no iteration starting \(startOfWeek). Add more weeks to the board."
+            )
+        }
+
+        lock.withLock {
+            var board = cached ?? CachedBoard(tasks: [], etag: nil, fetchedAt: .distantPast)
+            board.currentIteration = match
+            cached = board
+            BoardCache.save(board, to: cacheURL)
+        }
+
+        return match
+    }
+
+    /// Sunday that starts the week containing `now`, formatted like the board.
+    static func startOfWeek(_ now: Date = Date(), calendar: Calendar = .current) -> String {
+        var calendar = calendar
+        calendar.firstWeekday = 1
+        let weekday = calendar.component(.weekday, from: now)
+        let start = calendar.date(byAdding: .day, value: -(weekday - 1), to: now) ?? now
+        return today(start, calendar: calendar)
     }
 
     private func noteLocalWrite() {
         lock.withLock { localWrites += 1 }
+    }
+
+    private func insertLocally(_ task: FocusTask) {
+        lock.withLock {
+            var board = cached ?? CachedBoard(tasks: [], etag: nil, fetchedAt: Date())
+            board.tasks.append(task)
+            // The response this cache came from did not contain the new task, so the
+            // etag would let a later 304 hide it.
+            board.etag = nil
+            cached = board
+            BoardCache.save(board, to: cacheURL)
+        }
     }
 
     private func applyLocally(id: Int, transform: (FocusTask) -> FocusTask) {
