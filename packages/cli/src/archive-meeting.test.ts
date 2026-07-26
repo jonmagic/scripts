@@ -3,12 +3,16 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import {
-  buildCommitmentCaptureArgs,
+  buildBrainTasksAddArgs,
+  buildTaskReviewBuffer,
   checkOffWeeklyNote,
   convertVttToMarkdown,
-  defaultCommitmentCaptureRunnerPath,
+  defaultBrainTasksPath,
   findNextNumber,
+  parseTaskCandidates,
+  parseTaskReviewBuffer,
   replacePendingPlaceholders,
+  resolveEditor,
 } from "./archive-meeting.js"
 
 const tempDirs: string[] = []
@@ -32,27 +36,81 @@ afterEach(() => {
   }
 })
 
-describe("archive meeting commitment capture hook", () => {
-  test("builds a scoped post-meeting runner command", () => {
-    const args = buildCommitmentCaptureArgs({
-      brainDir: "/Users/jonmagic/Brain",
-      meetingNotePath: "/Users/jonmagic/Brain/Meeting Notes/team/2026-07-08/01.md",
-      transcriptPath: "/Users/jonmagic/Brain/Transcripts/2026-07-08/01.md",
-    })
+describe("archive meeting task capture", () => {
+  test("strips the formatting models add despite being asked not to", () => {
+    const raw = [
+      "```",
+      "- Send the migration timeline to @octocat",
+      "1. Draft the rollout plan for the new detector",
+      "- [ ] Review the audit findings",
+      "",
+      "```",
+    ].join("\n")
 
-    expect(defaultCommitmentCaptureRunnerPath()).toContain(
-      ".copilot/skills/commitment-capture/scripts/commitment-capture-run"
-    )
-    expect(args).toEqual([
-      "--mode",
-      "meeting",
-      "--brain-path",
-      "/Users/jonmagic/Brain",
-      "--meeting-note",
-      "/Users/jonmagic/Brain/Meeting Notes/team/2026-07-08/01.md",
-      "--transcript",
-      "/Users/jonmagic/Brain/Transcripts/2026-07-08/01.md",
+    expect(parseTaskCandidates(raw)).toEqual([
+      "Send the migration timeline to @octocat",
+      "Draft the rollout plan for the new detector",
+      "Review the audit findings",
     ])
+  })
+
+  test("drops duplicates, empty answers, and prose", () => {
+    const raw = [
+      "Send the timeline to @octocat",
+      "send the timeline to @octocat",
+      "None",
+      "x".repeat(400),
+    ].join("\n")
+
+    expect(parseTaskCandidates(raw)).toEqual(["Send the timeline to @octocat"])
+  })
+
+  test("round trips a review buffer, ignoring the instructions", () => {
+    const tasks = ["Send the timeline to @octocat", "Review the audit findings"]
+    const buffer = buildTaskReviewBuffer(tasks)
+
+    expect(buffer).toContain("# One task per line.")
+    expect(parseTaskReviewBuffer(buffer)).toEqual(tasks)
+  })
+
+  test("treats an emptied buffer as a decision to skip", () => {
+    expect(parseTaskReviewBuffer(buildTaskReviewBuffer([]))).toEqual([])
+  })
+
+  test("keeps tasks the reviewer typed by hand", () => {
+    const buffer = `${buildTaskReviewBuffer(["Send the timeline to @octocat"])}Book the follow up with @mona\n`
+
+    expect(parseTaskReviewBuffer(buffer)).toEqual([
+      "Send the timeline to @octocat",
+      "Book the follow up with @mona",
+    ])
+  })
+
+  test("prefers VISUAL and splits editor arguments", () => {
+    expect(resolveEditor({ VISUAL: "code --wait", EDITOR: "vi" })).toEqual([
+      "code",
+      "--wait",
+    ])
+    expect(resolveEditor({ EDITOR: "nvim" })).toEqual(["nvim"])
+    expect(resolveEditor({})).toEqual(["vi"])
+  })
+
+  test("adds board tasks as Todo with the meeting note as the source", () => {
+    expect(
+      buildBrainTasksAddArgs({
+        title: "Send the timeline to @octocat",
+        source: "[[Meeting Notes/example/2026-07-08/01]]",
+      })
+    ).toEqual([
+      "add",
+      "--title",
+      "Send the timeline to @octocat",
+      "--status",
+      "Todo",
+      "--source",
+      "[[Meeting Notes/example/2026-07-08/01]]",
+    ])
+    expect(defaultBrainTasksPath()).toContain(".copilot/skills/brain/scripts/brain-tasks")
   })
 })
 

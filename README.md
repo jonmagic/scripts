@@ -80,7 +80,7 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 
 | Command | Description | Requirements |
 |---------|-------------|--------------|
-| `archive-meeting` | Archive a meeting transcript with AI-generated summaries | bun, llm |
+| `archive-meeting` | Archive a meeting transcript with AI-generated summaries, then review the tasks it found for you | bun, llm |
 | `capture-weekly-note` | Append a rough commitment capture with optional source under `## Captured` in the current weekly note | bun |
 | `list-recent-meetings` | List recent Zoom and Teams meeting inputs as JSON | bun |
 | `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |

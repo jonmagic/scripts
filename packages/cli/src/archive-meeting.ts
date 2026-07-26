@@ -29,11 +29,12 @@ export interface ArchiveMeetingOptions {
   date?: string
   executiveSummaryPromptPath: string
   detailedNotesPromptPath: string
+  taskCapturePromptPath?: string
   model?: string
   reasoningEffort?: string
   dryRun?: boolean
-  commitmentCapture?: boolean
-  commitmentCaptureRunnerPath?: string
+  taskCapture?: boolean
+  brainTasksPath?: string
 }
 
 export interface ListRecentMeetingsOptions {
@@ -51,58 +52,147 @@ export interface MeetingCandidate {
   hint: string
 }
 
-export interface CommitmentCaptureLaunchOptions {
-  brainDir: string
-  meetingNotePath: string
-  transcriptPath: string
-  runnerPath?: string | undefined
+/** Longest task line the extraction prompt is allowed to produce. */
+const MAX_TASK_LENGTH = 60
+
+const TASK_BUFFER_HEADER = [
+  "# One task per line. These go on the Brain Tasks board.",
+  "# Edit the text, delete a line to drop it, add a line to capture your own.",
+  "# Lines starting with # are ignored. Save and quit to create them.",
+  "# Quit without saving or empty the buffer to skip task capture.",
+].join("\n")
+
+export interface BrainTaskAddOptions {
+  title: string
+  source?: string | undefined
+  status?: string | undefined
 }
 
-export function defaultCommitmentCaptureRunnerPath(): string {
+export function defaultBrainTasksPath(): string {
   return path.join(
     os.homedir(),
     ".copilot",
     "skills",
-    "commitment-capture",
+    "brain",
     "scripts",
-    "commitment-capture-run"
+    "brain-tasks"
   )
 }
 
-export function buildCommitmentCaptureArgs(
-  options: CommitmentCaptureLaunchOptions
-): string[] {
-  return [
-    "--mode",
-    "meeting",
-    "--brain-path",
-    options.brainDir,
-    "--meeting-note",
-    options.meetingNotePath,
-    "--transcript",
-    options.transcriptPath,
-  ]
-}
+/**
+ * Reduce raw model output to candidate task lines. The prompt asks for bare
+ * lines, but models reach for bullets and fences anyway, so strip them here
+ * rather than trusting the output.
+ */
+export function parseTaskCandidates(raw: string): string[] {
+  const seen = new Set<string>()
+  const tasks: string[] = []
 
-export function launchCommitmentCaptureAfterMeeting(
-  options: CommitmentCaptureLaunchOptions
-): string {
-  const runnerPath = options.runnerPath || defaultCommitmentCaptureRunnerPath()
-  if (!fs.existsSync(runnerPath)) {
-    return `Commitment capture runner not found: ${runnerPath}`
+  for (const line of raw.split("\n")) {
+    const cleaned = line
+      .replace(/^\s*```.*$/, "")
+      .replace(/^\s*[-*+]\s+/, "")
+      .replace(/^\s*\d+[.)]\s+/, "")
+      .replace(/^\s*\[[ xX]\]\s*/, "")
+      .trim()
+
+    if (!cleaned) continue
+    // A model that ignores the format usually returns prose, not a long task.
+    if (cleaned.length > MAX_TASK_LENGTH * 4) continue
+    if (/^(none|no tasks|n\/a)\b/i.test(cleaned)) continue
+
+    const key = cleaned.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    tasks.push(cleaned)
   }
 
-  const child = spawn(runnerPath, buildCommitmentCaptureArgs(options), {
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      COMMITMENT_CAPTURE_AUTOMATED: "1",
-    },
-  })
-  child.unref()
+  return tasks
+}
 
-  return `Started commitment capture for ${options.meetingNotePath}`
+export function buildTaskReviewBuffer(tasks: string[]): string {
+  return `${TASK_BUFFER_HEADER}\n\n${tasks.join("\n")}\n`
+}
+
+export function parseTaskReviewBuffer(text: string): string[] {
+  const seen = new Set<string>()
+  const tasks: string[] = []
+
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    tasks.push(trimmed)
+  }
+
+  return tasks
+}
+
+export function resolveEditor(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.VISUAL || env.EDITOR || "vi"
+  const parts = raw.trim().split(/\s+/).filter(Boolean)
+  return parts.length > 0 ? parts : ["vi"]
+}
+
+export function buildBrainTasksAddArgs(options: BrainTaskAddOptions): string[] {
+  const args = [
+    "add",
+    "--title",
+    options.title,
+    "--status",
+    options.status || "Todo",
+  ]
+  if (options.source) {
+    args.push("--source", options.source)
+  }
+  return args
+}
+
+/**
+ * Hand the candidates to $EDITOR and return whatever survives. A non-zero
+ * editor exit means "forget the tasks", not "fail the archive".
+ */
+async function reviewTasksInEditor(tasks: string[]): Promise<string[]> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "archive-meeting-tasks-"))
+  const file = path.join(dir, "tasks.md")
+  fs.writeFileSync(file, buildTaskReviewBuffer(tasks), "utf-8")
+
+  const [command, ...editorArgs] = resolveEditor()
+  const exitCode = await new Promise<number>((resolve) => {
+    const child = spawn(command as string, [...editorArgs, file], {
+      stdio: "inherit",
+    })
+    child.on("close", (code) => resolve(code ?? 1))
+    child.on("error", () => resolve(1))
+  })
+
+  const accepted =
+    exitCode === 0 ? parseTaskReviewBuffer(fs.readFileSync(file, "utf-8")) : []
+  fs.rmSync(dir, { recursive: true, force: true })
+  return accepted
+}
+
+async function createBoardTasks(
+  tasks: string[],
+  source: string,
+  brainTasksPath: string
+): Promise<string[]> {
+  const created: string[] = []
+
+  for (const title of tasks) {
+    try {
+      await runCommand(brainTasksPath, buildBrainTasksAddArgs({ title, source }))
+      created.push(title)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`  Could not create "${title}": ${message}`)
+    }
+  }
+
+  return created
 }
 
 /**
@@ -753,8 +843,10 @@ export async function archiveMeeting(
     brainDir,
     executiveSummaryPromptPath,
     detailedNotesPromptPath,
+    taskCapturePromptPath,
     model,
     dryRun = false,
+    taskCapture = true,
   } = options
 
   if (!fs.existsSync(brainDir)) {
@@ -834,12 +926,39 @@ export async function archiveMeeting(
     transcriptMd = fs.readFileSync(input, "utf-8")
   }
 
-  // Step 3: Generate executive summary and meeting notes before writing files
-  console.log("\nGenerating executive summary and meeting notes...")
-  const [execSummary, meetingNotes] = await Promise.all([
+  // Step 3: Generate everything the archive needs before writing anything, so
+  // the task review below is the last chance to back out.
+  const wantsTasks =
+    taskCapture && Boolean(taskCapturePromptPath) && process.stdin.isTTY === true
+  console.log(
+    wantsTasks
+      ? "\nGenerating executive summary, meeting notes, and your tasks..."
+      : "\nGenerating executive summary and meeting notes..."
+  )
+  const [execSummary, meetingNotes, taskOutput] = await Promise.all([
     callLlm(transcriptMd, executiveSummaryPromptPath, model),
     callLlm(transcriptMd, detailedNotesPromptPath, model),
+    wantsTasks
+      ? callLlm(transcriptMd, taskCapturePromptPath as string, model)
+      : Promise.resolve(""),
   ])
+
+  // Step 3.5: Review the tasks before any write touches Brain.
+  let acceptedTasks: string[] = []
+  if (wantsTasks) {
+    const candidates = parseTaskCandidates(taskOutput)
+    if (candidates.length === 0) {
+      console.log("No tasks found for you in this meeting.")
+    } else {
+      console.log(
+        `\nFound ${candidates.length} task${candidates.length === 1 ? "" : "s"} for you. Opening your editor...`
+      )
+      acceptedTasks = await reviewTasksInEditor(candidates)
+      if (acceptedTasks.length === 0) {
+        console.log("Skipping task capture.")
+      }
+    }
+  }
 
   // Step 4: Write transcript and executive summary
   fs.mkdirSync(transcriptsDir, { recursive: true })
@@ -893,6 +1012,22 @@ export async function archiveMeeting(
     console.log(`\n${placeholderResult}`)
   }
 
+  // Step 9: Put the reviewed tasks on the board, now that the notes they cite exist.
+  let createdTasks: string[] = []
+  if (acceptedTasks.length > 0) {
+    const brainTasksPath = options.brainTasksPath || defaultBrainTasksPath()
+    if (fs.existsSync(brainTasksPath)) {
+      console.log(`\nAdding ${acceptedTasks.length} task${acceptedTasks.length === 1 ? "" : "s"} to the board...`)
+      createdTasks = await createBoardTasks(
+        acceptedTasks,
+        `[[Meeting Notes/${meetingNotesTarget}/${meetingDate}/${nextNumStr}]]`,
+        brainTasksPath
+      )
+    } else {
+      console.error(`\nSkipped task capture: ${brainTasksPath} not found`)
+    }
+  }
+
   // Output summary
   console.log("\n" + "=".repeat(60))
   console.log("Archive complete!")
@@ -900,14 +1035,10 @@ export async function archiveMeeting(
   console.log(`  Executive Summary: ${execSummaryPath}`)
   console.log(`  Meeting Notes:     Meeting Notes/${meetingNotesTarget}/${meetingDate}/${nextNumStr}.md`)
 
-  if (options.commitmentCapture) {
-    console.log(
-      launchCommitmentCaptureAfterMeeting({
-        brainDir,
-        meetingNotePath: meetingNotesPath,
-        transcriptPath,
-        runnerPath: options.commitmentCaptureRunnerPath,
-      })
-    )
+  if (createdTasks.length > 0) {
+    console.log(`  Tasks:             ${createdTasks.length} added to the Brain Tasks board`)
+    for (const title of createdTasks) {
+      console.log(`    - ${title}`)
+    }
   }
 }
