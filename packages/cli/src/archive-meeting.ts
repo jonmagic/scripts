@@ -70,7 +70,7 @@ export interface BrainTaskAddOptions {
 export function defaultBrainTasksPath(): string {
   return path.join(
     os.homedir(),
-    ".copilot",
+    ".agents",
     "skills",
     "brain",
     "scripts",

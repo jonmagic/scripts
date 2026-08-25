@@ -87,15 +87,23 @@ describe("archive meeting task capture", () => {
   })
 
   test("prefers VISUAL and splits editor arguments", () => {
-    expect(resolveEditor({ VISUAL: "code --wait", EDITOR: "vi" })).toEqual([
-      "code",
-      "--wait",
-    ])
-    expect(resolveEditor({ EDITOR: "nvim" })).toEqual(["nvim"])
-    expect(resolveEditor({})).toEqual(["vi"])
+    expect(
+      resolveEditor(
+        { VISUAL: "code --wait", EDITOR: "vi" },
+        () => "/usr/local/bin/code-insiders"
+      )
+    ).toEqual(["code", "--wait"])
+    expect(resolveEditor({ EDITOR: "nvim" }, () => null)).toEqual(["nvim"])
   })
 
-  test("adds board tasks into the current week so Weekly Focus can see them", () => {
+  test("falls back to VS Code Insiders when no editor is configured", () => {
+    expect(
+      resolveEditor({}, () => "/usr/local/bin/code-insiders")
+    ).toEqual(["code-insiders", "--wait"])
+    expect(resolveEditor({}, () => null)).toEqual(["vi"])
+  })
+
+  test("adds board tasks through the current issue-based CLI", () => {
     expect(
       buildBrainTasksAddArgs({
         title: "Send the timeline to @octocat",
@@ -105,14 +113,10 @@ describe("archive meeting task capture", () => {
       "add",
       "--title",
       "Send the timeline to @octocat",
-      "--status",
-      "Todo",
-      "--week",
-      "current",
       "--source",
       "[[Meeting Notes/example/2026-07-08/01]]",
     ])
-    expect(defaultBrainTasksPath()).toContain(".copilot/skills/brain/scripts/brain-tasks")
+    expect(defaultBrainTasksPath()).toContain(".agents/skills/brain/scripts/brain-tasks")
   })
 })
 
