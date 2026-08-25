@@ -65,8 +65,6 @@ const TASK_BUFFER_HEADER = [
 export interface BrainTaskAddOptions {
   title: string
   source?: string | undefined
-  status?: string | undefined
-  week?: string | undefined
 }
 
 export function defaultBrainTasksPath(): string {
@@ -132,24 +130,40 @@ export function parseTaskReviewBuffer(text: string): string[] {
   return tasks
 }
 
-export function resolveEditor(env: NodeJS.ProcessEnv = process.env): string[] {
-  const raw = env.VISUAL || env.EDITOR || "vi"
+export function resolveEditor(
+  env: NodeJS.ProcessEnv = process.env,
+  findExecutable: (command: string) => string | null = (command) =>
+    findExecutableOnPath(command, env)
+): string[] {
+  const raw =
+    env.VISUAL ||
+    env.EDITOR ||
+    (findExecutable("code-insiders") ? "code-insiders --wait" : "vi")
   const parts = raw.trim().split(/\s+/).filter(Boolean)
   return parts.length > 0 ? parts : ["vi"]
 }
 
+function findExecutableOnPath(
+  command: string,
+  env: NodeJS.ProcessEnv
+): string | null {
+  for (const directory of (env.PATH || "").split(path.delimiter)) {
+    if (!directory) continue
+
+    const candidate = path.join(directory, command)
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK)
+      return candidate
+    } catch {
+      // Keep searching PATH.
+    }
+  }
+
+  return null
+}
+
 export function buildBrainTasksAddArgs(options: BrainTaskAddOptions): string[] {
-  // Weekly Focus queries the board with `week:@current`, so an item with no
-  // week is invisible until the next roll. Capture into the current week.
-  const args = [
-    "add",
-    "--title",
-    options.title,
-    "--status",
-    options.status || "Todo",
-    "--week",
-    options.week || "current",
-  ]
+  const args = ["add", "--title", options.title]
   if (options.source) {
     args.push("--source", options.source)
   }
@@ -584,31 +598,72 @@ function processZoomFolder(zoomPath: string): string {
   return parts.join("\n\n")
 }
 
+let reasoningEffortUnsupportedWarned = false
+
 /**
- * Call llm with a system prompt and transcript input
+ * Call the llm CLI with a system prompt and transcript input.
+ *
+ * Reasoning effort is passed as a model option when the model accepts it.
+ * Models that reject the option (the GitHub Copilot plugin models do) are
+ * retried without it, which costs nothing because llm validates options
+ * before making any API request.
  */
 async function callLlm(
   transcript: string,
   promptPath: string,
-  model?: string
+  model?: string,
+  reasoningEffort?: string
 ): Promise<string> {
   if (!fs.existsSync(promptPath)) {
     throw new Error(`Prompt file not found: ${promptPath}`)
   }
 
   const systemPrompt = fs.readFileSync(promptPath, "utf-8")
-  const args = [
+
+  const baseArgs = [
     "prompt",
     "--no-log",
     "--no-stream",
     "--system", systemPrompt,
   ]
   if (model) {
-    args.push("--model", model)
+    baseArgs.push("--model", model)
   }
 
-  const result = await runCommand("llm", args, transcript)
+  if (reasoningEffort) {
+    try {
+      const result = await runCommand(
+        "llm",
+        [...baseArgs, "-o", "reasoning_effort", reasoningEffort],
+        transcript
+      )
+      return result.trim()
+    } catch (error) {
+      if (!isUnsupportedOptionError(error)) {
+        throw error
+      }
+      if (!reasoningEffortUnsupportedWarned) {
+        reasoningEffortUnsupportedWarned = true
+        console.warn(
+          `Model ${model ?? "(default)"} does not support reasoning_effort; continuing without it.`
+        )
+      }
+    }
+  }
+
+  const result = await runCommand("llm", baseArgs, transcript)
   return result.trim()
+}
+
+/**
+ * Detect llm rejecting an unknown model option before it calls the provider
+ */
+function isUnsupportedOptionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    message.includes("Extra inputs are not permitted") ||
+    message.includes("unexpected keyword argument")
+  )
 }
 
 /**
@@ -850,6 +905,7 @@ export async function archiveMeeting(
     detailedNotesPromptPath,
     taskCapturePromptPath,
     model,
+    reasoningEffort,
     dryRun = false,
     taskCapture = true,
   } = options
@@ -892,6 +948,9 @@ export async function archiveMeeting(
   console.log(`Target: Meeting Notes/${meetingNotesTarget}.md`)
   if (model) {
     console.log(`Model: ${model}`)
+  }
+  if (reasoningEffort) {
+    console.log(`Reasoning effort: ${reasoningEffort}`)
   }
 
   // Step 1: Get next file number
@@ -941,10 +1000,15 @@ export async function archiveMeeting(
       : "\nGenerating executive summary and meeting notes..."
   )
   const [execSummary, meetingNotes, taskOutput] = await Promise.all([
-    callLlm(transcriptMd, executiveSummaryPromptPath, model),
-    callLlm(transcriptMd, detailedNotesPromptPath, model),
+    callLlm(transcriptMd, executiveSummaryPromptPath, model, reasoningEffort),
+    callLlm(transcriptMd, detailedNotesPromptPath, model, reasoningEffort),
     wantsTasks
-      ? callLlm(transcriptMd, taskCapturePromptPath as string, model)
+      ? callLlm(
+          transcriptMd,
+          taskCapturePromptPath as string,
+          model,
+          reasoningEffort
+        )
       : Promise.resolve(""),
   ])
 

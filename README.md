@@ -84,10 +84,11 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 | `capture-weekly-note` | Add a task to the Brain Tasks board for the current week, with an optional source | bun |
 | `list-recent-meetings` | List recent Zoom and Teams meeting inputs as JSON | bun |
 | `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |
-| `prepare-pull-request` | Generate PR title/body with Copilot CLI and create PR | git, gh, copilot |
 | `weekly-focus` | Print a low-noise Now/Next/Waiting view from the Brain Tasks board | bun |
 | `weekly-focus-card` | Print a sparse focus card capped at five open board tasks | bun |
 | `weekly-focus-app` | Build and open the native full-screen Weekly Focus app, backed by the GitHub Projects task board | swift |
+
+`archive-meeting` opens its generated task candidates in `$VISUAL`, then `$EDITOR`. When neither is configured, it uses VS Code Insiders with `--wait` when available and otherwise falls back to `vi`.
 
 ## Native Weekly Focus App
 

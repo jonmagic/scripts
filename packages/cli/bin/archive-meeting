@@ -5,7 +5,8 @@
  * Usage:
  *   archive-meeting --brain-dir DIR --input PATH --meeting-notes-target TARGET \
  *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
- *     [--task-capture-prompt-path PATH] [--model MODEL] [--date YYYY-MM-DD] [--dry-run]
+ *     [--task-capture-prompt-path PATH] [--model MODEL] \
+ *     [--reasoning-effort LEVEL] [--date YYYY-MM-DD] [--dry-run]
  */
 
 import { parseArgs } from "node:util"
@@ -39,8 +40,8 @@ Options:
   --meeting-notes-target TARGET        Meeting Notes target basename (optional, fzf if omitted)
   --executive-summary-prompt-path PATH Path to prompt file for executive summary (required)
   --detailed-notes-prompt-path PATH    Path to prompt file for detailed notes (required)
-  --model MODEL                        llm model to use for generated summaries
-  --reasoning-effort LEVEL             Deprecated; accepted for compatibility and ignored
+  --model MODEL                        Model to use for generated summaries
+  --reasoning-effort LEVEL             Reasoning effort, when the model supports it
   --date YYYY-MM-DD                    Override meeting date (defaults to file mtime)
   --dry-run                            Show what would be done without writing files
   --task-capture-prompt-path PATH      Path to prompt file for extracting your tasks
