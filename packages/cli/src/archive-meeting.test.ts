@@ -3,16 +3,10 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import {
-  buildBrainTasksAddArgs,
-  buildTaskReviewBuffer,
   checkOffWeeklyNote,
   convertVttToMarkdown,
-  defaultBrainTasksPath,
   findNextNumber,
-  parseTaskCandidates,
-  parseTaskReviewBuffer,
   replacePendingPlaceholders,
-  resolveEditor,
 } from "./archive-meeting.js"
 
 const tempDirs: string[] = []
@@ -34,90 +28,6 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
   }
-})
-
-describe("archive meeting task capture", () => {
-  test("strips the formatting models add despite being asked not to", () => {
-    const raw = [
-      "```",
-      "- Send the migration timeline to @octocat",
-      "1. Draft the rollout plan for the new detector",
-      "- [ ] Review the audit findings",
-      "",
-      "```",
-    ].join("\n")
-
-    expect(parseTaskCandidates(raw)).toEqual([
-      "Send the migration timeline to @octocat",
-      "Draft the rollout plan for the new detector",
-      "Review the audit findings",
-    ])
-  })
-
-  test("drops duplicates, empty answers, and prose", () => {
-    const raw = [
-      "Send the timeline to @octocat",
-      "send the timeline to @octocat",
-      "None",
-      "x".repeat(400),
-    ].join("\n")
-
-    expect(parseTaskCandidates(raw)).toEqual(["Send the timeline to @octocat"])
-  })
-
-  test("round trips a review buffer, ignoring the instructions", () => {
-    const tasks = ["Send the timeline to @octocat", "Review the audit findings"]
-    const buffer = buildTaskReviewBuffer(tasks)
-
-    expect(buffer).toContain("# One task per line.")
-    expect(parseTaskReviewBuffer(buffer)).toEqual(tasks)
-  })
-
-  test("treats an emptied buffer as a decision to skip", () => {
-    expect(parseTaskReviewBuffer(buildTaskReviewBuffer([]))).toEqual([])
-  })
-
-  test("keeps tasks the reviewer typed by hand", () => {
-    const buffer = `${buildTaskReviewBuffer(["Send the timeline to @octocat"])}Book the follow up with @mona\n`
-
-    expect(parseTaskReviewBuffer(buffer)).toEqual([
-      "Send the timeline to @octocat",
-      "Book the follow up with @mona",
-    ])
-  })
-
-  test("prefers VISUAL and splits editor arguments", () => {
-    expect(
-      resolveEditor(
-        { VISUAL: "code --wait", EDITOR: "vi" },
-        () => "/usr/local/bin/code-insiders"
-      )
-    ).toEqual(["code", "--wait"])
-    expect(resolveEditor({ EDITOR: "nvim" }, () => null)).toEqual(["nvim"])
-  })
-
-  test("falls back to VS Code Insiders when no editor is configured", () => {
-    expect(
-      resolveEditor({}, () => "/usr/local/bin/code-insiders")
-    ).toEqual(["code-insiders", "--wait"])
-    expect(resolveEditor({}, () => null)).toEqual(["vi"])
-  })
-
-  test("adds board tasks through the current issue-based CLI", () => {
-    expect(
-      buildBrainTasksAddArgs({
-        title: "Send the timeline to @octocat",
-        source: "[[Meeting Notes/example/2026-07-08/01]]",
-      })
-    ).toEqual([
-      "add",
-      "--title",
-      "Send the timeline to @octocat",
-      "--source",
-      "[[Meeting Notes/example/2026-07-08/01]]",
-    ])
-    expect(defaultBrainTasksPath()).toContain(".agents/skills/brain/scripts/brain-tasks")
-  })
 })
 
 describe("archive meeting weekly note updates", () => {

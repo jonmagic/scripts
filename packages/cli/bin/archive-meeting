@@ -5,8 +5,7 @@
  * Usage:
  *   archive-meeting --brain-dir DIR --input PATH --meeting-notes-target TARGET \
  *     --executive-summary-prompt-path PATH --detailed-notes-prompt-path PATH \
- *     [--task-capture-prompt-path PATH] [--model MODEL] \
- *     [--reasoning-effort LEVEL] [--date YYYY-MM-DD] [--dry-run]
+ *     [--model MODEL] [--reasoning-effort LEVEL] [--date YYYY-MM-DD] [--dry-run]
  */
 
 import { parseArgs } from "node:util"
@@ -23,9 +22,6 @@ const { values } = parseArgs({
     "reasoning-effort": { type: "string" },
     date: { type: "string" },
     "dry-run": { type: "boolean" },
-    "task-capture-prompt-path": { type: "string" },
-    "no-tasks": { type: "boolean" },
-    "brain-tasks-path": { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 })
@@ -44,9 +40,6 @@ Options:
   --reasoning-effort LEVEL             Reasoning effort, when the model supports it
   --date YYYY-MM-DD                    Override meeting date (defaults to file mtime)
   --dry-run                            Show what would be done without writing files
-  --task-capture-prompt-path PATH      Path to prompt file for extracting your tasks
-  --no-tasks                           Skip the post-meeting task review
-  --brain-tasks-path PATH              Override the brain-tasks executable used to add tasks
   -h, --help                           Show this help message
 `)
   process.exit(0)
@@ -71,7 +64,4 @@ await archiveMeeting({
   reasoningEffort: values["reasoning-effort"],
   date: values["date"],
   dryRun: values["dry-run"],
-  taskCapturePromptPath: values["task-capture-prompt-path"],
-  taskCapture: !values["no-tasks"],
-  brainTasksPath: values["brain-tasks-path"],
 })
