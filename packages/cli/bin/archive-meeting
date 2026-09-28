@@ -22,6 +22,10 @@ const { values } = parseArgs({
     "reasoning-effort": { type: "string" },
     date: { type: "string" },
     "dry-run": { type: "boolean" },
+    // Accepted as no-ops so already-open shells with the previous am function keep working.
+    "task-capture-prompt-path": { type: "string" },
+    "no-tasks": { type: "boolean" },
+    "brain-tasks-path": { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 })
