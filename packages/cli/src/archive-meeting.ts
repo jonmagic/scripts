@@ -4,8 +4,8 @@
  * Archives a single meeting by:
  * 1. Processing input (VTT file or Zoom folder) into markdown transcript
  * 2. Adding frontmatter with uid, type, created
- * 3. Generating executive summary using llm
- * 4. Generating detailed meeting notes using llm
+ * 3. Generating executive summary using Copilot CLI
+ * 4. Generating detailed meeting notes using Copilot CLI
  * 5. Updating the appropriate Meeting Notes file
  * 6. Checking off the meeting in Weekly Notes (if found)
  *
@@ -432,17 +432,10 @@ function processZoomFolder(zoomPath: string): string {
   return parts.join("\n\n")
 }
 
-let reasoningEffortUnsupportedWarned = false
-
 /**
- * Call the llm CLI with a system prompt and transcript input.
- *
- * Reasoning effort is passed as a model option when the model accepts it.
- * Models that reject the option (the GitHub Copilot plugin models do) are
- * retried without it, which costs nothing because llm validates options
- * before making any API request.
+ * Call Copilot CLI with the archive prompt and transcript input.
  */
-async function callLlm(
+async function callCopilot(
   transcript: string,
   promptPath: string,
   model?: string,
@@ -453,51 +446,27 @@ async function callLlm(
   }
 
   const systemPrompt = fs.readFileSync(promptPath, "utf-8")
-
-  const baseArgs = [
-    "prompt",
-    "--no-log",
-    "--no-stream",
-    "--system", systemPrompt,
+  const selectedModel = normalizeCopilotModel(model)
+  const args = [
+    "--model", selectedModel,
+    "--no-custom-instructions",
+    "--disable-builtin-mcps",
+    "--available-tools",
+    "--log-level", "error",
+    "--silent",
+    "--stream", "off",
   ]
-  if (model) {
-    baseArgs.push("--model", model)
-  }
-
   if (reasoningEffort) {
-    try {
-      const result = await runCommand(
-        "llm",
-        [...baseArgs, "-o", "reasoning_effort", reasoningEffort],
-        transcript
-      )
-      return result.trim()
-    } catch (error) {
-      if (!isUnsupportedOptionError(error)) {
-        throw error
-      }
-      if (!reasoningEffortUnsupportedWarned) {
-        reasoningEffortUnsupportedWarned = true
-        console.warn(
-          `Model ${model ?? "(default)"} does not support reasoning_effort; continuing without it.`
-        )
-      }
-    }
+    args.push("--reasoning-effort", reasoningEffort)
   }
 
-  const result = await runCommand("llm", baseArgs, transcript)
+  const prompt = `${systemPrompt.trim()}\n\nTranscript:\n${transcript}`
+  const result = await runCommand("copilot", args, prompt)
   return result.trim()
 }
 
-/**
- * Detect llm rejecting an unknown model option before it calls the provider
- */
-function isUnsupportedOptionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return (
-    message.includes("Extra inputs are not permitted") ||
-    message.includes("unexpected keyword argument")
-  )
+export function normalizeCopilotModel(model?: string): string {
+  return model?.replace(/^github_copilot\//, "") || "auto"
 }
 
 /**
@@ -778,9 +747,7 @@ export async function archiveMeeting(
   console.log(`Processing: ${input}`)
   console.log(`Date: ${meetingDate}`)
   console.log(`Target: Meeting Notes/${meetingNotesTarget}.md`)
-  if (model) {
-    console.log(`Model: ${model}`)
-  }
+  console.log(`Model: ${normalizeCopilotModel(model)}`)
   if (reasoningEffort) {
     console.log(`Reasoning effort: ${reasoningEffort}`)
   }
@@ -825,8 +792,8 @@ export async function archiveMeeting(
   // Step 3: Generate the archive content before writing anything.
   console.log("\nGenerating executive summary and meeting notes...")
   const [execSummary, meetingNotes] = await Promise.all([
-    callLlm(transcriptMd, executiveSummaryPromptPath, model, reasoningEffort),
-    callLlm(transcriptMd, detailedNotesPromptPath, model, reasoningEffort),
+    callCopilot(transcriptMd, executiveSummaryPromptPath, model, reasoningEffort),
+    callCopilot(transcriptMd, detailedNotesPromptPath, model, reasoningEffort),
   ])
 
   // Step 4: Write transcript and executive summary

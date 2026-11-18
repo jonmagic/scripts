@@ -73,14 +73,13 @@ export PATH="$HOME/code/jonmagic/scripts/bin:$PATH"
 - [Bun](https://bun.sh) - JavaScript runtime (installed by setup)
 - [gh](https://cli.github.com) - GitHub CLI
 - [copilot](https://githubnext.com/projects/copilot-cli) - GitHub Copilot CLI
-- [llm](https://llm.datasette.io/) - Prompt runner for single-shot model calls
 - [fzf](https://github.com/junegunn/fzf) - Fuzzy finder (for interactive selection)
 
 ### Available Commands
 
 | Command | Description | Requirements |
 |---------|-------------|--------------|
-| `archive-meeting` | Archive a meeting transcript with AI-generated summaries and meeting notes | bun, llm |
+| `archive-meeting` | Archive a meeting transcript with AI-generated summaries and meeting notes | bun, copilot |
 | `capture-weekly-note` | Add a task to the Brain Tasks board for the current week, with an optional source | bun |
 | `list-recent-meetings` | List recent Zoom and Teams meeting inputs as JSON | bun |
 | `fetch-github-conversation` | Fetch GitHub issue, PR, or discussion as JSON | gh |

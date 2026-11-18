@@ -6,6 +6,7 @@ import {
   checkOffWeeklyNote,
   convertVttToMarkdown,
   findNextNumber,
+  normalizeCopilotModel,
   replacePendingPlaceholders,
 } from "./archive-meeting.js"
 
@@ -28,6 +29,14 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+describe("archive meeting model routing", () => {
+  test("defaults to auto and accepts legacy llm Copilot model names", () => {
+    expect(normalizeCopilotModel()).toBe("auto")
+    expect(normalizeCopilotModel("github_copilot/gpt-6-luna")).toBe("gpt-6-luna")
+    expect(normalizeCopilotModel("claude-sonnet-5.5")).toBe("claude-sonnet-5.5")
+  })
 })
 
 describe("archive meeting weekly note updates", () => {
